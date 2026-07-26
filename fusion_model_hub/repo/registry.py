@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .models import ModelInfo, ModelType, ModelFormat, Quantization, ModelSource
+from .models import ModelFormat, ModelInfo, ModelSource, ModelType, Quantization
 
 
 class ModelRegistry:

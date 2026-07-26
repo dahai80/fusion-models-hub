@@ -1,0 +1,6 @@
+apiVersion: v2
+name: fusion-model-hub
+description: Unified model repository & manager for the Fusion-MLX ecosystem
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

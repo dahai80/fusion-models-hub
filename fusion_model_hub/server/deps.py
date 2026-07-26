@@ -1,22 +1,34 @@
-from typing import Annotated, Generator
+from collections.abc import Generator
+from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.database import get_session_factory as _make_session_factory
+from ..storage.base import StorageBackend
 from ..storage.local_store import LocalStore
 from .config import Settings
 
 _settings: Settings | None = None
 _session_factory = None
-_store: LocalStore | None = None
+_store: StorageBackend | None = None
 
 
 def init_deps(settings: Settings, engine) -> None:
     global _settings, _session_factory, _store
     _settings = settings
     _session_factory = _make_session_factory(engine)
-    _store = LocalStore(data_dir=settings.data_dir)
+    if settings.storage_type == "minio" and settings.minio_endpoint:
+        from ..storage.minio_store import MinioStore
+        _store = MinioStore(
+            endpoint=settings.minio_endpoint,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            bucket=settings.minio_bucket,
+            secure=settings.minio_secure,
+        )
+    else:
+        _store = LocalStore(data_dir=settings.data_dir)
 
 
 def get_settings() -> Settings:
@@ -38,12 +50,12 @@ def get_session_factory():
     return _session_factory
 
 
-def get_store() -> LocalStore:
+def get_store() -> StorageBackend:
     if _store is None:
         raise RuntimeError("Dependencies not initialized — call init_deps() first")
     return _store
 
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-StoreDep = Annotated[LocalStore, Depends(get_store)]
+StoreDep = Annotated[StorageBackend, Depends(get_store)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]

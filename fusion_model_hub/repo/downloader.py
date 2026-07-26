@@ -49,8 +49,8 @@ class ModelDownloader:
             if resume_offset > 0:
                 headers["Range"] = f"bytes={resume_offset}-"
 
-            async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
-                async with client.stream("GET", url, headers=headers) as resp:
+            async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client, \
+                    client.stream("GET", url, headers=headers) as resp:
                     if resume_offset > 0 and resp.status_code not in (206, 200):
                         logger.warning("Server does not support resume, restarting from 0")
                         resume_offset = 0

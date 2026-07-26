@@ -11,8 +11,6 @@ from typing import Any
 
 import httpx
 
-from ..db.models import ModelFormat
-
 logger = logging.getLogger(__name__)
 
 
@@ -48,7 +46,9 @@ class ModelConverter:
         request = {
             "source_path": source_path,
             "source_format": fmt,
-            "output_path": output_path or str(Path.cwd() / f"{model_name or Path(source_path).stem}-{quant_bits}bit.mlx"),
+            "output_path": output_path or str(
+                Path.cwd() / f"{model_name or Path(source_path).stem}-{quant_bits}bit.mlx"
+            ),
             "quant_bits": quant_bits,
             "model_name": model_name or Path(source_path).stem,
         }

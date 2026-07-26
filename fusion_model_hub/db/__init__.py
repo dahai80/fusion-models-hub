@@ -1,7 +1,12 @@
 from .database import get_engine, get_session_factory, init_db
-from .models import Base, Model, ModelVersion, ModelTag
+from .models import Base, Model, ModelTag, ModelVersion
 
 __all__ = [
-    "get_engine", "get_session_factory", "init_db",
-    "Base", "Model", "ModelVersion", "ModelTag",
+    "Base",
+    "Model",
+    "ModelTag",
+    "ModelVersion",
+    "get_engine",
+    "get_session_factory",
+    "init_db",
 ]

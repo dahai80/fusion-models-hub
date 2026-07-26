@@ -1,0 +1,59 @@
+replicaCount: 1
+
+image:
+    repository: fusion-model-hub
+    pullPolicy: IfNotPresent
+    tag: "0.1.0"
+
+service:
+    type: ClusterIP
+    port: 8080
+
+ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+
+resources:
+    requests:
+        cpu: 500m
+        memory: 512Mi
+    limits:
+        cpu: "1"
+        memory: 1Gi
+
+persistence:
+    enabled: true
+    accessMode: ReadWriteOnce
+    size: 50Gi
+    storageClass: ""
+
+config:
+    dataDir: /data
+    mlxUrl: "http://fusion-mlx:11434"
+    authEnabled: false
+    corsOrigins: '["*"]'
+    maxUploadSizeMB: 5120
+    logLevel: INFO
+    backupDir: ""
+    backupIntervalSeconds: 86400
+
+serviceAccount:
+    create: true
+    name: ""
+
+livenessProbe:
+    httpGet:
+        path: /api/v1/system/health
+        port: http
+    initialDelaySeconds: 10
+    periodSeconds: 30
+
+readinessProbe:
+    httpGet:
+        path: /api/v1/system/health
+        port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10

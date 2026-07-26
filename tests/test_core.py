@@ -6,15 +6,20 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
-from fusion_model_hub.repo.models import ModelInfo, ModelType, ModelFormat, Quantization, ModelSource, DownloadTask
-from fusion_model_hub.repo.registry import ModelRegistry
-from fusion_model_hub.repo.downloader import ModelDownloader
+from fusion_model_hub.api.base_binding import FusionMLXBase
 from fusion_model_hub.convert.converter import ModelConverter
 from fusion_model_hub.manage.manager import LocalModelManager
-from fusion_model_hub.api.base_binding import FusionMLXBase
-
+from fusion_model_hub.repo.downloader import ModelDownloader
+from fusion_model_hub.repo.models import (
+    ModelFormat,
+    ModelInfo,
+    ModelType,
+    Quantization,
+)
+from fusion_model_hub.repo.registry import ModelRegistry
 
 # ── ModelInfo ──
 
@@ -281,6 +286,3 @@ class TestFusionMLXBase:
         base = FusionMLXBase(mlx_url="http://localhost:19999")
         caps = await base.get_capabilities()
         assert isinstance(caps, dict)
-
-
-import httpx

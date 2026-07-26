@@ -1,0 +1,316 @@
+import logging
+from typing import Any
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+class FusionModelHubClient:
+    def __init__(self, base_url: str = "http://localhost:8080", api_key: str | None = None, timeout: float = 30.0):
+        self._base_url = base_url.rstrip("/")
+        self._headers: dict[str, str] = {}
+        if api_key:
+            self._headers["X-API-Key"] = api_key
+        self._timeout = timeout
+
+    def _url(self, path: str) -> str:
+        return f"{self._base_url}/api/v1{path}"
+
+    def _get(self, path: str, params: dict | None = None) -> dict:
+        with httpx.Client(timeout=self._timeout) as c:
+            r = c.get(self._url(path), headers=self._headers, params=params)
+            r.raise_for_status()
+            return r.json()
+
+    def _post(self, path: str, json: dict | None = None, **kwargs: Any) -> dict:
+        with httpx.Client(timeout=self._timeout) as c:
+            r = c.post(self._url(path), headers=self._headers, json=json, **kwargs)
+            r.raise_for_status()
+            return r.json()
+
+    def _put(self, path: str, json: dict | None = None) -> dict:
+        with httpx.Client(timeout=self._timeout) as c:
+            r = c.put(self._url(path), headers=self._headers, json=json)
+            r.raise_for_status()
+            return r.json()
+
+    def _delete(self, path: str) -> dict:
+        with httpx.Client(timeout=self._timeout) as c:
+            r = c.delete(self._url(path), headers=self._headers)
+            r.raise_for_status()
+            return r.json()
+
+    # --- Models ---
+    def list_models(self, **params: Any) -> dict:
+        return self._get("/models", params=params)
+
+    def get_model(self, model_id: str) -> dict:
+        return self._get(f"/models/{model_id}")
+
+    def create_model(self, data: dict) -> dict:
+        return self._post("/models", json=data)
+
+    def update_model(self, model_id: str, data: dict) -> dict:
+        return self._put(f"/models/{model_id}", json=data)
+
+    def delete_model(self, model_id: str) -> dict:
+        return self._delete(f"/models/{model_id}")
+
+    def import_from_hf(self, data: dict) -> dict:
+        return self._post("/models/import/hf", json=data)
+
+    def sync_registry(self, source_url: str) -> dict:
+        return self._post("/models/sync", json={"source_url": source_url})
+
+    def batch_delete(self, model_ids: list[str]) -> dict:
+        return self._post("/models/batch-delete", json={"model_ids": model_ids})
+
+    def compare_models(self, model_ids: list[str]) -> dict:
+        return self._get("/models/compare", params={"model_ids": ",".join(model_ids)})
+
+    # --- Versions ---
+    def list_versions(self, model_id: str, **params: Any) -> dict:
+        return self._get(f"/models/{model_id}/versions", params=params)
+
+    def get_version(self, version_id: str) -> dict:
+        return self._get(f"/versions/{version_id}")
+
+    def update_version(self, version_id: str, data: dict) -> dict:
+        return self._put(f"/versions/{version_id}", json=data)
+
+    def delete_version(self, version_id: str) -> dict:
+        return self._delete(f"/versions/{version_id}")
+
+    def promote_version(self, version_id: str) -> dict:
+        return self._post(f"/versions/{version_id}/promote")
+
+    def benchmark_version(self, version_id: str) -> dict:
+        return self._post(f"/versions/{version_id}/benchmark")
+
+    def rollback_version(self, version_id: str) -> dict:
+        return self._post(f"/versions/{version_id}/rollback")
+
+    def deprecate_version(self, version_id: str) -> dict:
+        return self._post(f"/versions/{version_id}/deprecate")
+
+    def retire_version(self, version_id: str) -> dict:
+        return self._post(f"/versions/{version_id}/retire")
+
+    # --- Quantize ---
+    def start_quantize(
+        self, source_version_id: str, target_format: str = "mlx",
+        quant_bits: int = 4, calibration_dataset: str = "",
+    ) -> dict:
+        return self._post("/quantize", json={
+            "source_version_id": source_version_id,
+            "target_format": target_format,
+            "quant_bits": quant_bits,
+            "calibration_dataset": calibration_dataset,
+        })
+
+    def list_quantize_tasks(self, **params: Any) -> dict:
+        return self._get("/quantize", params=params)
+
+    def get_quantize_status(self, task_id: str) -> dict:
+        return self._get(f"/quantize/{task_id}")
+
+    def start_lora_merge(
+        self, base_version_id: str, lora_version_id: str,
+        target_format: str = "mlx", quant_bits: int = 4,
+    ) -> dict:
+        return self._post("/quantize/lora-merge", json={
+            "base_version_id": base_version_id,
+            "lora_version_id": lora_version_id,
+            "target_format": target_format,
+            "quant_bits": quant_bits,
+        })
+
+    def get_lora_merge_status(self, task_id: str) -> dict:
+        return self._get(f"/quantize/lora-merge/{task_id}")
+
+    # --- Inference ---
+    def chat_completions(self, model: str, messages: list[dict], **kwargs: Any) -> dict:
+        return self._post("/inference/chat/completions", json={
+            "model": model, "messages": messages, **kwargs,
+        })
+
+    def completions(self, model: str, prompt: str, **kwargs: Any) -> dict:
+        return self._post("/inference/completions", json={
+            "model": model, "prompt": prompt, **kwargs,
+        })
+
+    def embeddings(self, model: str, input: str | list[str], **kwargs: Any) -> dict:
+        return self._post("/inference/embeddings", json={
+            "model": model, "input": input, **kwargs,
+        })
+
+    # --- Security ---
+    def start_security_scan(self, version_id: str, scan_type: str = "full") -> dict:
+        return self._post("/security/scan", json={
+            "version_id": version_id, "scan_type": scan_type,
+        })
+
+    def get_security_scan(self, scan_id: str) -> dict:
+        return self._get(f"/security/scan/{scan_id}")
+
+    def list_security_scans(self, **params: Any) -> dict:
+        return self._get("/security/scans", params=params)
+
+    # --- Watermark ---
+    def embed_watermark(self, version_id: str, metadata: str = "{}") -> dict:
+        return self._post("/watermark/embed", json={
+            "version_id": version_id, "metadata": metadata,
+        })
+
+    def verify_watermark(self, version_id: str) -> dict:
+        return self._post("/watermark/verify", json={"version_id": version_id})
+
+    def list_watermarks(self, **params: Any) -> dict:
+        return self._get("/watermark/list", params=params)
+
+    # --- Encryption ---
+    def encrypt_version(self, version_id: str) -> dict:
+        return self._post("/encryption/encrypt", json={"version_id": version_id})
+
+    def decrypt_version(self, version_id: str) -> dict:
+        return self._post("/encryption/decrypt", json={"version_id": version_id})
+
+    def get_encryption_status(self, version_id: str) -> dict:
+        return self._get(f"/encryption/status/{version_id}")
+
+    # --- Approvals ---
+    def create_approval(self, version_id: str, level: str = "L2", reason: str = "") -> dict:
+        return self._post("/approvals", json={
+            "version_id": version_id, "level": level, "reason": reason,
+        })
+
+    def list_approvals(self, **params: Any) -> dict:
+        return self._get("/approvals", params=params)
+
+    def get_approval(self, req_id: str) -> dict:
+        return self._get(f"/approvals/{req_id}")
+
+    def approve_request(self, req_id: str, comment: str = "") -> dict:
+        return self._post(f"/approvals/{req_id}/approve", json={"comment": comment})
+
+    def reject_request(self, req_id: str, comment: str = "") -> dict:
+        return self._post(f"/approvals/{req_id}/reject", json={"comment": comment})
+
+    # --- Git LFS ---
+    def gitlfs_batch(self, operation: str, objects: list[dict]) -> dict:
+        return self._post("/gitlfs/objects/batch", json={
+            "operation": operation, "objects": objects,
+        })
+
+    def create_gitlfs_lock(self, path: str) -> dict:
+        return self._post("/gitlfs/locks", json={"path": path})
+
+    def list_gitlfs_locks(self, **params: Any) -> dict:
+        return self._get("/gitlfs/locks", params=params)
+
+    def delete_gitlfs_lock(self, lock_id: str) -> dict:
+        return self._delete(f"/gitlfs/locks/{lock_id}")
+
+    # --- Cluster ---
+    def list_nodes(self) -> list[dict]:
+        return self._get("/cluster/nodes")
+
+    def add_node(self, name: str, url: str, capabilities: str = "inference,quantize") -> dict:
+        return self._post("/cluster/nodes", json={
+            "name": name, "url": url, "capabilities": capabilities,
+        })
+
+    def get_node(self, node_id: str) -> dict:
+        return self._get(f"/cluster/nodes/{node_id}")
+
+    def remove_node(self, node_id: str) -> dict:
+        return self._delete(f"/cluster/nodes/{node_id}")
+
+    def submit_distributed_task(
+        self, task_type: str, model_version_id: str,
+        target_node_ids: list[str] | None = None, config: str = "{}",
+    ) -> dict:
+        body: dict[str, Any] = {
+            "task_type": task_type,
+            "model_version_id": model_version_id,
+            "config": config,
+        }
+        if target_node_ids:
+            body["target_node_ids"] = target_node_ids
+        return self._post("/cluster/distributed-tasks", json=body)
+
+    def get_distributed_task(self, task_id: str) -> dict:
+        return self._get(f"/cluster/distributed-tasks/{task_id}")
+
+    # --- System ---
+    def health(self) -> dict:
+        return self._get("/system/health")
+
+    def storage_stats(self) -> dict:
+        return self._get("/system/storage")
+
+    def export_data(self, **params: Any) -> dict:
+        return self._get("/system/export", params=params)
+
+    # --- Auth ---
+    def create_api_key(self, name: str) -> dict:
+        return self._post("/auth/keys", json={"name": name})
+
+    def list_api_keys(self) -> dict:
+        return self._get("/auth/keys")
+
+    def deactivate_api_key(self, key_id: str) -> dict:
+        return self._post(f"/auth/keys/{key_id}/deactivate")
+
+    def delete_api_key(self, key_id: str) -> dict:
+        return self._delete(f"/auth/keys/{key_id}")
+
+    # --- Ratings ---
+    def create_rating(self, model_id: str, score: int, comment: str = "") -> dict:
+        return self._post(f"/models/{model_id}/ratings", json={
+            "score": score, "comment": comment,
+        })
+
+    def list_ratings(self, model_id: str, **params: Any) -> dict:
+        return self._get(f"/models/{model_id}/ratings", params=params)
+
+    def get_rating_summary(self, model_id: str) -> dict:
+        return self._get(f"/models/{model_id}/ratings/summary")
+
+    def delete_rating(self, rating_id: str) -> dict:
+        return self._delete(f"/models/ratings/{rating_id}")
+
+    # --- Favorites ---
+    def add_favorite(self, model_id: str) -> dict:
+        return self._post(f"/models/{model_id}/favorites")
+
+    def list_favorites(self, model_id: str, **params: Any) -> dict:
+        return self._get(f"/models/{model_id}/favorites", params=params)
+
+    def list_my_favorites(self, **params: Any) -> dict:
+        return self._get("/models/favorites/me", params=params)
+
+    def remove_favorite(self, favorite_id: str) -> dict:
+        return self._delete(f"/models/favorites/{favorite_id}")
+
+    # --- Branches ---
+    def create_branch(self, model_id: str, name: str, base_version_id: str = "", description: str = "") -> dict:
+        return self._post(f"/models/{model_id}/branches", json={
+            "name": name, "base_version_id": base_version_id, "description": description,
+        })
+
+    def list_branches(self, model_id: str, status: str = "") -> dict:
+        return self._get(f"/models/{model_id}/branches", params={"status": status} if status else {})
+
+    def get_branch(self, branch_id: str) -> dict:
+        return self._get(f"/models/branches/{branch_id}")
+
+    def update_branch(self, branch_id: str, data: dict) -> dict:
+        return self._put(f"/models/branches/{branch_id}", json=data)
+
+    def delete_branch(self, branch_id: str) -> dict:
+        return self._delete(f"/models/branches/{branch_id}")
+
+    def merge_branch(self, branch_id: str) -> dict:
+        return self._post(f"/models/branches/{branch_id}/merge")

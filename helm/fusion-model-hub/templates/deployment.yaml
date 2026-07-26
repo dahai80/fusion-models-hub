@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: {{ include "fusion-model-hub.fullname" . }}
+    labels:
+        app: {{ include "fusion-model-hub.name" . }}
+spec:
+    replicas: {{ .Values.replicaCount }}
+    selector:
+        matchLabels:
+            app: {{ include "fusion-model-hub.name" . }}
+    template:
+        metadata:
+            labels:
+                app: {{ include "fusion-model-hub.name" . }}
+        spec:
+            serviceAccountName: {{ .Values.serviceAccount.name | default (include "fusion-model-hub.fullname" .) }}
+            containers:
+                - name: {{ .Chart.Name }}
+                  image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+                  imagePullPolicy: {{ .Values.image.pullPolicy }}
+                  ports:
+                      - containerPort: 8080
+                  env:
+                      - name: FMH_DATA_DIR
+                        value: {{ .Values.config.dataDir | quote }}
+                      - name: FMH_MLX_URL
+                        value: {{ .Values.config.mlxUrl | quote }}
+                      - name: FMH_AUTH_ENABLED
+                        value: {{ .Values.config.authEnabled | quote }}
+                      - name: FMH_CORS_ORIGINS
+                        value: {{ .Values.config.corsOrigins | quote }}
+                      - name: FMH_MAX_UPLOAD_SIZE_MB
+                        value: {{ .Values.config.maxUploadSizeMB | quote }}
+                      - name: FMH_LOG_LEVEL
+                        value: {{ .Values.config.logLevel | quote }}
+                      - name: FMH_BACKUP_DIR
+                        value: {{ .Values.config.backupDir | quote }}
+                  livenessProbe: {{ toYaml .Values.livenessProbe | nindent 20 }}
+                  readinessProbe: {{ toYaml .Values.readinessProbe | nindent 20 }}
+                  resources: {{ toYaml .Values.resources | nindent 20 }}
+                  volumeMounts:
+                      - name: data
+                        mountPath: /data
+            volumes:
+                - name: data
+        {{- if .Values.persistence.enabled }}
+                  persistentVolumeClaim:
+                      claimName: {{ include "fusion-model-hub.fullname" . }}
+        {{- else }}
+                  emptyDir: {}
+        {{- end }}

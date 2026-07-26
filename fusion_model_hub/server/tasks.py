@@ -1,10 +1,16 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from ..convert.converter import ModelConverter
-from ..db.crud import create_quantize_task, create_version, get_quantize_task, get_version, update_quantize_task, update_version, update_version_status
-from ..db.models import ModelFormat, Quantization, TaskStatus, VersionStatus
+from ..db.crud import (
+    create_quantize_task,
+    create_version,
+    get_quantize_task,
+    get_version,
+    update_quantize_task,
+)
+from ..db.models import ModelFormat, Quantization, TaskStatus
 from .config import Settings
 from .deps import get_session_factory, get_settings
 
@@ -17,6 +23,7 @@ async def submit_quantize(
     source_version_id: str,
     target_format: str = "mlx",
     quant_bits: int = 4,
+    calibration_dataset: str = "",
 ) -> str:
     session_factory = get_session_factory()
     settings = get_settings()
@@ -26,6 +33,7 @@ async def submit_quantize(
             source_version_id=source_version_id,
             target_format=target_format,
             quant_bits=quant_bits,
+            calibration_dataset=calibration_dataset,
         )
         task_id = task.id
 
@@ -52,7 +60,7 @@ async def _run_quantize(
             await update_quantize_task(
                 session, task_id,
                 status=TaskStatus.RUNNING,
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
             )
 
         source_ver = None
@@ -65,7 +73,7 @@ async def _run_quantize(
                     session, task_id,
                     status=TaskStatus.FAILED,
                     error_message=f"Source version {source_version_id} not found",
-                    completed_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(UTC),
                 )
             return
 
@@ -102,27 +110,37 @@ async def _run_quantize(
                     session, task_id,
                     status=TaskStatus.COMPLETED,
                     output_version_id=new_ver.id,
-                    completed_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(UTC),
                 )
             logger.info("Quantize task completed: id=%s output_ver=%s", task_id, new_ver.id)
+            try:
+                from .routers.webhooks import dispatch_webhook_event
+                await dispatch_webhook_event("quantize.completed", {"id": task_id, "output_version_id": new_ver.id})
+            except Exception:
+                logger.exception("Webhook dispatch failed for quantize.completed")
         else:
             async with session_factory() as session:
                 await update_quantize_task(
                     session, task_id,
                     status=TaskStatus.FAILED,
                     error_message="Failed to create output version",
-                    completed_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(UTC),
                 )
 
     except Exception as e:
         logger.exception("Quantize task failed: id=%s", task_id)
+        try:
+            from .routers.webhooks import dispatch_webhook_event
+            await dispatch_webhook_event("quantize.failed", {"id": task_id, "error": str(e)})
+        except Exception:
+            pass
         try:
             async with session_factory() as session:
                 await update_quantize_task(
                     session, task_id,
                     status=TaskStatus.FAILED,
                     error_message=str(e),
-                    completed_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(UTC),
                 )
         except Exception:
             logger.exception("Failed to update task status on error: id=%s", task_id)
@@ -139,6 +157,7 @@ async def get_task_status(task_id: str) -> dict | None:
             "source_version_id": task.source_version_id,
             "target_format": task.target_format,
             "quant_bits": task.quant_bits,
+            "calibration_dataset": task.calibration_dataset,
             "status": task.status.value,
             "output_version_id": task.output_version_id,
             "error_message": task.error_message,

@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from fusion_model_hub.repo.downloader import ModelDownloader
-from fusion_model_hub.convert.converter import ModelConverter
 from fusion_model_hub.api.base_binding import FusionMLXBase
+from fusion_model_hub.convert.converter import ModelConverter
+from fusion_model_hub.repo.downloader import ModelDownloader
 
 
 class MockResponse:

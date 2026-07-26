@@ -1,4 +1,3 @@
-import asyncio
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -196,9 +195,13 @@ class TestVersionCRUD:
             f"/api/v1/versions/{version_id}/status",
             json={"target_status": "testing"},
         )
+        await client.put(
+            f"/api/v1/versions/{version_id}/metrics",
+            json={"benchmark_score": 90.0},
+        )
         resp = await client.put(
             f"/api/v1/versions/{version_id}/status",
-            json={"target_status": "published"},
+            json={"target_status": "published", "approval_level": "l1"},
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "published"
@@ -212,7 +215,8 @@ class TestVersionCRUD:
         )
         version_id = ver_resp.json()["id"]
         await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "testing"})
-        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published"})
+        await client.put(f"/api/v1/versions/{version_id}/metrics", json={"benchmark_score": 90.0})
+        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published", "approval_level": "l1"})
         await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "deprecated"})
         resp = await client.post(f"/api/v1/versions/{version_id}/rollback")
         assert resp.status_code == 200
@@ -310,7 +314,8 @@ class TestLifecycleStateMachine:
         version_id = ver_resp.json()["id"]
         r1 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "testing"})
         assert r1.json()["status"] == "testing"
-        r2 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published"})
+        await client.put(f"/api/v1/versions/{version_id}/metrics", json={"benchmark_score": 90.0})
+        r2 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published", "approval_level": "l1"})
         assert r2.json()["status"] == "published"
         r3 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "deprecated"})
         assert r3.json()["status"] == "deprecated"
@@ -332,7 +337,8 @@ class TestLifecycleStateMachine:
         v1_id = v1.json()["id"]
         v2_id = v2.json()["id"]
         await client.put(f"/api/v1/versions/{v1_id}/status", json={"target_status": "testing"})
-        await client.put(f"/api/v1/versions/{v1_id}/status", json={"target_status": "published"})
+        await client.put(f"/api/v1/versions/{v1_id}/metrics", json={"benchmark_score": 90.0})
+        await client.put(f"/api/v1/versions/{v1_id}/status", json={"target_status": "published", "approval_level": "l1"})
         resp = await client.post(
             f"/api/v1/versions/{v1_id}/deprecate",
             json={"successor_version_id": v2_id},
@@ -351,7 +357,8 @@ class TestLifecycleStateMachine:
         )
         version_id = ver_resp.json()["id"]
         await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "testing"})
-        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published"})
+        await client.put(f"/api/v1/versions/{version_id}/metrics", json={"benchmark_score": 90.0})
+        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published", "approval_level": "l1"})
         await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "deprecated"})
         resp = await client.post(f"/api/v1/versions/{version_id}/retire")
         assert resp.status_code == 200
@@ -397,6 +404,14 @@ class TestApiKeyCRUD:
         assert "key" in data
         assert data["key"].startswith("fmh-")
         assert data["permissions"] == "read"
+        assert data["role"] == "developer"
+
+    @pytest.mark.asyncio
+    async def test_create_api_key_with_role(self, client):
+        for role in ["admin", "developer", "viewer"]:
+            resp = await client.post("/api/v1/auth/keys", json={"name": f"key-{role}", "role": role})
+            assert resp.status_code == 201
+            assert resp.json()["role"] == role
 
     @pytest.mark.asyncio
     async def test_list_api_keys(self, client):
@@ -655,3 +670,194 @@ class TestInferenceEmbeddings:
         )
         assert resp.status_code == 400
         assert "not loaded" in resp.json()["detail"].lower()
+
+
+class TestTenantCRUD:
+    @pytest.mark.asyncio
+    async def test_create_tenant(self, client):
+        resp = await client.post("/api/v1/tenants", json={"name": "acme", "display_name": "Acme Corp"})
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == "acme"
+        assert data["display_name"] == "Acme Corp"
+        assert data["is_active"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_tenants(self, client):
+        await client.post("/api/v1/tenants", json={"name": "t1"})
+        await client.post("/api/v1/tenants", json={"name": "t2"})
+        resp = await client.get("/api/v1/tenants")
+        assert resp.status_code == 200
+        assert len(resp.json()) >= 2
+
+    @pytest.mark.asyncio
+    async def test_get_tenant(self, client):
+        create = await client.post("/api/v1/tenants", json={"name": "get-test"})
+        tid = create.json()["id"]
+        resp = await client.get(f"/api/v1/tenants/{tid}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "get-test"
+
+    @pytest.mark.asyncio
+    async def test_update_tenant(self, client):
+        create = await client.post("/api/v1/tenants", json={"name": "upd-test"})
+        tid = create.json()["id"]
+        resp = await client.patch(f"/api/v1/tenants/{tid}", json={"display_name": "Updated"})
+        assert resp.status_code == 200
+        assert resp.json()["display_name"] == "Updated"
+
+    @pytest.mark.asyncio
+    async def test_delete_tenant(self, client):
+        create = await client.post("/api/v1/tenants", json={"name": "del-test"})
+        tid = create.json()["id"]
+        resp = await client.delete(f"/api/v1/tenants/{tid}")
+        assert resp.status_code == 200
+        resp2 = await client.get(f"/api/v1/tenants/{tid}")
+        assert resp2.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_duplicate_tenant(self, client):
+        await client.post("/api/v1/tenants", json={"name": "dup"})
+        resp = await client.post("/api/v1/tenants", json={"name": "dup"})
+        assert resp.status_code == 409
+
+
+class TestWebhookCRUD:
+    @pytest.mark.asyncio
+    async def test_create_webhook(self, client):
+        resp = await client.post("/api/v1/webhooks", json={"name": "wh1", "url": "https://example.com/hook", "events": "model.created"})
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == "wh1"
+        assert data["url"] == "https://example.com/hook"
+        assert data["is_active"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_webhooks(self, client):
+        await client.post("/api/v1/webhooks", json={"name": "wh-a", "url": "https://a.com"})
+        await client.post("/api/v1/webhooks", json={"name": "wh-b", "url": "https://b.com"})
+        resp = await client.get("/api/v1/webhooks")
+        assert resp.status_code == 200
+        assert len(resp.json()) >= 2
+
+    @pytest.mark.asyncio
+    async def test_get_webhook(self, client):
+        create = await client.post("/api/v1/webhooks", json={"name": "wh-get", "url": "https://c.com"})
+        wid = create.json()["id"]
+        resp = await client.get(f"/api/v1/webhooks/{wid}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "wh-get"
+
+    @pytest.mark.asyncio
+    async def test_delete_webhook(self, client):
+        create = await client.post("/api/v1/webhooks", json={"name": "wh-del", "url": "https://d.com"})
+        wid = create.json()["id"]
+        resp = await client.delete(f"/api/v1/webhooks/{wid}")
+        assert resp.status_code == 200
+        resp2 = await client.get(f"/api/v1/webhooks/{wid}")
+        assert resp2.status_code == 404
+
+
+class TestDeploymentCRUD:
+    @pytest.mark.asyncio
+    async def test_create_deployment(self, client):
+        model = await client.post("/api/v1/models", json={"name": "dep-model"})
+        mid = model.json()["id"]
+        resp = await client.post("/api/v1/deployments", json={"model_id": mid, "name": "dep1", "replicas": 2})
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == "dep1"
+        assert data["replicas"] == 2
+        assert data["status"] in ("pending", "running")
+
+    @pytest.mark.asyncio
+    async def test_list_deployments(self, client):
+        model = await client.post("/api/v1/models", json={"name": "dep-list-m"})
+        mid = model.json()["id"]
+        await client.post("/api/v1/deployments", json={"model_id": mid, "name": "d1"})
+        await client.post("/api/v1/deployments", json={"model_id": mid, "name": "d2"})
+        resp = await client.get("/api/v1/deployments")
+        assert resp.status_code == 200
+        assert len(resp.json()) >= 2
+
+    @pytest.mark.asyncio
+    async def test_update_deployment(self, client):
+        model = await client.post("/api/v1/models", json={"name": "dep-upd-m"})
+        mid = model.json()["id"]
+        create = await client.post("/api/v1/deployments", json={"model_id": mid, "name": "d-upd"})
+        did = create.json()["id"]
+        resp = await client.patch(f"/api/v1/deployments/{did}", json={"replicas": 3, "status": "running"})
+        assert resp.status_code == 200
+        assert resp.json()["replicas"] == 3
+        assert resp.json()["status"] == "running"
+
+    @pytest.mark.asyncio
+    async def test_delete_deployment(self, client):
+        model = await client.post("/api/v1/models", json={"name": "dep-del-m"})
+        mid = model.json()["id"]
+        create = await client.post("/api/v1/deployments", json={"model_id": mid, "name": "d-del"})
+        did = create.json()["id"]
+        resp = await client.delete(f"/api/v1/deployments/{did}")
+        assert resp.status_code == 200
+        resp2 = await client.get(f"/api/v1/deployments/{did}")
+        assert resp2.status_code == 404
+
+
+class TestGrayReleaseAndScale:
+    @pytest.mark.asyncio
+    async def test_enable_gray_release(self, client):
+        model = await client.post("/api/v1/models", json={"name": "gray-model"})
+        mid = model.json()["id"]
+        dep = await client.post("/api/v1/deployments", json={"model_id": mid, "name": "gray-dep"})
+        did = dep.json()["id"]
+        resp = await client.post(f"/api/v1/deployments/{did}/gray", json={"gray_version_id": "fake-ver-id", "gray_traffic_ratio": 20})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["gray_enabled"] is True
+        assert data["gray_traffic_ratio"] == 20
+
+    @pytest.mark.asyncio
+    async def test_disable_gray_release(self, client):
+        model = await client.post("/api/v1/models", json={"name": "gray-off-m"})
+        mid = model.json()["id"]
+        dep = await client.post("/api/v1/deployments", json={"model_id": mid, "name": "gray-off-dep"})
+        did = dep.json()["id"]
+        await client.post(f"/api/v1/deployments/{did}/gray", json={"gray_version_id": "some-ver", "gray_traffic_ratio": 10})
+        resp = await client.delete(f"/api/v1/deployments/{did}/gray")
+        assert resp.status_code == 200
+        assert resp.json()["gray_enabled"] is False
+        assert resp.json()["gray_traffic_ratio"] == 0
+
+    @pytest.mark.asyncio
+    async def test_scale_deployment(self, client):
+        model = await client.post("/api/v1/models", json={"name": "scale-model"})
+        mid = model.json()["id"]
+        dep = await client.post("/api/v1/deployments", json={"model_id": mid, "name": "scale-dep"})
+        did = dep.json()["id"]
+        resp = await client.post(f"/api/v1/deployments/{did}/scale", json={"replicas": 5})
+        assert resp.status_code == 200
+        assert resp.json()["replicas"] == 5
+
+
+class TestExportImport:
+    @pytest.mark.asyncio
+    async def test_export_data(self, client):
+        await client.post("/api/v1/models", json={"name": "export-m"})
+        resp = await client.get("/api/v1/system/export")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "models" in data
+        assert "tenants" in data
+        assert "webhooks" in data
+        assert data["version"] == "1.0"
+
+    @pytest.mark.asyncio
+    async def test_import_data(self, client):
+        payload = {
+            "tenants": [{"name": "import-t", "display_name": "Imported"}],
+            "models": [{"name": "import-m", "description": "test", "model_type": "llm"}],
+            "webhooks": [{"name": "import-w", "url": "https://example.com/hook", "events": "model.created"}],
+        }
+        resp = await client.post("/api/v1/system/import", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["imported"] >= 3

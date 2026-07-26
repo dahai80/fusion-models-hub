@@ -4,12 +4,14 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from .base import StorageBackend
+
 logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 5 * 1024 * 1024  # 5MB
 
 
-class LocalStore:
+class LocalStore(StorageBackend):
     """Local filesystem storage for model files with chunked upload and hash verification."""
 
     def __init__(self, data_dir: str = ""):
@@ -79,6 +81,14 @@ class LocalStore:
             return p
         return None
 
+    def is_path_within_store(self, file_path: Path) -> bool:
+        try:
+            resolved = file_path.resolve()
+            models_resolved = self.models_dir.resolve()
+            return str(resolved).startswith(str(models_resolved))
+        except (OSError, ValueError):
+            return False
+
     def delete_version_files(self, model_id: str, version: str) -> bool:
         version_dir = self.models_dir / model_id / version
         if version_dir.exists():
@@ -103,7 +113,10 @@ class LocalStore:
                 h.update(chunk)
         result = h.hexdigest() == expected_hash.lower()
         if not result:
-            logger.warning("Hash mismatch: file=%s expected=%s actual=%s", file_path, expected_hash[:16], h.hexdigest()[:16])
+            logger.warning(
+                "Hash mismatch: file=%s expected=%s actual=%s",
+                file_path, expected_hash[:16], h.hexdigest()[:16],
+            )
         return result
 
     def get_storage_stats(self) -> dict[str, Any]:

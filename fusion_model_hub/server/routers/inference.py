@@ -1,4 +1,5 @@
 import logging
+import random
 import time
 
 import httpx
@@ -13,6 +14,24 @@ router = APIRouter(tags=["inference"])
 
 _LOADED_TTL = 3600
 _loaded_models: dict[str, dict] = {}
+
+
+async def _resolve_model_name_for_inference(model_id: str) -> tuple[str, str | None]:
+    try:
+        from ..deps import get_session_factory
+        sf = get_session_factory()
+        async with sf() as session:
+            deployments = await crud.list_deployments(session, model_id=model_id, status="running")
+            for d in deployments:
+                if d.gray_enabled and d.gray_version_id and random.randint(1, 100) <= d.gray_traffic_ratio:
+                        gray_ver = await crud.get_version(session, d.gray_version_id)
+                        if gray_ver:
+                            m = await crud.get_model(session, model_id)
+                            model_name = m.hf_repo or m.name if m else model_id
+                            return model_name, d.gray_version_id
+    except Exception:
+        logger.debug("Gray route resolution failed, using default", exc_info=True)
+    return "", None
 
 
 async def _cleanup_loaded_models() -> None:
@@ -120,6 +139,19 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep):
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")
 
     model_name = info["model_name"]
+    _, gray_ver = await _resolve_model_name_for_inference(model_id)
+    if gray_ver:
+        try:
+            sf = __import__("fusion_model_hub.server.deps", fromlist=["get_session_factory"]).get_session_factory()
+            async with sf() as s:
+                gv = await crud.get_version(s, gray_ver)
+                if gv:
+                    gm = await crud.get_model(s, gv.model_id)
+                    if gm:
+                        model_name = gm.hf_repo or gm.name
+        except Exception:
+            logger.debug("Gray version model lookup failed", exc_info=True)
+
     payload = {**body, "model": model_name}
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -139,6 +171,19 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep):
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")
 
     model_name = info["model_name"]
+    _, gray_ver = await _resolve_model_name_for_inference(model_id)
+    if gray_ver:
+        try:
+            sf = __import__("fusion_model_hub.server.deps", fromlist=["get_session_factory"]).get_session_factory()
+            async with sf() as s:
+                gv = await crud.get_version(s, gray_ver)
+                if gv:
+                    gm = await crud.get_model(s, gv.model_id)
+                    if gm:
+                        model_name = gm.hf_repo or gm.name
+        except Exception:
+            logger.debug("Gray version model lookup failed", exc_info=True)
+
     payload = {**body, "model": model_name}
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:

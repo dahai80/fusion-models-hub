@@ -1,7 +1,7 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from ...db import crud
 from ..deps import SessionDep
@@ -12,20 +12,25 @@ router = APIRouter(tags=["auth"])
 
 class ApiKeyCreate(BaseModel):
     name: str
+    tenant_id: str = ""
     permissions: str = "read,write"
+    role: str = Field("developer", pattern="^(admin|developer|viewer)$")
 
 
 @router.post("/auth/keys", status_code=201)
-async def create_key(body: ApiKeyCreate, session: SessionDep):
+async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request):
+    tenant_id = body.tenant_id or getattr(request.state, "tenant_id", "") or ""
     ak, full_key = await crud.create_api_key(
-        session, name=body.name, permissions=body.permissions,
+        session, name=body.name, tenant_id=tenant_id, permissions=body.permissions, role=body.role,
     )
     return {
         "id": ak.id,
         "name": ak.name,
+        "tenant_id": ak.tenant_id,
         "key": full_key,
         "key_prefix": ak.key_prefix,
         "permissions": ak.permissions,
+        "role": ak.role.value,
         "is_active": ak.is_active,
         "created_at": ak.created_at.isoformat() if ak.created_at else None,
     }
@@ -39,8 +44,10 @@ async def list_keys(session: SessionDep):
             {
                 "id": k.id,
                 "name": k.name,
+                "tenant_id": k.tenant_id,
                 "key_prefix": k.key_prefix,
                 "permissions": k.permissions,
+                "role": k.role.value,
                 "is_active": k.is_active,
                 "created_at": k.created_at.isoformat() if k.created_at else None,
                 "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
