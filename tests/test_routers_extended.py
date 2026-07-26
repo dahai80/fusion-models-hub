@@ -35,7 +35,7 @@ async def client(app, settings):
     engine = get_engine(settings.db_url)
     await init_db(engine)
     init_deps(settings, engine)
-    transport = ASGITransport(app=app)
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
