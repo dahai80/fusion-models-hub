@@ -1,0 +1,657 @@
+import asyncio
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from fusion_model_hub.db.database import get_engine, init_db
+from fusion_model_hub.server.app import create_app
+from fusion_model_hub.server.config import Settings
+from fusion_model_hub.server.deps import init_deps
+
+
+@pytest.fixture
+def settings():
+    return Settings(
+        host="127.0.0.1", port=8080,
+        data_dir="/tmp/fmh_test_data",
+        db_url="sqlite+aiosqlite:///:memory:",
+        log_level="WARNING",
+    )
+
+
+@pytest.fixture
+def app(settings):
+    return create_app(settings)
+
+
+@pytest.fixture
+async def client(app, settings):
+    engine = get_engine(settings.db_url)
+    await init_db(engine)
+    init_deps(settings, engine)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+class TestHealthCheck:
+    @pytest.mark.asyncio
+    async def test_health(self, client):
+        resp = await client.get("/api/v1/system/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] in ("healthy", "degraded")
+        assert "mlx" in data
+
+    @pytest.mark.asyncio
+    async def test_storage(self, client):
+        resp = await client.get("/api/v1/system/storage")
+        assert resp.status_code == 200
+
+
+class TestModelCRUD:
+    @pytest.mark.asyncio
+    async def test_create_model(self, client):
+        resp = await client.post("/api/v1/models", json={
+            "name": "test-model-1",
+            "description": "A test model",
+            "model_type": "llm",
+            "architecture": "qwen2",
+            "params_size": "7B",
+        })
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == "test-model-1"
+        assert data["model_type"] == "llm"
+        assert "id" in data
+
+    @pytest.mark.asyncio
+    async def test_create_duplicate_name(self, client):
+        await client.post("/api/v1/models", json={"name": "dup-model"})
+        resp = await client.post("/api/v1/models", json={"name": "dup-model"})
+        assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_list_models(self, client):
+        await client.post("/api/v1/models", json={"name": "list-a"})
+        await client.post("/api/v1/models", json={"name": "list-b"})
+        resp = await client.get("/api/v1/models")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 2
+        assert len(data["items"]) >= 2
+
+    @pytest.mark.asyncio
+    async def test_list_models_with_keyword(self, client):
+        await client.post("/api/v1/models", json={
+            "name": "keyword-unique-xyz", "description": "searchable",
+        })
+        resp = await client.get("/api/v1/models", params={"keyword": "unique-xyz"})
+        assert resp.status_code == 200
+        assert resp.json()["total"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_get_model(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "get-model"})
+        model_id = create_resp.json()["id"]
+        resp = await client.get(f"/api/v1/models/{model_id}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "get-model"
+
+    @pytest.mark.asyncio
+    async def test_get_model_not_found(self, client):
+        resp = await client.get("/api/v1/models/nonexistent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_update_model(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "update-model"})
+        model_id = create_resp.json()["id"]
+        resp = await client.put(
+            f"/api/v1/models/{model_id}",
+            json={"description": "updated desc"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["description"] == "updated desc"
+
+    @pytest.mark.asyncio
+    async def test_delete_model(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "delete-model"})
+        model_id = create_resp.json()["id"]
+        resp = await client.delete(f"/api/v1/models/{model_id}")
+        assert resp.status_code == 200
+        resp2 = await client.get(f"/api/v1/models/{model_id}")
+        assert resp2.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_model_with_tags(self, client):
+        resp = await client.post("/api/v1/models", json={
+            "name": "tagged-model",
+            "tags": [{"key": "domain", "value": "nlp"}, {"key": "size", "value": "small"}],
+        })
+        assert resp.status_code == 201
+        assert len(resp.json()["tags"]) == 2
+
+
+class TestVersionCRUD:
+    @pytest.mark.asyncio
+    async def test_upload_version(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "ver-model"})
+        model_id = create_resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0", "format": "mlx", "quantization": "4bit"},
+            files={"file": ("", b"")},
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["version"] == "1.0.0"
+        assert data["model_id"] == model_id
+
+    @pytest.mark.asyncio
+    async def test_upload_version_with_file(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "ver-file-model"})
+        model_id = create_resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0", "format": "mlx", "quantization": "4bit"},
+            files={"file": ("model.bin", b"fake model data", "application/octet-stream")},
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["file_size"] > 0
+        assert data["file_hash"] != ""
+
+    @pytest.mark.asyncio
+    async def test_list_versions(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "ver-list-model"})
+        model_id = create_resp.json()["id"]
+        await client.post(f"/api/v1/models/{model_id}/versions", data={"version": "1.0.0"}, files={"file": ("", b"")})
+        await client.post(f"/api/v1/models/{model_id}/versions", data={"version": "1.1.0"}, files={"file": ("", b"")})
+        resp = await client.get(f"/api/v1/models/{model_id}/versions")
+        assert resp.status_code == 200
+        assert resp.json()["total"] >= 2
+
+    @pytest.mark.asyncio
+    async def test_get_version(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "ver-get-model"})
+        model_id = create_resp.json()["id"]
+        ver_resp = await client.post(
+            f"/api/v1/models/{model_id}/versions", data={"version": "2.0.0"}, files={"file": ("", b"")},
+        )
+        version_id = ver_resp.json()["id"]
+        resp = await client.get(f"/api/v1/versions/{version_id}")
+        assert resp.status_code == 200
+        assert resp.json()["version"] == "2.0.0"
+
+    @pytest.mark.asyncio
+    async def test_version_status_change(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "ver-status-model"})
+        model_id = create_resp.json()["id"]
+        ver_resp = await client.post(
+            f"/api/v1/models/{model_id}/versions", data={"version": "1.0.0"}, files={"file": ("", b"")},
+        )
+        version_id = ver_resp.json()["id"]
+        await client.put(
+            f"/api/v1/versions/{version_id}/status",
+            json={"target_status": "testing"},
+        )
+        resp = await client.put(
+            f"/api/v1/versions/{version_id}/status",
+            json={"target_status": "published"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "published"
+
+    @pytest.mark.asyncio
+    async def test_version_rollback(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "ver-rollback-model"})
+        model_id = create_resp.json()["id"]
+        ver_resp = await client.post(
+            f"/api/v1/models/{model_id}/versions", data={"version": "1.0.0"}, files={"file": ("", b"")},
+        )
+        version_id = ver_resp.json()["id"]
+        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "testing"})
+        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published"})
+        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "deprecated"})
+        resp = await client.post(f"/api/v1/versions/{version_id}/rollback")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "published"
+
+
+class TestHFImport:
+    @pytest.mark.asyncio
+    async def test_import_hf(self, client):
+        resp = await client.post("/api/v1/models/import/hf", json={"hf_repo": "Qwen/Qwen2.5-7B"})
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["hf_repo"] == "Qwen/Qwen2.5-7B"
+        assert "qwen" in data["name"]
+
+    @pytest.mark.asyncio
+    async def test_import_hf_missing_repo(self, client):
+        resp = await client.post("/api/v1/models/import/hf", json={})
+        assert resp.status_code == 400
+
+
+class TestQuantizeAPI:
+    @pytest.mark.asyncio
+    async def test_submit_quantize_invalid_bits(self, client):
+        resp = await client.post("/api/v1/quantize", json={
+            "source_version_id": "nonexistent", "quant_bits": 3,
+        })
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_get_quantize_task_not_found(self, client):
+        resp = await client.get("/api/v1/quantize/nonexistent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_list_quantize_tasks(self, client):
+        resp = await client.get("/api/v1/quantize")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "items" in data
+        assert "total" in data
+
+    @pytest.mark.asyncio
+    async def test_running_quantize_tasks(self, client):
+        resp = await client.get("/api/v1/quantize/running")
+        assert resp.status_code == 200
+        assert "tasks" in resp.json()
+
+
+class TestUrlDownload:
+    @pytest.mark.asyncio
+    async def test_url_download_model_not_found(self, client):
+        resp = await client.post(
+            "/api/v1/models/nonexistent/versions/download-url",
+            json={"url": "https://example.com/model.bin"},
+        )
+        assert resp.status_code == 404
+
+
+class TestHealthMLX:
+    @pytest.mark.asyncio
+    async def test_health_includes_mlx_info(self, client):
+        resp = await client.get("/api/v1/system/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "mlx" in data
+        assert "status" in data["mlx"]
+        assert "url" in data["mlx"]
+
+
+class TestLifecycleStateMachine:
+    @pytest.mark.asyncio
+    async def test_invalid_transition_rejected(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "lifecycle-model"})
+        model_id = create_resp.json()["id"]
+        ver_resp = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0"}, files={"file": ("", b"")},
+        )
+        version_id = ver_resp.json()["id"]
+        resp = await client.put(
+            f"/api/v1/versions/{version_id}/status",
+            json={"target_status": "published"},
+        )
+        assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_valid_full_lifecycle(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "lifecycle-full-model"})
+        model_id = create_resp.json()["id"]
+        ver_resp = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "2.0.0"}, files={"file": ("", b"")},
+        )
+        version_id = ver_resp.json()["id"]
+        r1 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "testing"})
+        assert r1.json()["status"] == "testing"
+        r2 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published"})
+        assert r2.json()["status"] == "published"
+        r3 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "deprecated"})
+        assert r3.json()["status"] == "deprecated"
+        r4 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "retired"})
+        assert r4.json()["status"] == "retired"
+
+    @pytest.mark.asyncio
+    async def test_deprecate_with_successor(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "deprecate-succ-model"})
+        model_id = create_resp.json()["id"]
+        v1 = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0"}, files={"file": ("", b"")},
+        )
+        v2 = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "2.0.0"}, files={"file": ("", b"")},
+        )
+        v1_id = v1.json()["id"]
+        v2_id = v2.json()["id"]
+        await client.put(f"/api/v1/versions/{v1_id}/status", json={"target_status": "testing"})
+        await client.put(f"/api/v1/versions/{v1_id}/status", json={"target_status": "published"})
+        resp = await client.post(
+            f"/api/v1/versions/{v1_id}/deprecate",
+            json={"successor_version_id": v2_id},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "deprecated"
+        assert resp.json()["successor_version_id"] == v2_id
+
+    @pytest.mark.asyncio
+    async def test_retire_endpoint(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "retire-model"})
+        model_id = create_resp.json()["id"]
+        ver_resp = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0"}, files={"file": ("", b"")},
+        )
+        version_id = ver_resp.json()["id"]
+        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "testing"})
+        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published"})
+        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "deprecated"})
+        resp = await client.post(f"/api/v1/versions/{version_id}/retire")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "retired"
+
+
+class TestBenchmark:
+    @pytest.mark.asyncio
+    async def test_update_benchmark(self, client):
+        create_resp = await client.post("/api/v1/models", json={"name": "bench-model"})
+        model_id = create_resp.json()["id"]
+        ver_resp = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0"}, files={"file": ("", b"")},
+        )
+        version_id = ver_resp.json()["id"]
+        resp = await client.put(
+            f"/api/v1/versions/{version_id}/benchmark",
+            json={"benchmark_score": 85.5, "inference_latency": 12.3, "throughput": 45.6},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["benchmark_score"] == 85.5
+        assert data["inference_latency"] == 12.3
+        assert data["throughput"] == 45.6
+
+    @pytest.mark.asyncio
+    async def test_benchmark_version_not_found(self, client):
+        resp = await client.put(
+            "/api/v1/versions/nonexistent/benchmark",
+            json={"benchmark_score": 10.0},
+        )
+        assert resp.status_code == 404
+
+
+class TestApiKeyCRUD:
+    @pytest.mark.asyncio
+    async def test_create_api_key(self, client):
+        resp = await client.post("/api/v1/auth/keys", json={"name": "test-key", "permissions": "read"})
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == "test-key"
+        assert "key" in data
+        assert data["key"].startswith("fmh-")
+        assert data["permissions"] == "read"
+
+    @pytest.mark.asyncio
+    async def test_list_api_keys(self, client):
+        await client.post("/api/v1/auth/keys", json={"name": "list-key"})
+        resp = await client.get("/api/v1/auth/keys")
+        assert resp.status_code == 200
+        assert len(resp.json()["items"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_delete_api_key(self, client):
+        create_resp = await client.post("/api/v1/auth/keys", json={"name": "del-key"})
+        key_id = create_resp.json()["id"]
+        resp = await client.delete(f"/api/v1/auth/keys/{key_id}")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_deactivate_api_key(self, client):
+        create_resp = await client.post("/api/v1/auth/keys", json={"name": "deact-key"})
+        key_id = create_resp.json()["id"]
+        resp = await client.post(f"/api/v1/auth/keys/{key_id}/deactivate")
+        assert resp.status_code == 200
+        assert resp.json()["is_active"] is False
+
+
+class TestAuditLog:
+    @pytest.mark.asyncio
+    async def test_audit_log_query(self, client):
+        resp = await client.get("/api/v1/system/audit")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "items" in data
+        assert "total" in data
+
+
+class TestInference:
+    @pytest.mark.asyncio
+    async def test_serve_model_not_found(self, client):
+        resp = await client.post("/api/v1/models/nonexistent/serve", json={})
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_unload_not_loaded(self, client):
+        resp = await client.delete("/api/v1/models/nonexistent/serve")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_serve_status_not_loaded(self, client):
+        resp = await client.get("/api/v1/models/nonexistent/serve")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "not_loaded"
+
+    @pytest.mark.asyncio
+    async def test_chat_not_loaded(self, client):
+        resp = await client.post("/api/v1/inference/nonexistent/chat", json={"messages": []})
+        assert resp.status_code == 400
+
+
+# -- Phase 6: Cluster, Sync, Batch, Compare --
+
+class TestClusterNodes:
+    @pytest.mark.asyncio
+    async def test_add_node(self, client):
+        resp = await client.post(
+            "/api/v1/cluster/nodes",
+            json={"name": "node-1", "url": "http://node1:8080", "capabilities": "inference"},
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == "node-1"
+        assert data["url"] == "http://node1:8080"
+        assert data["status"] == "active"
+
+    @pytest.mark.asyncio
+    async def test_list_nodes(self, client):
+        await client.post("/api/v1/cluster/nodes", json={"name": "node-list", "url": "http://n2:8080"})
+        resp = await client.get("/api/v1/cluster/nodes")
+        assert resp.status_code == 200
+        assert len(resp.json()) >= 1
+
+    @pytest.mark.asyncio
+    async def test_get_node(self, client):
+        create = await client.post("/api/v1/cluster/nodes", json={"name": "node-get", "url": "http://n3:8080"})
+        node_id = create.json()["id"]
+        resp = await client.get(f"/api/v1/cluster/nodes/{node_id}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "node-get"
+
+    @pytest.mark.asyncio
+    async def test_delete_node(self, client):
+        create = await client.post("/api/v1/cluster/nodes", json={"name": "node-del", "url": "http://n4:8080"})
+        node_id = create.json()["id"]
+        resp = await client.delete(f"/api/v1/cluster/nodes/{node_id}")
+        assert resp.status_code == 200
+        resp2 = await client.get(f"/api/v1/cluster/nodes/{node_id}")
+        assert resp2.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_heartbeat(self, client):
+        create = await client.post("/api/v1/cluster/nodes", json={"name": "node-hb", "url": "http://n5:8080"})
+        node_id = create.json()["id"]
+        resp = await client.post(f"/api/v1/cluster/nodes/{node_id}/heartbeat")
+        assert resp.status_code == 200
+        assert resp.json()["detail"] == "ok"
+
+
+class TestBatchOps:
+    @pytest.mark.asyncio
+    async def test_batch_delete(self, client):
+        ids = []
+        for i in range(3):
+            r = await client.post("/api/v1/models", json={"name": f"batch-del-{i}"})
+            ids.append(r.json()["id"])
+        resp = await client.post("/api/v1/models/batch/delete", json={"model_ids": ids})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_batch_tag(self, client):
+        ids = []
+        for i in range(2):
+            r = await client.post("/api/v1/models", json={"name": f"batch-tag-{i}"})
+            ids.append(r.json()["id"])
+        resp = await client.post(
+            "/api/v1/models/batch/tag",
+            json={"model_ids": ids, "tags": [{"key": "env", "value": "test"}]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 2
+
+
+class TestCompare:
+    @pytest.mark.asyncio
+    async def test_compare_models(self, client):
+        r1 = await client.post("/api/v1/models", json={"name": "cmp-a"})
+        r2 = await client.post("/api/v1/models", json={"name": "cmp-b"})
+        id1, id2 = r1.json()["id"], r2.json()["id"]
+        resp = await client.get(f"/api/v1/models/compare?ids={id1},{id2}")
+        assert resp.status_code == 200
+        assert len(resp.json()["models"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_compare_too_few(self, client):
+        resp = await client.get("/api/v1/models/compare?ids=abc")
+        assert resp.status_code == 400
+
+
+class TestChunkUpload:
+    @pytest.mark.asyncio
+    async def test_chunk_upload_full(self, client):
+        r = await client.post("/api/v1/models", json={"name": "chunk-model"})
+        model_id = r.json()["id"]
+        content = b"hello world chunk upload test data"
+        chunk_size = len(content) // 2
+        chunks = [content[:chunk_size], content[chunk_size:]]
+        version_id = None
+        for i, chunk in enumerate(chunks):
+            resp = await client.post(
+                f"/api/v1/models/{model_id}/versions/chunk-upload",
+                data={
+                    "version": "1.0-chunk",
+                    "format": "mlx",
+                    "quantization": "4bit",
+                    "filename": "model.mlx",
+                    "total_chunks": "2",
+                    "chunk_index": str(i),
+                },
+                files={"chunk": ("chunk.bin", chunk, "application/octet-stream")},
+            )
+            if i < len(chunks) - 1:
+                assert resp.status_code == 201
+                assert resp.json()["status"] == "chunk_received"
+            else:
+                assert resp.status_code == 201
+                version_id = resp.json()["id"]
+        assert version_id is not None
+
+
+class TestVersionDownload:
+    @pytest.mark.asyncio
+    async def test_download_version(self, client):
+        r = await client.post("/api/v1/models", json={"name": "dl-model"})
+        model_id = r.json()["id"]
+        content = b"downloadable model content here"
+        resp = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0-dl", "format": "mlx", "quantization": "4bit"},
+            files={"file": ("model.mlx", content, "application/octet-stream")},
+        )
+        assert resp.status_code == 201
+        version_id = resp.json()["id"]
+        dl = await client.get(f"/api/v1/versions/{version_id}/download")
+        assert dl.status_code == 200
+        assert dl.content == content
+
+    @pytest.mark.asyncio
+    async def test_download_version_no_file(self, client):
+        r = await client.post("/api/v1/models", json={"name": "dl-nofile"})
+        model_id = r.json()["id"]
+        resp = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0-nofile", "format": "mlx", "quantization": "4bit"},
+        )
+        assert resp.status_code == 201
+        version_id = resp.json()["id"]
+        dl = await client.get(f"/api/v1/versions/{version_id}/download")
+        assert dl.status_code == 404
+
+
+class TestModelSync:
+    @pytest.mark.asyncio
+    async def test_sync_invalid_url_scheme(self, client):
+        resp = await client.post(
+            "/api/v1/models/sync",
+            json={"source_url": "ftp://evil.com", "dry_run": True},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_sync_internal_url_blocked(self, client):
+        resp = await client.post(
+            "/api/v1/models/sync",
+            json={"source_url": "http://127.0.0.1:9999", "dry_run": True},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_sync_dry_run_unreachable(self, client):
+        resp = await client.post(
+            "/api/v1/models/sync",
+            json={"source_url": "https://nonexistent.example.com", "dry_run": True},
+        )
+        assert resp.status_code == 502
+
+
+class TestInferenceCompletions:
+    @pytest.mark.asyncio
+    async def test_completions_not_loaded(self, client):
+        r = await client.post("/api/v1/models", json={"name": "comp-model"})
+        model_id = r.json()["id"]
+        resp = await client.post(
+            f"/api/v1/inference/{model_id}/completions",
+            json={"prompt": "hello"},
+        )
+        assert resp.status_code == 400
+        assert "not loaded" in resp.json()["detail"].lower()
+
+
+class TestInferenceEmbeddings:
+    @pytest.mark.asyncio
+    async def test_embeddings_not_loaded(self, client):
+        r = await client.post("/api/v1/models", json={"name": "emb-model"})
+        model_id = r.json()["id"]
+        resp = await client.post(
+            f"/api/v1/inference/{model_id}/embeddings",
+            json={"input": "hello"},
+        )
+        assert resp.status_code == 400
+        assert "not loaded" in resp.json()["detail"].lower()
