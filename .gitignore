@@ -18,3 +18,7 @@ venv/
 *.part
 *.db
 .env
+CLAUDE.md
+PRD.md
+ar.md
+plan.md
