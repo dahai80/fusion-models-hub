@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+
+import httpx
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from ...adapt.decision import AdaptDecisionEngine
+from ...adapt.types import AdaptationLevel, AdaptationResult, MigrationPlan
+from ..deps import SettingsDep
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/adapt", tags=["adapt"])
+
+_engine: AdaptDecisionEngine | None = None
+
+_running_executions: dict[str, asyncio.Task] = {}
+
+
+def _get_engine(settings: SettingsDep) -> AdaptDecisionEngine:
+    global _engine
+    if _engine is None or _engine.mlx_url != settings.mlx_url:
+        _engine = AdaptDecisionEngine(settings.mlx_url)
+    return _engine
+
+
+class AssessRequest(BaseModel):
+    model_id: str = Field(..., description="Model identifier or alias")
+    hf_repo: str | None = Field(None, description="HuggingFace repo (org/name)")
+    source_format: str | None = Field(None, description="Source format: pytorch|safetensors|gguf")
+
+
+class PlanRequest(BaseModel):
+    model_id: str = Field(..., description="Model identifier or alias")
+    params_b: float = Field(..., gt=0, description="Model size in billions of parameters")
+    hf_repo: str | None = Field(None, description="HuggingFace repo (org/name)")
+    source_format: str | None = Field(None, description="Source format: pytorch|safetensors|gguf")
+
+
+class ExecuteRequest(BaseModel):
+    model_id: str = Field(..., description="Model identifier or alias")
+    hf_repo: str | None = Field(None, description="HuggingFace repo (org/name)")
+    source_format: str | None = Field(None, description="Source format: pytorch|safetensors|gguf")
+    quant_bits: int = Field(4, ge=2, le=8, description="Quantization bits (2-8)")
+    params_b: float = Field(0, ge=0, description="Model size in billions of parameters")
+
+
+@router.post("/assess", response_model=AdaptationResult)
+async def assess_model(request: AssessRequest, settings: SettingsDep):
+    engine = _get_engine(settings)
+    try:
+        return await engine.assess(request.model_id, request.hf_repo, request.source_format)
+    except Exception as e:
+        logger.error("Adapt assessment failed: %s", e)
+        raise HTTPException(status_code=503, detail=f"Assessment unavailable: {e}")
+
+
+@router.post("/plan", response_model=MigrationPlan)
+async def generate_migration_plan(request: PlanRequest, settings: SettingsDep):
+    engine = _get_engine(settings)
+    try:
+        return await engine.assess_and_plan(
+            request.model_id, request.params_b, request.hf_repo, request.source_format,
+        )
+    except Exception as e:
+        logger.error("Migration plan generation failed: %s", e)
+        raise HTTPException(status_code=503, detail=f"Plan generation unavailable: {e}")
+
+
+@router.post("/execute", status_code=202)
+async def execute_adaptation(request: ExecuteRequest, settings: SettingsDep):
+    execution_id = uuid.uuid4().hex[:16]
+
+    async def _run_pipeline():
+        try:
+            logger.info("Adapt execution started: id=%s model=%s", execution_id, request.model_id)
+
+            adapt_result = await _get_engine(settings).assess(
+                request.model_id, request.hf_repo, request.source_format,
+            )
+            if adapt_result.level == AdaptationLevel.L4:
+                logger.warning("Adapt execution aborted: model %s is L4 (unsupported)", request.model_id)
+                return
+
+            mlx_url = settings.mlx_url.rstrip("/")
+            hf_source = request.hf_repo or request.model_id
+
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                convert_resp = await client.post(
+                    f"{mlx_url}/v1/convert",
+                    json={"model": hf_source},
+                )
+                if convert_resp.status_code not in (200, 202):
+                    logger.warning(
+                        "Convert step returned %d for %s: %s",
+                        convert_resp.status_code, request.model_id, convert_resp.text,
+                    )
+                else:
+                    logger.info("Convert submitted for %s", request.model_id)
+
+                if request.quant_bits not in (16,):
+                    quant_resp = await client.post(
+                        f"{mlx_url}/v1/quantize",
+                        json={"model": hf_source, "bits": request.quant_bits},
+                    )
+                    if quant_resp.status_code not in (200, 202):
+                        logger.warning(
+                            "Quantize step returned %d for %s: %s",
+                            quant_resp.status_code, request.model_id, quant_resp.text,
+                        )
+                    else:
+                        logger.info("Quantize submitted for %s at %d-bit", request.model_id, request.quant_bits)
+
+            logger.info("Adapt execution completed: id=%s model=%s", execution_id, request.model_id)
+        except Exception:
+            logger.exception("Adapt execution failed: id=%s model=%s", execution_id, request.model_id)
+
+    t = asyncio.create_task(_run_pipeline())
+    _running_executions[execution_id] = t
+    t.add_done_callback(lambda _: _running_executions.pop(execution_id, None))
+
+    return {"execution_id": execution_id, "status": "running", "model_id": request.model_id}
+
+
+@router.get("/execute/{execution_id}")
+async def get_execution_status(execution_id: str):
+    task = _running_executions.get(execution_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    if task.done():
+        if task.exception():
+            return {"execution_id": execution_id, "status": "failed", "error": str(task.exception())}
+        return {"execution_id": execution_id, "status": "completed"}
+    return {"execution_id": execution_id, "status": "running"}

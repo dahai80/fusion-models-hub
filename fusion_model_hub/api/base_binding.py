@@ -34,10 +34,11 @@ class FusionMLXBase:
                 resp = await client.get(f"{self.mlx_url}/v1/models")
                 if resp.status_code == 200:
                     data = resp.json()
+                    version = self._extract_version(data)
                     return {
                         "installed": True,
                         "running": True,
-                        "version": self._extract_version(data),
+                        "version": version,
                         "models_available": len(data.get("data", [])),
                     }
         except Exception:
@@ -49,6 +50,11 @@ class FusionMLXBase:
             return {"installed": True, "running": False, "version": "detected", "models_available": 0}
 
         return {"installed": False, "running": False, "version": "", "models_available": 0}
+
+    async def get_version(self) -> str:
+        """Get Fusion-MLX version string, or empty string if unavailable."""
+        info = await self.detect()
+        return info.get("version", "")
 
     async def check_compatibility(self, required_version: str = ">=0.5.0") -> dict[str, bool]:
         """Check if installed Fusion-MLX version meets requirements.

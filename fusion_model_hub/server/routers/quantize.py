@@ -1,12 +1,13 @@
 import asyncio
 import logging
 
+import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ...db import crud
 from ...db.models import TaskStatus
-from ..deps import SessionDep, get_session_factory
+from ..deps import SessionDep, SettingsDep, get_session_factory
 from ..tasks import get_task_status, list_running_tasks, submit_quantize
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,27 @@ class LoraMergeRequest(BaseModel):
     quant_bits: int = 4
 
 
+class LayerRule(BaseModel):
+    pattern: str
+    bits: int
+
+
+class LayeredQuantizeRequest(BaseModel):
+    model: str
+    output_path: str | None = None
+    default_bits: int = Field(4, ge=2, le=8)
+    layer_rules: list[LayerRule] = Field(..., min_length=1)
+    quant_group_size: int = Field(64, ge=1)
+    quant_mode: str = "affine"
+    trust_remote_code: bool = False
+
+
+class QuantizeEvaluateRequest(BaseModel):
+    source_version_id: str
+    quant_bits: int = 4
+    sample_size: int = 128
+
+
 _running_lora_merges: dict[str, asyncio.Task] = {}
 
 
@@ -197,3 +219,109 @@ async def get_lora_merge_status(task_id: str, session: SessionDep):
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
     }
+
+
+@router.post("/quantize/layered", status_code=202)
+async def start_layered_quantize(body: LayeredQuantizeRequest, settings: SettingsDep):
+    mlx_url = settings.mlx_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            payload = {
+                "model": body.model,
+                "default_bits": body.default_bits,
+                "layer_rules": [{"pattern": r.pattern, "bits": r.bits} for r in body.layer_rules],
+                "quant_group_size": body.quant_group_size,
+                "quant_mode": body.quant_mode,
+                "trust_remote_code": body.trust_remote_code,
+            }
+            if body.output_path:
+                payload["output_path"] = body.output_path
+
+            resp = await client.post(
+                f"{mlx_url}/v1/quantize/layered",
+                json=payload,
+            )
+            if resp.status_code in (200, 202):
+                data = resp.json()
+                logger.info("Layered quantize submitted via MLX: model=%s job_id=%s", body.model, data.get("job_id"))
+                return {"job_id": data.get("job_id", ""), "status": "submitted"}
+            logger.warning("MLX layered quantize returned %d: %s", resp.status_code, resp.text)
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    except httpx.ConnectError as e:
+        logger.error("MLX not available for layered quantize: %s", e)
+        raise HTTPException(status_code=503, detail="Fusion-MLX not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Layered quantize failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/quantize/layered/jobs/{job_id}")
+async def get_layered_quantize_job(job_id: str, settings: SettingsDep):
+    mlx_url = settings.mlx_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{mlx_url}/v1/quantize/layered/jobs/{job_id}")
+            if resp.status_code == 200:
+                return resp.json()
+            if resp.status_code == 404:
+                raise HTTPException(status_code=404, detail="Layered quantize job not found")
+            logger.warning("MLX layered job status returned %d", resp.status_code)
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    except httpx.ConnectError as e:
+        logger.error("MLX not available: %s", e)
+        raise HTTPException(status_code=503, detail="Fusion-MLX not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Layered quantize job status failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/quantize/layered/jobs")
+async def list_layered_quantize_jobs(settings: SettingsDep):
+    mlx_url = settings.mlx_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{mlx_url}/v1/quantize/layered/jobs")
+            if resp.status_code == 200:
+                return resp.json()
+            logger.warning("MLX layered jobs list returned %d", resp.status_code)
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    except httpx.ConnectError as e:
+        logger.error("MLX not available: %s", e)
+        raise HTTPException(status_code=503, detail="Fusion-MLX not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Layered quantize jobs list failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/quantize/evaluate")
+async def evaluate_quantize(body: QuantizeEvaluateRequest, settings: SettingsDep):
+    mlx_url = settings.mlx_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{mlx_url}/v1/quantize/evaluate",
+                json={
+                    "source_version_id": body.source_version_id,
+                    "quant_bits": body.quant_bits,
+                    "sample_size": body.sample_size,
+                },
+            )
+            if resp.status_code == 200:
+                logger.info("Quantize evaluation completed for %s", body.source_version_id)
+                return resp.json()
+            logger.warning("MLX quantize evaluate returned %d: %s", resp.status_code, resp.text)
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    except httpx.ConnectError as e:
+        logger.error("MLX not available for quantize evaluate: %s", e)
+        raise HTTPException(status_code=503, detail="Fusion-MLX not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Quantize evaluation failed")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -12,8 +12,11 @@ from .auth import auth_middleware, set_auth_enabled
 from .config import Settings
 from .deps import init_deps
 from .routers import (
+    adapt,
+    analyze,
     approvals,
     auth,
+    benchmarks,
     branches,
     cluster,
     deployments,
@@ -21,10 +24,12 @@ from .routers import (
     evaluations,
     favorites,
     gitlfs,
+    hardware,
     inference,
     models,
     quantize,
     ratings,
+    recommend,
     security,
     sync,
     system,
@@ -146,6 +151,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ratings.router, prefix="/api/v1")
     app.include_router(favorites.router, prefix="/api/v1")
     app.include_router(branches.router, prefix="/api/v1")
+    app.include_router(hardware.router, prefix="/api/v1")
+    app.include_router(recommend.router, prefix="/api/v1")
+    app.include_router(adapt.router, prefix="/api/v1")
+    app.include_router(benchmarks.router, prefix="/api/v1")
+    app.include_router(analyze.router, prefix="/api/v1")
 
     app.middleware("http")(auth_middleware)
     app.middleware("http")(metrics.metrics_middleware)

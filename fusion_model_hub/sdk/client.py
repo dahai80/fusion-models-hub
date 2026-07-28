@@ -129,6 +129,32 @@ class FusionModelHubClient:
     def get_lora_merge_status(self, task_id: str) -> dict:
         return self._get(f"/quantize/lora-merge/{task_id}")
 
+    def start_layered_quantize(
+        self, model: str, default_bits: int = 4,
+        layer_rules: list[dict] | None = None, output_path: str = "",
+    ) -> dict:
+        return self._post("/quantize/layered", json={
+            "model": model,
+            "default_bits": default_bits,
+            "layer_rules": layer_rules or [],
+            "output_path": output_path,
+        })
+
+    def get_layered_quantize_job(self, job_id: str) -> dict:
+        return self._get(f"/quantize/layered/jobs/{job_id}")
+
+    def list_layered_quantize_jobs(self) -> dict:
+        return self._get("/quantize/layered/jobs")
+
+    def evaluate_quantize(
+        self, source_version_id: str, quant_bits: int = 4, sample_size: int = 128,
+    ) -> dict:
+        return self._post("/quantize/evaluate", json={
+            "source_version_id": source_version_id,
+            "quant_bits": quant_bits,
+            "sample_size": sample_size,
+        })
+
     # --- Inference ---
     def chat_completions(self, model: str, messages: list[dict], **kwargs: Any) -> dict:
         return self._post("/inference/chat/completions", json={
@@ -242,6 +268,101 @@ class FusionModelHubClient:
 
     def get_distributed_task(self, task_id: str) -> dict:
         return self._get(f"/cluster/distributed-tasks/{task_id}")
+
+    # --- Hardware ---
+    def get_hardware_info(self) -> dict:
+        return self._get("/hardware")
+
+    def refresh_hardware(self) -> dict:
+        return self._post("/hardware/refresh")
+
+    # --- Recommend ---
+    def recommend_models(
+        self, task: str = "llm", preference: str = "balanced",
+        max_results: int = 10, min_params: float = 0, max_params: float = 1000,
+    ) -> dict:
+        return self._post("/recommend", json={
+            "task": task, "preference": preference,
+            "max_results": max_results, "min_params_b": min_params, "max_params_b": max_params,
+        })
+
+    def quick_recommend(self, task: str = "llm", preference: str = "balanced") -> dict:
+        return self._get("/recommend/quick", params={"task": task, "preference": preference})
+
+    # --- Adapt ---
+    def assess_model(
+        self, model_id: str, hf_repo: str | None = None,
+        source_format: str | None = None,
+    ) -> dict:
+        body: dict[str, Any] = {"model_id": model_id}
+        if hf_repo:
+            body["hf_repo"] = hf_repo
+        if source_format:
+            body["source_format"] = source_format
+        return self._post("/adapt/assess", json=body)
+
+    def plan_migration(
+        self, model_id: str, params_b: float = 0,
+        hf_repo: str | None = None, source_format: str | None = None,
+    ) -> dict:
+        body: dict[str, Any] = {"model_id": model_id, "params_b": params_b}
+        if hf_repo:
+            body["hf_repo"] = hf_repo
+        if source_format:
+            body["source_format"] = source_format
+        return self._post("/adapt/plan", json=body)
+
+    def execute_adaptation(
+        self, model_id: str, hf_repo: str | None = None,
+        source_format: str | None = None, quant_bits: int = 4,
+        params_b: float = 0,
+    ) -> dict:
+        body: dict[str, Any] = {
+            "model_id": model_id, "quant_bits": quant_bits, "params_b": params_b,
+        }
+        if hf_repo:
+            body["hf_repo"] = hf_repo
+        if source_format:
+            body["source_format"] = source_format
+        return self._post("/adapt/execute", json=body)
+
+    def get_adapt_execution(self, execution_id: str) -> dict:
+        return self._get(f"/adapt/execute/{execution_id}")
+
+    # --- Benchmarks ---
+    def list_benchmarks(
+        self, chip: str | None = None, model_id: str | None = None,
+        quant: str | None = None,
+    ) -> dict:
+        params: dict[str, Any] = {}
+        if chip:
+            params["chip"] = chip
+        if model_id:
+            params["model_id"] = model_id
+        if quant:
+            params["quant"] = quant
+        return self._get("/benchmarks", params=params)
+
+    def get_benchmark(
+        self, model_id: str, chip: str | None = None, quant: str | None = None,
+    ) -> dict:
+        params: dict[str, Any] = {}
+        if chip:
+            params["chip"] = chip
+        if quant:
+            params["quant"] = quant
+        return self._get(f"/benchmarks/{model_id}", params=params)
+
+    # --- Analyze ---
+    def analyze_model(
+        self, model_path: str | None = None, hf_repo: str | None = None,
+    ) -> dict:
+        body: dict[str, Any] = {}
+        if model_path:
+            body["model_path"] = model_path
+        if hf_repo:
+            body["hf_repo"] = hf_repo
+        return self._post("/analyze", json=body)
 
     # --- System ---
     def health(self) -> dict:
