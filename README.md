@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/dahai80/fusion-models-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/dahai80/fusion-models-hub/actions/workflows/ci.yml)
 
+English | [中文](README_CN.md)
+
 Unified model repository and management center for the Fusion-MLX ecosystem on macOS Apple Silicon.
 
 ## Features
