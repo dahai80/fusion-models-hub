@@ -7,7 +7,7 @@ from fusion_model_hub.sdk.async_client import AsyncFusionModelHubClient
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:11444"
 
 
 def _mock_response(json_data=None, status_code=200):
@@ -37,8 +37,8 @@ class TestAsyncClientInit:
         assert "X-API-Key" not in c._headers
 
     def test_url_construction(self):
-        c = AsyncFusionModelHubClient(base_url="http://host:8080")
-        assert c._url("/models") == "http://host:8080/api/v1/models"
+        c = AsyncFusionModelHubClient(base_url="http://host:11444")
+        assert c._url("/models") == "http://host:11444/api/v1/models"
 
     def test_default_timeout(self):
         c = AsyncFusionModelHubClient()
@@ -621,11 +621,11 @@ class TestAsyncClusterMethods:
         mock_inner.post.return_value = _mock_response({"id": "n1"})
         mock_inner.is_closed = False
         client._client = mock_inner
-        result = await client.add_node("node1", "http://node1:8080")
+        result = await client.add_node("node1", "http://node1:11444")
         call_args = mock_inner.post.call_args
         body = call_args[1]["json"]
         assert body["name"] == "node1"
-        assert body["url"] == "http://node1:8080"
+        assert body["url"] == "http://node1:11444"
 
     @pytest.mark.asyncio
     async def test_add_node_custom_capabilities(self, client):
@@ -633,7 +633,7 @@ class TestAsyncClusterMethods:
         mock_inner.post.return_value = _mock_response({"id": "n2"})
         mock_inner.is_closed = False
         client._client = mock_inner
-        result = await client.add_node("node2", "http://node2:8080", capabilities="inference")
+        result = await client.add_node("node2", "http://node2:11444", capabilities="inference")
         call_args = mock_inner.post.call_args
         assert call_args[1]["json"]["capabilities"] == "inference"
 
@@ -929,7 +929,7 @@ class TestAsyncClientURLConstruction:
         client._client = mock_inner
         await client.get_model("m1")
         call_args = mock_inner.get.call_args
-        assert call_args[0][0] == "http://localhost:8080/api/v1/models/m1"
+        assert call_args[0][0] == "http://localhost:11444/api/v1/models/m1"
 
     @pytest.mark.asyncio
     async def test_post_url_correct(self, client):
@@ -939,7 +939,7 @@ class TestAsyncClientURLConstruction:
         client._client = mock_inner
         await client.create_model({"name": "test"})
         call_args = mock_inner.post.call_args
-        assert call_args[0][0] == "http://localhost:8080/api/v1/models"
+        assert call_args[0][0] == "http://localhost:11444/api/v1/models"
 
     @pytest.mark.asyncio
     async def test_delete_url_correct(self, client):
@@ -949,7 +949,7 @@ class TestAsyncClientURLConstruction:
         client._client = mock_inner
         await client.delete_model("m1")
         call_args = mock_inner.delete.call_args
-        assert call_args[0][0] == "http://localhost:8080/api/v1/models/m1"
+        assert call_args[0][0] == "http://localhost:11444/api/v1/models/m1"
 
     @pytest.mark.asyncio
     async def test_headers_passed_to_client(self, client):

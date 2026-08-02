@@ -8,7 +8,7 @@ from fusion_model_hub.sdk import FusionModelHubClient
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:11444"
 
 
 def _mock_response(json_data=None, status_code=200):
@@ -47,8 +47,8 @@ class TestClientInit:
         assert "X-API-Key" not in c._headers
 
     def test_url_construction(self):
-        c = FusionModelHubClient(base_url="http://host:8080")
-        assert c._url("/models") == "http://host:8080/api/v1/models"
+        c = FusionModelHubClient(base_url="http://host:11444")
+        assert c._url("/models") == "http://host:11444/api/v1/models"
 
 
 class TestModelCRUD:
@@ -115,7 +115,7 @@ class TestModelCRUD:
         sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
         expected = {"synced": 5}
         _setup_mock_client(MockClient, "post", _mock_response(expected))
-        result = sdk.sync_registry("http://other-host:8080")
+        result = sdk.sync_registry("http://other-host:11444")
         assert result == expected
 
     @patch("fusion_model_hub.sdk.client.httpx.Client")
@@ -569,7 +569,7 @@ class TestCluster:
         sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
         expected = {"id": "n1", "name": "node1"}
         _setup_mock_client(MockClient, "post", _mock_response(expected))
-        result = sdk.add_node("node1", "http://node1:8080")
+        result = sdk.add_node("node1", "http://node1:11444")
         assert result == expected
 
     @patch("fusion_model_hub.sdk.client.httpx.Client")
@@ -577,7 +577,7 @@ class TestCluster:
         sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
         expected = {"id": "n2", "name": "node2"}
         mock_c = _setup_mock_client(MockClient, "post", _mock_response(expected))
-        result = sdk.add_node("node2", "http://node2:8080", capabilities="inference")
+        result = sdk.add_node("node2", "http://node2:11444", capabilities="inference")
         assert result == expected
         call_args = mock_c.post.call_args
         body = call_args[1]["json"]
@@ -751,7 +751,7 @@ class TestRequestURLs:
         mock_c = _setup_mock_client(MockClient, "get", _mock_response({}))
         sdk.get_model("m1")
         call_args = mock_c.get.call_args
-        assert call_args[0][0] == "http://localhost:8080/api/v1/models/m1"
+        assert call_args[0][0] == "http://localhost:11444/api/v1/models/m1"
 
     @patch("fusion_model_hub.sdk.client.httpx.Client")
     def test_post_url_correct(self, MockClient):
@@ -759,7 +759,7 @@ class TestRequestURLs:
         mock_c = _setup_mock_client(MockClient, "post", _mock_response({}))
         sdk.create_model({"name": "test"})
         call_args = mock_c.post.call_args
-        assert call_args[0][0] == "http://localhost:8080/api/v1/models"
+        assert call_args[0][0] == "http://localhost:11444/api/v1/models"
 
     @patch("fusion_model_hub.sdk.client.httpx.Client")
     def test_put_url_correct(self, MockClient):
@@ -767,7 +767,7 @@ class TestRequestURLs:
         mock_c = _setup_mock_client(MockClient, "put", _mock_response({}))
         sdk.update_model("m1", {"name": "test"})
         call_args = mock_c.put.call_args
-        assert call_args[0][0] == "http://localhost:8080/api/v1/models/m1"
+        assert call_args[0][0] == "http://localhost:11444/api/v1/models/m1"
 
     @patch("fusion_model_hub.sdk.client.httpx.Client")
     def test_delete_url_correct(self, MockClient):
@@ -775,7 +775,7 @@ class TestRequestURLs:
         mock_c = _setup_mock_client(MockClient, "delete", _mock_response({}))
         sdk.delete_model("m1")
         call_args = mock_c.delete.call_args
-        assert call_args[0][0] == "http://localhost:8080/api/v1/models/m1"
+        assert call_args[0][0] == "http://localhost:11444/api/v1/models/m1"
 
     @patch("fusion_model_hub.sdk.client.httpx.Client")
     def test_headers_passed(self, MockClient):

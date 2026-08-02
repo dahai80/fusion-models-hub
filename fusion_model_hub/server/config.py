@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Settings:
-    host: str = "0.0.0.0"
-    port: int = 8080
+    host: str = "127.0.0.1"
+    port: int = 11444
     data_dir: str = ""
     db_url: str = ""
     mlx_url: str = "http://localhost:11434"

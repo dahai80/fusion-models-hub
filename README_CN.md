@@ -68,10 +68,10 @@ macOS Apple Silicon 上 Fusion-MLX 生态的统一模型仓库与管理中心。
 pip install -e ".[test]"
 
 # 启动 API 服务
-fusion-model-hub serve --host 0.0.0.0 --port 8080
+fusion-model-hub serve --host 127.0.0.1 --port 11444
 
 # 自定义数据目录
-fusion-model-hub serve --data-dir /path/to/data --port 8080
+fusion-model-hub serve --data-dir /path/to/data --port 11444
 
 # 启用 TLS
 fusion-model-hub serve --tls-certfile /path/to/cert.pem --tls-keyfile /path/to/key.pem
@@ -375,7 +375,7 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 ```python
 from fusion_model_hub.sdk.client import FusionModelHubClient
 
-client = FusionModelHubClient(base_url="http://localhost:8080", api_key="optional-key")
+client = FusionModelHubClient(base_url="http://localhost:11444", api_key="optional-key")
 
 # 模型
 client.create_model({"name": "qwen2.5-7b", "model_type": "llm"})
@@ -414,7 +414,7 @@ client.gitlfs_batch("upload", [{"oid": "abc", "size": 1024}])
 client.create_gitlfs_lock("models/qwen/safetensors")
 
 # 集群
-client.add_node("node-1", "http://node1:8080")
+client.add_node("node-1", "http://node1:11444")
 client.submit_distributed_task("inference", "version-id", target_node_ids=["node-1"])
 
 # 评分
@@ -463,7 +463,7 @@ client.list_layered_quantize_jobs()
 ```python
 from fusion_model_hub.sdk.async_client import AsyncFusionModelHubClient
 
-async with AsyncFusionModelHubClient(base_url="http://localhost:8080") as client:
+async with AsyncFusionModelHubClient(base_url="http://localhost:11444") as client:
     models = await client.list_models()
     await client.create_rating("model-id", score=5)
 ```
@@ -472,123 +472,123 @@ async with AsyncFusionModelHubClient(base_url="http://localhost:8080") as client
 
 ```bash
 # 创建模型
-curl -X POST http://localhost:8080/api/v1/models \
+curl -X POST http://localhost:11444/api/v1/models \
   -H "Content-Type: application/json" \
   -d '{"name": "qwen2.5-7b", "model_type": "llm", "architecture": "qwen2", "params_size": "7B"}'
 
 # 上传版本（含文件）
-curl -X POST http://localhost:8080/api/v1/models/{model_id}/versions \
+curl -X POST http://localhost:11444/api/v1/models/{model_id}/versions \
   -F "version=1.0.0" \
   -F "format=mlx" \
   -F "quantization=4bit" \
   -F "file=@model_weights.bin"
 
 # 从 HuggingFace 导入（仅元数据）
-curl -X POST http://localhost:8080/api/v1/models/import/hf \
+curl -X POST http://localhost:11444/api/v1/models/import/hf \
   -H "Content-Type: application/json" \
   -d '{"hf_repo": "Qwen/Qwen2.5-7B"}'
 
 # 从 HuggingFace 导入（含下载）
-curl -X POST http://localhost:8080/api/v1/models/import/hf \
+curl -X POST http://localhost:11444/api/v1/models/import/hf \
   -H "Content-Type: application/json" \
   -d '{"hf_repo": "Qwen/Qwen2.5-7B", "download": true}'
 
 # 搜索模型
-curl "http://localhost:8080/api/v1/models/search?keyword=qwen&quantization=4bit&sort_by=benchmark_score"
+curl "http://localhost:11444/api/v1/models/search?keyword=qwen&quantization=4bit&sort_by=benchmark_score"
 
 # 获取模型推荐
-curl "http://localhost:8080/api/v1/models/recommend?task_type=text-generation&max_params=7B&limit=5"
+curl "http://localhost:11444/api/v1/models/recommend?task_type=text-generation&max_params=7B&limit=5"
 
 # 提交量化任务
-curl -X POST http://localhost:8080/api/v1/quantize \
+curl -X POST http://localhost:11444/api/v1/quantize \
   -H "Content-Type: application/json" \
   -d '{"source_version_id": "<version_id>", "quant_bits": 4}'
 
 # 对比量化前后
-curl "http://localhost:8080/api/v1/quantize/{task_id}/compare"
+curl "http://localhost:11444/api/v1/quantize/{task_id}/compare"
 
 # 从 URL 下载版本
-curl -X POST http://localhost:8080/api/v1/models/{model_id}/versions/download-url \
+curl -X POST http://localhost:11444/api/v1/models/{model_id}/versions/download-url \
   -H "Content-Type: application/json" \
   -d '{"url": "https://hf-mirror.com/...", "version": "1.0.0-4bit"}'
 
 # 导出模型为 tar.gz
-curl -o model.tar.gz "http://localhost:8080/api/v1/models/{model_id}/export"
+curl -o model.tar.gz "http://localhost:11444/api/v1/models/{model_id}/export"
 
 # 创建评测
-curl -X POST http://localhost:8080/api/v1/evaluations \
+curl -X POST http://localhost:11444/api/v1/evaluations \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "version_id": "...", "benchmark_name": "mmlu", "status": "running"}'
 
 # 推送模型到远端 FMH 实例
-curl -X POST http://localhost:8080/api/v1/sync/push \
+curl -X POST http://localhost:11444/api/v1/sync/push \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "target_url": "https://other-fmh.example.com"}'
 
 # 晋升版本生命周期（DRAFT→TESTING→PUBLISHED）
-curl -X POST http://localhost:8080/api/v1/versions/{version_id}/promote
+curl -X POST http://localhost:11444/api/v1/versions/{version_id}/promote
 
 # 安全扫描
-curl -X POST http://localhost:8080/api/v1/security/scan \
+curl -X POST http://localhost:11444/api/v1/security/scan \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "version_id": "...", "scan_type": "full"}'
 
 # 嵌入水印
-curl -X POST http://localhost:8080/api/v1/watermark/embed \
+curl -X POST http://localhost:11444/api/v1/watermark/embed \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "version_id": "...", "metadata": "{\"owner\": \"acme\"}"}'
 
 # 加密版本文件
-curl -X POST http://localhost:8080/api/v1/encryption/encrypt \
+curl -X POST http://localhost:11444/api/v1/encryption/encrypt \
   -H "Content-Type: application/json" \
   -d '{"version_id": "..."}'
 
 # 提交审批请求
-curl -X POST http://localhost:8080/api/v1/approvals \
+curl -X POST http://localhost:11444/api/v1/approvals \
   -H "Content-Type: application/json" \
   -d '{"version_id": "...", "level": "L2", "reason": "Production release"}'
 
 # LoRA 合并
-curl -X POST http://localhost:8080/api/v1/quantize/lora-merge \
+curl -X POST http://localhost:11444/api/v1/quantize/lora-merge \
   -H "Content-Type: application/json" \
   -d '{"base_version_id": "...", "lora_version_id": "...", "quant_bits": 4}'
 
 # 提交分布式任务
-curl -X POST http://localhost:8080/api/v1/cluster/distributed-tasks \
+curl -X POST http://localhost:11444/api/v1/cluster/distributed-tasks \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "version_id": "...", "target_nodes": ["node-1", "node-2"]}'
 
 # 评估模型适配等级
-curl -X POST http://localhost:8080/api/v1/adapt/assess \
+curl -X POST http://localhost:11444/api/v1/adapt/assess \
   -H "Content-Type: application/json" \
   -d '{"model_id": "llama-3.2-1b", "hf_repo": "meta-llama/Llama-3.2-1B", "source_format": "safetensors"}'
 
 # 执行完整适配流水线
-curl -X POST http://localhost:8080/api/v1/adapt/execute \
+curl -X POST http://localhost:11444/api/v1/adapt/execute \
   -H "Content-Type: application/json" \
   -d '{"model_id": "llama-3.2-1b", "quant_bits": 4, "params_b": 1.0}'
 
 # 获取适配执行状态
-curl http://localhost:8080/api/v1/adapt/execute/{execution_id}
+curl http://localhost:11444/api/v1/adapt/execute/{execution_id}
 
 # 基准列表
-curl "http://localhost:8080/api/v1/benchmarks?chip=M4+Pro&model_id=qwen2.5-7b"
+curl "http://localhost:11444/api/v1/benchmarks?chip=M4+Pro&model_id=qwen2.5-7b"
 
 # 获取模型最佳基准
-curl "http://localhost:8080/api/v1/benchmarks/qwen2.5-7b?chip=M4+Pro&quant=4bit"
+curl "http://localhost:11444/api/v1/benchmarks/qwen2.5-7b?chip=M4+Pro&quant=4bit"
 
 # 分析模型结构
-curl -X POST http://localhost:8080/api/v1/analyze \
+curl -X POST http://localhost:11444/api/v1/analyze \
   -H "Content-Type: application/json" \
   -d '{"hf_repo": "Qwen/Qwen2.5-7B"}'
 
 # 提交分层量化（按层 bits）
-curl -X POST http://localhost:8080/api/v1/quantize/layered \
+curl -X POST http://localhost:11444/api/v1/quantize/layered \
   -H "Content-Type: application/json" \
   -d '{"model": "qwen2.5-7b", "default_bits": 4, "layer_rules": [{"pattern": ".*lm_head", "bits": 8}], "quant_group_size": 64}'
 
 # 获取分层量化任务状态
-curl http://localhost:8080/api/v1/quantize/layered/jobs/{job_id}
+curl http://localhost:11444/api/v1/quantize/layered/jobs/{job_id}
 ```
 
 ## 架构

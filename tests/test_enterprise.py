@@ -17,7 +17,7 @@ from fusion_model_hub.server.deps import init_deps
 @pytest.fixture
 def settings():
     return Settings(
-        host="127.0.0.1", port=8080,
+        host="127.0.0.1", port=11444,
         data_dir="/tmp/fmh_test_enterprise",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -593,8 +593,8 @@ class TestSDKClient:
 
     def test_client_url_construction(self):
         from fusion_model_hub.sdk import FusionModelHubClient
-        c = FusionModelHubClient(base_url="http://localhost:8080/")
-        assert c._url("/models") == "http://localhost:8080/api/v1/models"
+        c = FusionModelHubClient(base_url="http://localhost:11444/")
+        assert c._url("/models") == "http://localhost:11444/api/v1/models"
 
     def test_client_no_api_key(self):
         from fusion_model_hub.sdk import FusionModelHubClient

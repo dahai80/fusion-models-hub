@@ -20,7 +20,7 @@ spec:
                   image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
                   imagePullPolicy: {{ .Values.image.pullPolicy }}
                   ports:
-                      - containerPort: 8080
+                      - containerPort: 11444
                   env:
                       - name: FMH_DATA_DIR
                         value: {{ .Values.config.dataDir | quote }}

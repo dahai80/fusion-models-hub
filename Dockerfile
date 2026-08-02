@@ -14,14 +14,14 @@ COPY alembic.ini ./
 RUN pip install --no-cache-dir .
 
 ENV FMH_DATA_DIR=/data
-ENV FMH_HOST=0.0.0.0
-ENV FMH_PORT=8080
+ENV FMH_HOST=127.0.0.1
+ENV FMH_PORT=11444
 
 RUN mkdir -p /data
 
-EXPOSE 8080
+EXPOSE 11444
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/api/v1/system/health || exit 1
+    CMD curl -f http://localhost:11444/api/v1/system/health || exit 1
 
-CMD ["fusion-model-hub", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["fusion-model-hub", "--host", "127.0.0.1", "--port", "11444"]

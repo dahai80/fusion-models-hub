@@ -75,10 +75,10 @@ Unified model repository and management center for the Fusion-MLX ecosystem on m
 pip install -e ".[test]"
 
 # Start the API server
-fusion-model-hub serve --host 0.0.0.0 --port 8080
+fusion-model-hub serve --host 127.0.0.1 --port 11444
 
 # Or with custom data directory
-fusion-model-hub serve --data-dir /path/to/data --port 8080
+fusion-model-hub serve --data-dir /path/to/data --port 11444
 
 # With TLS
 fusion-model-hub serve --tls-certfile /path/to/cert.pem --tls-keyfile /path/to/key.pem
@@ -411,7 +411,7 @@ The `FusionModelHubClient` provides a synchronous Python client for all API endp
 ```python
 from fusion_model_hub.sdk.client import FusionModelHubClient
 
-client = FusionModelHubClient(base_url="http://localhost:8080", api_key="optional-key")
+client = FusionModelHubClient(base_url="http://localhost:11444", api_key="optional-key")
 
 # Models
 client.create_model({"name": "qwen2.5-7b", "model_type": "llm"})
@@ -450,7 +450,7 @@ client.gitlfs_batch("upload", [{"oid": "abc", "size": 1024}])
 client.create_gitlfs_lock("models/qwen/safetensors")
 
 # Cluster
-client.add_node("node-1", "http://node1:8080")
+client.add_node("node-1", "http://node1:11444")
 client.submit_distributed_task("inference", "version-id", target_node_ids=["node-1"])
 
 # Ratings
@@ -499,7 +499,7 @@ client.list_layered_quantize_jobs()
 ```python
 from fusion_model_hub.sdk.async_client import AsyncFusionModelHubClient
 
-async with AsyncFusionModelHubClient(base_url="http://localhost:8080") as client:
+async with AsyncFusionModelHubClient(base_url="http://localhost:11444") as client:
     models = await client.list_models()
     await client.create_rating("model-id", score=5)
 ```
@@ -508,144 +508,144 @@ async with AsyncFusionModelHubClient(base_url="http://localhost:8080") as client
 
 ```bash
 # Create a model
-curl -X POST http://localhost:8080/api/v1/models \
+curl -X POST http://localhost:11444/api/v1/models \
   -H "Content-Type: application/json" \
   -d '{"name": "qwen2.5-7b", "model_type": "llm", "architecture": "qwen2", "params_size": "7B"}'
 
 # Upload a version with file
-curl -X POST http://localhost:8080/api/v1/models/{model_id}/versions \
+curl -X POST http://localhost:11444/api/v1/models/{model_id}/versions \
   -F "version=1.0.0" \
   -F "format=mlx" \
   -F "quantization=4bit" \
   -F "file=@model_weights.bin"
 
 # Import from HuggingFace (metadata only)
-curl -X POST http://localhost:8080/api/v1/models/import/hf \
+curl -X POST http://localhost:11444/api/v1/models/import/hf \
   -H "Content-Type: application/json" \
   -d '{"hf_repo": "Qwen/Qwen2.5-7B"}'
 
 # Import from HuggingFace (with download)
-curl -X POST http://localhost:8080/api/v1/models/import/hf \
+curl -X POST http://localhost:11444/api/v1/models/import/hf \
   -H "Content-Type: application/json" \
   -d '{"hf_repo": "Qwen/Qwen2.5-7B", "download": true}'
 
 # Search models
-curl "http://localhost:8080/api/v1/models/search?keyword=qwen&quantization=4bit&sort_by=benchmark_score"
+curl "http://localhost:11444/api/v1/models/search?keyword=qwen&quantization=4bit&sort_by=benchmark_score"
 
 # Get model recommendations
-curl "http://localhost:8080/api/v1/models/recommend?task_type=text-generation&max_params=7B&limit=5"
+curl "http://localhost:11444/api/v1/models/recommend?task_type=text-generation&max_params=7B&limit=5"
 
 # Submit quantize task
-curl -X POST http://localhost:8080/api/v1/quantize \
+curl -X POST http://localhost:11444/api/v1/quantize \
   -H "Content-Type: application/json" \
   -d '{"source_version_id": "<version_id>", "quant_bits": 4}'
 
 # Compare quantized vs source
-curl "http://localhost:8080/api/v1/quantize/{task_id}/compare"
+curl "http://localhost:11444/api/v1/quantize/{task_id}/compare"
 
 # Download version from URL
-curl -X POST http://localhost:8080/api/v1/models/{model_id}/versions/download-url \
+curl -X POST http://localhost:11444/api/v1/models/{model_id}/versions/download-url \
   -H "Content-Type: application/json" \
   -d '{"url": "https://hf-mirror.com/...", "version": "1.0.0-4bit"}'
 
 # Export model as tar.gz
-curl -o model.tar.gz "http://localhost:8080/api/v1/models/{model_id}/export"
+curl -o model.tar.gz "http://localhost:11444/api/v1/models/{model_id}/export"
 
 # Create evaluation
-curl -X POST http://localhost:8080/api/v1/evaluations \
+curl -X POST http://localhost:11444/api/v1/evaluations \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "version_id": "...", "benchmark_name": "mmlu", "status": "running"}'
 
 # Push model to remote FMH instance
-curl -X POST http://localhost:8080/api/v1/sync/push \
+curl -X POST http://localhost:11444/api/v1/sync/push \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "target_url": "https://other-fmh.example.com"}'
 
 # Promote version through lifecycle (DRAFT→TESTING→PUBLISHED)
-curl -X POST http://localhost:8080/api/v1/versions/{version_id}/promote
+curl -X POST http://localhost:11444/api/v1/versions/{version_id}/promote
 
 # Security scan
-curl -X POST http://localhost:8080/api/v1/security/scan \
+curl -X POST http://localhost:11444/api/v1/security/scan \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "version_id": "...", "scan_type": "full"}'
 
 # Embed watermark
-curl -X POST http://localhost:8080/api/v1/watermark/embed \
+curl -X POST http://localhost:11444/api/v1/watermark/embed \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "version_id": "...", "metadata": "{\"owner\": \"acme\"}"}'
 
 # Encrypt version file
-curl -X POST http://localhost:8080/api/v1/encryption/encrypt \
+curl -X POST http://localhost:11444/api/v1/encryption/encrypt \
   -H "Content-Type: application/json" \
   -d '{"version_id": "..."}'
 
 # Submit approval request
-curl -X POST http://localhost:8080/api/v1/approvals \
+curl -X POST http://localhost:11444/api/v1/approvals \
   -H "Content-Type: application/json" \
   -d '{"version_id": "...", "level": "L2", "reason": "Production release"}'
 
 # LoRA merge
-curl -X POST http://localhost:8080/api/v1/quantize/lora-merge \
+curl -X POST http://localhost:11444/api/v1/quantize/lora-merge \
   -H "Content-Type: application/json" \
   -d '{"base_version_id": "...", "lora_version_id": "...", "quant_bits": 4}'
 
 # Submit distributed task
-curl -X POST http://localhost:8080/api/v1/cluster/distributed-tasks \
+curl -X POST http://localhost:11444/api/v1/cluster/distributed-tasks \
   -H "Content-Type: application/json" \
   -d '{"model_id": "...", "version_id": "...", "target_nodes": ["node-1", "node-2"]}'
 
 # Assess model adaptation level
-curl -X POST http://localhost:8080/api/v1/adapt/assess \
+curl -X POST http://localhost:11444/api/v1/adapt/assess \
   -H "Content-Type: application/json" \
   -d '{"model_id": "llama-3.2-1b", "hf_repo": "meta-llama/Llama-3.2-1B", "source_format": "safetensors"}'
 
 # Execute full adaptation pipeline
-curl -X POST http://localhost:8080/api/v1/adapt/execute \
+curl -X POST http://localhost:11444/api/v1/adapt/execute \
   -H "Content-Type: application/json" \
   -d '{"model_id": "llama-3.2-1b", "quant_bits": 4, "params_b": 1.0}'
 
 # Get adaptation execution status
-curl http://localhost:8080/api/v1/adapt/execute/{execution_id}
+curl http://localhost:11444/api/v1/adapt/execute/{execution_id}
 
 # List benchmarks
-curl "http://localhost:8080/api/v1/benchmarks?chip=M4+Pro&model_id=qwen2.5-7b"
+curl "http://localhost:11444/api/v1/benchmarks?chip=M4+Pro&model_id=qwen2.5-7b"
 
 # Get best benchmark for model
-curl "http://localhost:8080/api/v1/benchmarks/qwen2.5-7b?chip=M4+Pro&quant=4bit"
+curl "http://localhost:11444/api/v1/benchmarks/qwen2.5-7b?chip=M4+Pro&quant=4bit"
 
 # Analyze model structure
-curl -X POST http://localhost:8080/api/v1/analyze \
+curl -X POST http://localhost:11444/api/v1/analyze \
   -H "Content-Type: application/json" \
   -d '{"hf_repo": "Qwen/Qwen2.5-7B"}'
 
 # Submit layered quantize (per-layer bits)
-curl -X POST http://localhost:8080/api/v1/quantize/layered \
+curl -X POST http://localhost:11444/api/v1/quantize/layered \
   -H "Content-Type: application/json" \
   -d '{"model": "qwen2.5-7b", "default_bits": 4, "layer_rules": [{"pattern": ".*lm_head", "bits": 8}], "quant_group_size": 64}'
 
 # Get layered quantize job status
-curl http://localhost:8080/api/v1/quantize/layered/jobs/{job_id}
+curl http://localhost:11444/api/v1/quantize/layered/jobs/{job_id}
 
 # Market search across sources
-curl "http://localhost:8080/api/v1/models/market/search?q=qwen&source=huggingface"
+curl "http://localhost:11444/api/v1/models/market/search?q=qwen&source=huggingface"
 
 # Update model modules
-curl -X PATCH http://localhost:8080/api/v1/models/{model_id}/modules \
+curl -X PATCH http://localhost:11444/api/v1/models/{model_id}/modules \
   -H "Content-Type: application/json" \
   -d '{"modules": ["NLP", "Code"]}'
 
 # Trigger benchmark evaluation
-curl -X POST http://localhost:8080/api/v1/benchmarks/trigger \
+curl -X POST http://localhost:11444/api/v1/benchmarks/trigger \
   -H "Content-Type: application/json" \
   -d '{"model_id": "model-id", "suite": "standard"}'
 
 # Sync model to cluster nodes
-curl -X POST http://localhost:8080/api/v1/cluster/sync-model \
+curl -X POST http://localhost:11444/api/v1/cluster/sync-model \
   -H "Content-Type: application/json" \
   -d '{"model_id": "model-id", "target_nodes": ["node-1"]}'
 
 # Route inference request
-curl -X POST http://localhost:8080/api/v1/cluster/route-inference \
+curl -X POST http://localhost:11444/api/v1/cluster/route-inference \
   -H "Content-Type: application/json" \
   -d '{"model_id": "model-id", "payload": {"prompt": "Hello"}}'
 ```
