@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 def settings():
     return Settings(
         host="127.0.0.1",
-        port=8080,
+        port=11444,
         data_dir="/tmp/fmh_test_deep",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",

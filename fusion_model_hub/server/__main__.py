@@ -150,8 +150,8 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     serve_parser = subparsers.add_parser("serve", help="Start the API server")
-    serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
-    serve_parser.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    serve_parser.add_argument("--port", type=int, default=11444, help="Bind port (default: 11444)")
     serve_parser.add_argument("--data-dir", default="", help="Data directory (default: ./data)")
     serve_parser.add_argument("--db-url", default="", help="Database URL")
     serve_parser.add_argument("--mlx-url", default="http://localhost:11434", help="Fusion-MLX API URL")

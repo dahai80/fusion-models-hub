@@ -63,7 +63,7 @@ async def _fetch_models_from_api(settings) -> list[dict]:
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            base_url = f"http://{settings.host}:{settings.port}" if hasattr(settings, "host") else "http://localhost:8080"
+            base_url = f"http://{settings.host}:{settings.port}" if hasattr(settings, "host") else "http://localhost:11444"
             resp = await client.get(f"{base_url}/api/v1/models")
             if resp.status_code == 200:
                 data = resp.json()

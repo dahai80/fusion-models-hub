@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class FusionModelHubClient:
-    def __init__(self, base_url: str = "http://localhost:8080", api_key: str | None = None, timeout: float = 30.0):
+    def __init__(self, base_url: str = "http://localhost:11444", api_key: str | None = None, timeout: float = 30.0):
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {}
         if api_key:

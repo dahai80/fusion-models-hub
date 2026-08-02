@@ -15,7 +15,7 @@ from fusion_model_hub.server.rate_limit import check_rate_limit, reset_rate_limi
 @pytest.fixture
 def settings():
     return Settings(
-        host="127.0.0.1", port=8080,
+        host="127.0.0.1", port=11444,
         data_dir="/tmp/fmh_test_data",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -265,7 +265,7 @@ class TestClusterSyncModel:
         model = await client.post("/api/v1/models", json={"name": "sync-mock"})
         mid = model.json()["id"]
         await client.post("/api/v1/cluster/nodes", json={
-            "name": "sync-node", "url": "http://sync-node:8080",
+            "name": "sync-node", "url": "http://sync-node:11444",
         })
         with _mock_httpx_client(response_status=200, response_json={"ok": True}):
             resp = await client.post("/api/v1/cluster/sync-model", json={

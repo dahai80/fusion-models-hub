@@ -11,7 +11,7 @@ from fusion_model_hub.server.deps import init_deps
 @pytest.fixture
 def settings():
     return Settings(
-        host="127.0.0.1", port=8080,
+        host="127.0.0.1", port=11444,
         data_dir="/tmp/fmh_test_data",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -476,24 +476,24 @@ class TestClusterNodes:
     async def test_add_node(self, client):
         resp = await client.post(
             "/api/v1/cluster/nodes",
-            json={"name": "node-1", "url": "http://node1:8080", "capabilities": "inference"},
+            json={"name": "node-1", "url": "http://node1:11444", "capabilities": "inference"},
         )
         assert resp.status_code == 201
         data = resp.json()
         assert data["name"] == "node-1"
-        assert data["url"] == "http://node1:8080"
+        assert data["url"] == "http://node1:11444"
         assert data["status"] == "active"
 
     @pytest.mark.asyncio
     async def test_list_nodes(self, client):
-        await client.post("/api/v1/cluster/nodes", json={"name": "node-list", "url": "http://n2:8080"})
+        await client.post("/api/v1/cluster/nodes", json={"name": "node-list", "url": "http://n2:11444"})
         resp = await client.get("/api/v1/cluster/nodes")
         assert resp.status_code == 200
         assert len(resp.json()) >= 1
 
     @pytest.mark.asyncio
     async def test_get_node(self, client):
-        create = await client.post("/api/v1/cluster/nodes", json={"name": "node-get", "url": "http://n3:8080"})
+        create = await client.post("/api/v1/cluster/nodes", json={"name": "node-get", "url": "http://n3:11444"})
         node_id = create.json()["id"]
         resp = await client.get(f"/api/v1/cluster/nodes/{node_id}")
         assert resp.status_code == 200
@@ -501,7 +501,7 @@ class TestClusterNodes:
 
     @pytest.mark.asyncio
     async def test_delete_node(self, client):
-        create = await client.post("/api/v1/cluster/nodes", json={"name": "node-del", "url": "http://n4:8080"})
+        create = await client.post("/api/v1/cluster/nodes", json={"name": "node-del", "url": "http://n4:11444"})
         node_id = create.json()["id"]
         resp = await client.delete(f"/api/v1/cluster/nodes/{node_id}")
         assert resp.status_code == 200
@@ -510,7 +510,7 @@ class TestClusterNodes:
 
     @pytest.mark.asyncio
     async def test_heartbeat(self, client):
-        create = await client.post("/api/v1/cluster/nodes", json={"name": "node-hb", "url": "http://n5:8080"})
+        create = await client.post("/api/v1/cluster/nodes", json={"name": "node-hb", "url": "http://n5:11444"})
         node_id = create.json()["id"]
         resp = await client.post(f"/api/v1/cluster/nodes/{node_id}/heartbeat")
         assert resp.status_code == 200

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def settings():
     return Settings(
         host="127.0.0.1",
-        port=8080,
+        port=11444,
         data_dir="/tmp/fmh_test_ext",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -649,7 +649,7 @@ class TestSyncSSRFValidation:
     async def test_blocked_localhost(self, client):
         resp = await client.post(
             "/api/v1/sync/pull",
-            json={"source_url": "http://localhost:8080/api", "model_id": "m1"},
+            json={"source_url": "http://localhost:11444/api", "model_id": "m1"},
         )
         assert resp.status_code == 400
 

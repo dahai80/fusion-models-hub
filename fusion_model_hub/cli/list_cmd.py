@@ -55,7 +55,7 @@ async def _list_remote(limit: int) -> list[dict]:
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get("http://localhost:8080/api/v1/models", params={"limit": limit})
+            resp = await client.get("http://localhost:11444/api/v1/models", params={"limit": limit})
             if resp.status_code == 200:
                 data = resp.json()
                 return data if isinstance(data, list) else data.get("items", [])

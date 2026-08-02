@@ -585,7 +585,7 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             n = await crud.create_cluster_node(
-                session, name="node-ext-1", url="http://node1:8080",
+                session, name="node-ext-1", url="http://node1:11444",
                 capabilities="inference",
             )
             assert n.id
@@ -777,8 +777,8 @@ class TestConfig:
         from fusion_model_hub.server.config import Settings
 
         s = Settings()
-        assert s.host == "0.0.0.0"
-        assert s.port == 8080
+        assert s.host == "127.0.0.1"
+        assert s.port == 11444
 
     def test_settings_env_data_dir(self):
         from fusion_model_hub.server.config import Settings
