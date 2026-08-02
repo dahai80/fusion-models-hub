@@ -73,6 +73,10 @@ async def auth_middleware(request: Request, call_next):
         if role_denied:
             return role_denied
 
+        from .rate_limit import check_rate_limit
+        if not check_rate_limit(ak.key_prefix, ak.qps_limit):
+            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+
         request.state.api_key_id = ak.id
         request.state.api_key_name = ak.name
         request.state.tenant_id = ak.tenant_id

@@ -39,6 +39,8 @@ class ModelCreate(BaseModel):
     task_types: str = ""
     owner: str = ""
     hf_repo: str = ""
+    model_modules: str = ""
+    idle_timeout_minutes: int = 60
     tags: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -53,6 +55,8 @@ class ModelUpdate(BaseModel):
     task_types: str | None = None
     owner: str | None = None
     hf_repo: str | None = None
+    model_modules: str | None = None
+    idle_timeout_minutes: int | None = None
     tags: list[dict[str, str]] | None = None
 
 
@@ -86,6 +90,8 @@ def _model_to_dict(m) -> dict[str, Any]:
         "owner": m.owner,
         "hf_repo": m.hf_repo,
         "download_count": m.download_count,
+        "model_modules": m.model_modules,
+        "idle_timeout_minutes": m.idle_timeout_minutes,
         "tags": [{"key": t.key, "value": t.value} for t in m.tags],
         "versions_count": len(m.versions),
         "created_at": m.created_at.isoformat() if m.created_at else None,
@@ -108,7 +114,8 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
         params_size=body.params_size, license=body.license,
         author=body.author, language=body.language,
         task_types=body.task_types, owner=body.owner,
-        hf_repo=body.hf_repo,
+        hf_repo=body.hf_repo, model_modules=body.model_modules,
+        idle_timeout_minutes=body.idle_timeout_minutes,
     )
     if body.tags:
         await crud.set_tags(session, m.id, body.tags)
@@ -241,6 +248,59 @@ async def search_models(
         "page": page,
         "page_size": page_size,
     }
+
+
+@router.get("/models/market/search")
+async def market_search(
+    request: Request,
+    keyword: str = "",
+    source: str = "all",
+    task: str = "",
+    page: int = 1,
+    page_size: int = 20,
+):
+    results = {"local": [], "huggingface": [], "modelscope": []}
+    if source in ("all", "local"):
+        try:
+            from ..deps import get_session_factory
+            sf = get_session_factory()
+            async with sf() as session:
+                tenant_id = getattr(request.state, "tenant_id", "") or ""
+                models, total = await crud.list_models(
+                    session, tenant_id=tenant_id, keyword=keyword, page=page, page_size=page_size,
+                )
+                results["local"] = [_model_to_dict(m) for m in models]
+        except Exception:
+            logger.exception("Local market search failed")
+    if source in ("all", "modelscope"):
+        try:
+            from ...repo.modelscope_search import search_modelscope
+            ms = await search_modelscope(query=keyword, task=task, page=page, page_size=page_size)
+            results["modelscope"] = ms.get("items", [])
+        except Exception:
+            logger.exception("ModelScope search failed")
+    if source in ("all", "huggingface"):
+        try:
+            hf_url = "https://hf-mirror.com/api/models"
+            params = {"search": keyword, "direction": -1, "sort": "downloads", "limit": page_size}
+            if task:
+                params["filter"] = task
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(hf_url, params=params)
+                if resp.status_code == 200:
+                    items = []
+                    for m in resp.json():
+                        items.append({
+                            "name": m.get("id", ""),
+                            "id": m.get("id", ""),
+                            "task": m.get("pipeline_tag", ""),
+                            "downloads": m.get("downloads", 0),
+                            "source": "huggingface",
+                        })
+                    results["huggingface"] = items
+        except Exception:
+            logger.exception("HF market search failed")
+    return results
 
 
 @router.get("/models/compare")
@@ -477,6 +537,19 @@ async def update_model(model_id: str, body: ModelUpdate, session: SessionDep, re
         await crud.set_tags(session, model_id, body.tags)
         await session.refresh(m)
     return _model_to_dict(m)
+
+
+class ModelModulesUpdate(BaseModel):
+    modules: str = Field(..., description="Comma-separated Fusion modules: chat,code,design,rag,agent")
+
+
+@router.put("/models/{model_id}/modules")
+async def update_model_modules(model_id: str, body: ModelModulesUpdate, session: SessionDep):
+    m = await crud.update_model(session, model_id, model_modules=body.modules)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    logger.info("Updated model modules: id=%s modules=%s", model_id, body.modules)
+    return {"id": m.id, "model_modules": m.model_modules}
 
 
 @router.delete("/models/{model_id}")

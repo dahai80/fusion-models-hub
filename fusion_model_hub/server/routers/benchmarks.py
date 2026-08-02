@@ -4,12 +4,19 @@ import logging
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ..deps import SettingsDep
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/benchmarks", tags=["benchmarks"])
+
+
+class BenchTriggerRequest(BaseModel):
+    model_id: str = ""
+    suite: str = "general"
+    callback_url: str = ""
 
 
 @router.get("")
@@ -77,4 +84,31 @@ async def get_benchmark(
         raise
     except Exception as e:
         logger.exception("Benchmark query failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/trigger")
+async def trigger_benchmark(body: BenchTriggerRequest, settings: SettingsDep):
+    bench_url = settings.bench_url.rstrip("/")
+    payload = {
+        "suite": body.suite,
+        "model_id": body.model_id,
+    }
+    if body.callback_url:
+        payload["callback_url"] = body.callback_url
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{bench_url}/api/v1/tasks", json=payload)
+            if resp.status_code in (200, 201, 202):
+                logger.info("Bench trigger submitted: model=%s suite=%s", body.model_id, body.suite)
+                return {"status": "submitted", "detail": resp.json()}
+            logger.warning("Bench trigger returned %d: %s", resp.status_code, resp.text)
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    except httpx.ConnectError:
+        logger.error("Fusion-Bench not available at %s", bench_url)
+        raise HTTPException(status_code=503, detail="Fusion-Bench not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Bench trigger failed")
         raise HTTPException(status_code=500, detail=str(e))

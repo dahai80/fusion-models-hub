@@ -37,6 +37,12 @@ Unified model repository and management center for the Fusion-MLX ecosystem on m
 - **Approvals** — Multi-level approval workflow (L1 auto-approve, L2/L3 manual review) for version publishing
 - **Git LFS** — Git LFS v2 batch API + lock management for large model files
 - **Distributed Tasks** — Cluster-wide distributed task execution with node targeting
+- **Multi-Source Market Search** — Search models across HuggingFace, ModelScope, and local repo
+- **Module Access Control** — Tag models by module (NLP/CV/Audio/Multimodal/Code/Science) with API key module-level permissions
+- **Auto Bench After Quantize** — Quantize tasks automatically trigger fusion-bench evaluation
+- **Smart Inference Routing** — Cluster inference routing: local MLX first, remote cluster fallback
+- **Model Sync to Cluster** — Push model sync tasks to cluster nodes via fusion-multi-node
+- **Rate Limiting** — Sliding window rate limiter per API key (configurable QPS)
 - **SDK Client** — Synchronous Python client (`FusionModelHubClient`) for all API endpoints
 - **Storage Abstraction** — Pluggable storage backend (LocalStore + MinioStore)
 - **CLI** — `serve`, `export`, `import`, `migrate` subcommands
@@ -231,6 +237,35 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | GET | `/api/v1/cluster/nodes/{id}` | Get node detail |
 | DELETE | `/api/v1/cluster/nodes/{id}` | Remove node |
 | POST | `/api/v1/cluster/nodes/{id}/heartbeat` | Node heartbeat |
+
+### Market Search
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/models/market/search` | Search models across sources (huggingface/modelscope/local) |
+
+### Module Access
+
+| Method | Path | Description |
+|--------|------|-------------|
+| PATCH | `/api/v1/models/{id}/modules` | Update model's module tags (NLP/CV/Audio/Multimodal/Code/Science) |
+
+### Benchmarks Trigger
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/benchmarks/trigger` | Manually trigger bench evaluation for a model |
+
+### Cluster Smart Scheduling
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/cluster/sync-model` | Push model sync task to cluster nodes |
+| POST | `/api/v1/cluster/route-inference` | Route inference: local MLX first, cluster fallback |
+
+### Rate Limiting
+
+API keys support `qps_limit` field. When set, requests are throttled via sliding window rate limiter per key.
 
 ### Batch & Sync
 
@@ -590,6 +625,29 @@ curl -X POST http://localhost:8080/api/v1/quantize/layered \
 
 # Get layered quantize job status
 curl http://localhost:8080/api/v1/quantize/layered/jobs/{job_id}
+
+# Market search across sources
+curl "http://localhost:8080/api/v1/models/market/search?q=qwen&source=huggingface"
+
+# Update model modules
+curl -X PATCH http://localhost:8080/api/v1/models/{model_id}/modules \
+  -H "Content-Type: application/json" \
+  -d '{"modules": ["NLP", "Code"]}'
+
+# Trigger benchmark evaluation
+curl -X POST http://localhost:8080/api/v1/benchmarks/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"model_id": "model-id", "suite": "standard"}'
+
+# Sync model to cluster nodes
+curl -X POST http://localhost:8080/api/v1/cluster/sync-model \
+  -H "Content-Type: application/json" \
+  -d '{"model_id": "model-id", "target_nodes": ["node-1"]}'
+
+# Route inference request
+curl -X POST http://localhost:8080/api/v1/cluster/route-inference \
+  -H "Content-Type: application/json" \
+  -d '{"model_id": "model-id", "payload": {"prompt": "Hello"}}'
 ```
 
 ## Architecture
@@ -619,7 +677,7 @@ fusion_model_hub/
 │       ├── quantize.py    # /api/v1/quantize + compare + LoRA merge
 │       ├── inference.py   # /api/v1/inference proxy + gray-release routing
 │       ├── auth.py        # /api/v1/auth key management + RBAC roles
-│       ├── cluster.py     # /api/v1/cluster nodes + heartbeat + distributed tasks
+│       ├── cluster.py     # /api/v1/cluster nodes + heartbeat + distributed tasks + sync-model + route-inference
 │       ├── system.py      # /api/v1/system (health + MLX + audit + export/import)
 │       ├── tenants.py     # /api/v1/tenants CRUD
 │       ├── webhooks.py    # /api/v1/webhooks + event dispatcher + retry
@@ -637,8 +695,9 @@ fusion_model_hub/
 │       ├── hardware.py    # /api/v1/hardware (proxy MLX + refresh)
 │       ├── recommend.py   # /api/v1/recommend (multi-dim scoring + batch MLX)
 │       ├── adapt.py       # /api/v1/adapt (assess + plan + execute pipeline)
-│       ├── benchmarks.py  # /api/v1/benchmarks (proxy MLX benchmarks)
+│       ├── benchmarks.py  # /api/v1/benchmarks (proxy MLX benchmarks + trigger)
 │       └── analyze.py     # /api/v1/analyze (proxy MLX model structure analysis)
+│   ├── rate_limit.py      # Sliding window rate limiter per API key
 ├── sdk/
 │   ├── client.py          # FusionModelHubClient — synchronous Python SDK
 │   ├── async_client.py    # AsyncFusionModelHubClient — async Python SDK
@@ -675,9 +734,10 @@ fusion_model_hub/
 ├── manage/
 │   └── manager.py         # Local model manager
 └── repo/
-    ├── models.py           # Data models (ModelInfo)
+    ├── models.py           # Data models (ModelInfo, ModelSource enum)
     ├── registry.py         # In-memory model catalog
-    └── downloader.py       # Async download with resume
+    ├── downloader.py       # Async download with resume
+    └── modelscope_search.py # ModelScope search integration
 ```
 
 ## Configuration
@@ -702,6 +762,8 @@ Environment variables:
 | `FMH_BACKUP_DIR` | `` | Directory for auto-backup JSON files |
 | `FMH_TLS_CERTFILE` | `` | TLS certificate file path |
 | `FMH_TLS_KEYFILE` | `` | TLS private key file path |
+| `FMH_BENCH_URL` | `http://localhost:8081` | Fusion-Bench server URL (for auto bench trigger) |
+| `FMH_BENCH_AUTO_TRIGGER` | `true` | Auto-trigger bench after quantize task completes |
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
 

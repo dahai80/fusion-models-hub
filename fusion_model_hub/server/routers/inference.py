@@ -3,7 +3,7 @@ import random
 import time
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ...db import crud
@@ -14,6 +14,30 @@ router = APIRouter(tags=["inference"])
 
 _LOADED_TTL = 3600
 _loaded_models: dict[str, dict] = {}
+_VALID_MODULES = {"chat", "code", "design", "rag", "agent"}
+
+
+async def _check_module_access(model_id: str, request) -> None:
+    module = request.headers.get("X-Fusion-Module", "")
+    if not module:
+        return
+    module = module.lower().strip()
+    if module not in _VALID_MODULES:
+        return
+    try:
+        from ..deps import get_session_factory
+        sf = get_session_factory()
+        async with sf() as session:
+            m = await crud.get_model(session, model_id)
+            if not m or not m.model_modules:
+                return
+            allowed = {x.strip() for x in m.model_modules.split(",") if x.strip()}
+            if allowed and module not in allowed:
+                raise HTTPException(status_code=403, detail=f"Module '{module}' not allowed for this model")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.debug("Module access check failed", exc_info=True)
 
 
 async def _resolve_model_name_for_inference(model_id: str) -> tuple[str, str | None]:
@@ -45,8 +69,7 @@ async def _cleanup_loaded_models() -> None:
                 settings = get_settings()
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     await client.post(
-                        f"{settings.mlx_url}/api/unload",
-                        json={"model": model_name},
+                        f"{settings.mlx_url}/v1/models/{model_name}/unload",
                     )
             except Exception as e:
                 logger.warning("MLX unload during TTL eviction failed for %s: %s", model_id, e)
@@ -84,8 +107,8 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                f"{settings.mlx_url}/api/load",
-                json={"model": model_name, "gpu": body.gpu},
+                f"{settings.mlx_url}/v1/models/{model_name}/load",
+                json={"gpu": body.gpu},
             )
             resp.raise_for_status()
     except httpx.ConnectError:
@@ -113,8 +136,7 @@ async def unload_model(model_id: str, settings: SettingsDep):
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             await client.post(
-                f"{settings.mlx_url}/api/unload",
-                json={"model": model_name},
+                f"{settings.mlx_url}/v1/models/{model_name}/unload",
             )
     except Exception as e:
         logger.warning("MLX unload failed: %s", e)
@@ -133,7 +155,8 @@ async def get_serve_status(model_id: str):
 
 
 @router.post("/inference/{model_id}/chat")
-async def chat_completion(model_id: str, body: dict, settings: SettingsDep):
+async def chat_completion(model_id: str, body: dict, settings: SettingsDep, request: Request):
+    await _check_module_access(model_id, request)
     info = _loaded_models.get(model_id)
     if not info:
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")
@@ -165,7 +188,8 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep):
 
 
 @router.post("/inference/{model_id}/completions")
-async def text_completion(model_id: str, body: dict, settings: SettingsDep):
+async def text_completion(model_id: str, body: dict, settings: SettingsDep, request: Request):
+    await _check_module_access(model_id, request)
     info = _loaded_models.get(model_id)
     if not info:
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")
@@ -197,7 +221,8 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep):
 
 
 @router.post("/inference/{model_id}/embeddings")
-async def embeddings(model_id: str, body: dict, settings: SettingsDep):
+async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: Request):
+    await _check_module_access(model_id, request)
     info = _loaded_models.get(model_id)
     if not info:
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")

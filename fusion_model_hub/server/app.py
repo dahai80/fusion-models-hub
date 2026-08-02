@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .. import __version__
 from ..db.database import get_engine, init_db
 from . import backup, metrics
 from .auth import auth_middleware, set_auth_enabled
@@ -99,7 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="Fusion Model Hub",
         description="Unified model repository & manager for the Fusion-MLX ecosystem",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
 

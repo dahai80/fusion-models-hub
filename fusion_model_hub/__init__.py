@@ -4,6 +4,12 @@ All model inference, conversion, and verification goes through fusion-mlx HTTP A
 Never imports MLX, mlx-lm, torch, or transformers directly.
 """
 
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("fusion-model-hub")
+except Exception:
+    __version__ = "1.0.1"
+
 from .api.base_binding import FusionMLXBase
 from .convert.converter import ModelConverter
 from .db.models import ModelFormat, ModelSource, ModelType, Quantization

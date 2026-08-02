@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import UTC
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -13,7 +14,7 @@ from ...db.crud import (
     list_cluster_nodes,
 )
 from ...db.models import ClusterNode, DistributedTaskStatus
-from ..deps import SessionDep, get_session_factory
+from ..deps import SessionDep, SettingsDep, get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -115,19 +116,57 @@ async def submit_distributed_task(body: DistributedTaskCreate, session: SessionD
         target_nodes=str(body.target_nodes),
     )
 
-    async def _run_distributed(task_id: str):
+    async def _run_distributed(task_id: str, target_nodes: list[str], model_id: str):
         sf = get_session_factory()
+        settings = None
+        try:
+            from ..deps import get_settings
+            settings = get_settings()
+        except Exception:
+            settings = None
         async with sf() as s:
             try:
                 await crud.update_distributed_task(
                     s, task_id, status=DistributedTaskStatus.RUNNING,
                 )
-                logger.info("Distributed task running: id=%s", task_id)
-                await asyncio.sleep(0.1)
-                await crud.update_distributed_task(
-                    s, task_id, status=DistributedTaskStatus.COMPLETED,
-                    progress="{}",
-                )
+                logger.info("Distributed task running: id=%s nodes=%s", task_id, target_nodes)
+                if settings and target_nodes:
+                    nodes = await list_cluster_nodes(s)
+                    node_map = {n.id: n for n in nodes}
+                    completed = 0
+                    failed = 0
+                    for nid in target_nodes:
+                        node = node_map.get(nid)
+                        if not node:
+                            failed += 1
+                            continue
+                        try:
+                            async with httpx.AsyncClient(timeout=30.0) as client:
+                                resp = await client.post(
+                                    f"{node.url}/api/tasks/submit",
+                                    json={"task_type": "model_sync", "model_id": model_id},
+                                )
+                                if resp.status_code in (200, 201, 202):
+                                    completed += 1
+                                else:
+                                    failed += 1
+                                    logger.warning("Node %s sync returned %d", nid, resp.status_code)
+                        except Exception as e:
+                            failed += 1
+                            logger.warning("Node %s sync failed: %s", nid, e)
+                    final_status = DistributedTaskStatus.COMPLETED if failed == 0 else (
+                        DistributedTaskStatus.PARTIAL if completed > 0 else DistributedTaskStatus.FAILED
+                    )
+                    await crud.update_distributed_task(
+                        s, task_id, status=final_status,
+                        progress=f'{{"completed": {completed}, "failed": {failed}}}',
+                    )
+                else:
+                    await asyncio.sleep(0.1)
+                    await crud.update_distributed_task(
+                        s, task_id, status=DistributedTaskStatus.COMPLETED,
+                        progress="{}",
+                    )
             except Exception as e:
                 await crud.update_distributed_task(
                     s, task_id, status=DistributedTaskStatus.FAILED,
@@ -135,7 +174,7 @@ async def submit_distributed_task(body: DistributedTaskCreate, session: SessionD
                 )
                 logger.exception("Distributed task failed: id=%s", task_id)
 
-    t = asyncio.create_task(_run_distributed(task.id))
+    t = asyncio.create_task(_run_distributed(task.id, body.target_nodes, body.model_id))
     _running_distributed[task.id] = t
     t.add_done_callback(lambda _: _running_distributed.pop(task.id, None))
     return {"task_id": task.id, "status": "submitted"}
@@ -156,3 +195,69 @@ async def get_distributed_task_status(task_id: str, session: SessionDep):
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
     }
+
+
+class SyncModelRequest(BaseModel):
+    model_id: str
+    target_nodes: list[str] = []
+
+
+@router.post("/cluster/sync-model")
+async def sync_model_to_cluster(body: SyncModelRequest, session: SessionDep, settings: SettingsDep):
+    m = await crud.get_model(session, body.model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    nodes = await list_cluster_nodes(session)
+    if body.target_nodes:
+        nodes = [n for n in nodes if n.id in body.target_nodes]
+    results = []
+    for node in nodes:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{node.url}/api/tasks/submit",
+                    json={"task_type": "model_sync", "model_id": body.model_id},
+                )
+                results.append({"node_id": node.id, "status": resp.status_code})
+                logger.info("Sync model %s to node %s: %d", body.model_id, node.id, resp.status_code)
+        except Exception as e:
+            results.append({"node_id": node.id, "status": "error", "detail": str(e)})
+            logger.warning("Sync model %s to node %s failed: %s", body.model_id, node.id, e)
+    return {"model_id": body.model_id, "results": results}
+
+
+class RouteInferenceRequest(BaseModel):
+    model_id: str
+    payload: dict = {}
+
+
+@router.post("/cluster/route-inference")
+async def route_inference(body: RouteInferenceRequest, session: SessionDep, settings: SettingsDep):
+    m = await crud.get_model(session, body.model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            stats_resp = await client.get(f"{settings.mlx_url}/metrics")
+            if stats_resp.status_code == 200:
+                local_ok = True
+            else:
+                local_ok = False
+    except Exception:
+        local_ok = False
+
+    if local_ok:
+        return {"route": "local", "model_id": body.model_id}
+
+    nodes = await list_cluster_nodes(session)
+    active_nodes = [n for n in nodes if n.status == "active"]
+    for node in active_nodes:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{node.url}/health")
+                if resp.status_code == 200:
+                    logger.info("Routing inference to node %s", node.id)
+                    return {"route": "remote", "node_id": node.id, "node_url": node.url, "model_id": body.model_id}
+        except Exception:
+            continue
+    raise HTTPException(status_code=503, detail="No available node for inference routing")

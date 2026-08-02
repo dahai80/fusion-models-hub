@@ -118,6 +118,21 @@ async def _run_quantize(
                 await dispatch_webhook_event("quantize.completed", {"id": task_id, "output_version_id": new_ver.id})
             except Exception:
                 logger.exception("Webhook dispatch failed for quantize.completed")
+            try:
+                if settings.bench_auto_trigger and settings.bench_url:
+                    import httpx
+                    bench_payload = {
+                        "suite": "general",
+                        "model_id": source_ver.model_id,
+                    }
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.post(f"{settings.bench_url}/api/v1/tasks", json=bench_payload)
+                        if resp.status_code in (200, 201, 202):
+                            logger.info("Auto-triggered bench for model=%s after quantize", source_ver.model_id)
+                        else:
+                            logger.warning("Bench auto-trigger returned %d", resp.status_code)
+            except Exception:
+                logger.exception("Bench auto-trigger failed for model=%s", source_ver.model_id)
         else:
             async with session_factory() as session:
                 await update_quantize_task(

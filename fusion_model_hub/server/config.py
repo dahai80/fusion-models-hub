@@ -23,6 +23,8 @@ class Settings:
     backup_interval_seconds: int = 86400
     tls_certfile: str = ""
     tls_keyfile: str = ""
+    bench_url: str = ""
+    bench_auto_trigger: bool = False
 
     def __post_init__(self):
         if not self.data_dir:
@@ -45,3 +47,7 @@ class Settings:
             self.tls_certfile = os.environ.get("FMH_TLS_CERTFILE", "")
         if not self.tls_keyfile:
             self.tls_keyfile = os.environ.get("FMH_TLS_KEYFILE", "")
+        if not self.bench_url:
+            self.bench_url = os.environ.get("FMH_BENCH_URL", "http://localhost:8090")
+        if not self.bench_auto_trigger:
+            self.bench_auto_trigger = os.environ.get("FMH_BENCH_AUTO_TRIGGER", "false").lower() == "true"

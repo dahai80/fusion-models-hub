@@ -51,6 +51,7 @@ class VersionStatus(str, enum.Enum):
 class ModelSource(str, enum.Enum):
     OFFICIAL = "official"
     HUGGINGFACE = "huggingface"
+    MODELSCOPE = "modelscope"
     COMMUNITY = "community"
     CONVERTED = "converted"
     LOCAL = "local"
@@ -81,6 +82,8 @@ class Model(Base):
     owner: Mapped[str] = mapped_column(String(128), default="")
     hf_repo: Mapped[str] = mapped_column(String(256), default="")
     download_count: Mapped[int] = mapped_column(Integer, default=0)
+    model_modules: Mapped[str] = mapped_column(String(256), default="")
+    idle_timeout_minutes: Mapped[int] = mapped_column(Integer, default=60)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -189,6 +192,7 @@ class ApiKey(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     permissions: Mapped[str] = mapped_column(String(128), default="read,write")
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.DEVELOPER)
+    qps_limit: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
