@@ -1,6 +1,6 @@
 [project]
 name = "fusion-model-hub"
-version = "1.0.1"
+version = "1.0.2"
 description = "Fusion-Model-Hub — Unified model repository & manager for the Fusion-MLX ecosystem"
 requires-python = ">=3.12"
 dependencies = [

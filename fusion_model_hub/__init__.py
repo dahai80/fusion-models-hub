@@ -8,7 +8,7 @@ try:
     from importlib.metadata import version as _pkg_version
     __version__ = _pkg_version("fusion-model-hub")
 except Exception:
-    __version__ = "1.0.1"
+    __version__ = "1.0.2"
 
 from .api.base_binding import FusionMLXBase
 from .convert.converter import ModelConverter
