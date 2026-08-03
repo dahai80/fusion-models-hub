@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import UTC, datetime
 
 from fastapi import APIRouter
@@ -37,6 +38,8 @@ async def realtime_monitor():
                 "status": "loaded" if is_loaded else "not_loaded",
                 "pinned": model_obj.pinned,
                 "concurrent_requests": 0,
+                "tokens_per_second": 0.0,
+                "source_module": "",
                 "avg_latency_ms": 0.0,
                 "total_requests": stats.get("request_count", 0),
                 "total_tokens": stats.get("total_tokens", 0),
@@ -50,6 +53,18 @@ async def realtime_monitor():
                 entry["avg_latency_ms"] = round(
                     stats.get("total_latency", 0.0) / stats["request_count"], 2
                 )
+                last_at = stats.get("last_request_at", 0)
+                if last_at and last_at > 0:
+                    elapsed = time.time() - last_at
+                    if elapsed < 60:
+                        total_tokens = stats.get("total_tokens", 0)
+                        first_at = stats.get("first_request_at", last_at)
+                        duration = max(last_at - first_at, 1.0)
+                        entry["tokens_per_second"] = round(total_tokens / duration, 2)
+                        entry["concurrent_requests"] = 1
+                source_mod = stats.get("source_module", "")
+                if source_mod:
+                    entry["source_module"] = source_mod
 
             if stats.get("last_request_at"):
                 entry["last_request_at"] = datetime.fromtimestamp(

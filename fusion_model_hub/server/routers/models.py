@@ -57,6 +57,7 @@ class ModelUpdate(BaseModel):
     hf_repo: str | None = None
     model_modules: str | None = None
     idle_timeout_minutes: int | None = None
+    ttl_seconds: int | None = None
     tags: list[dict[str, str]] | None = None
 
 
@@ -92,6 +93,7 @@ def _model_to_dict(m) -> dict[str, Any]:
         "download_count": m.download_count,
         "model_modules": m.model_modules,
         "idle_timeout_minutes": m.idle_timeout_minutes,
+        "ttl_seconds": m.ttl_seconds,
         "tags": [{"key": t.key, "value": t.value} for t in m.tags],
         "versions_count": len(m.versions),
         "created_at": m.created_at.isoformat() if m.created_at else None,

@@ -84,6 +84,7 @@ class Model(Base):
     download_count: Mapped[int] = mapped_column(Integer, default=0)
     model_modules: Mapped[str] = mapped_column(String(256), default="")
     idle_timeout_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

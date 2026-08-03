@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -81,3 +82,44 @@ async def deactivate_key(key_id: str, session: SessionDep):
     if not ak:
         raise HTTPException(status_code=404, detail="API key not found")
     return {"id": ak.id, "is_active": ak.is_active}
+
+
+@router.get("/auth/keys/{key_id}/usage")
+async def key_usage(key_id: str, session: SessionDep):
+    ak = await crud.get_api_key(session, key_id)
+    if not ak:
+        raise HTTPException(status_code=404, detail="API key not found")
+
+    from .inference import _model_stats
+    total_requests = 0
+    by_model: dict[str, dict] = {}
+    for model_id, stats in _model_stats.items():
+        count = stats.get("request_count", 0)
+        if count > 0:
+            total_requests += count
+            by_model[model_id] = {
+                "request_count": count,
+                "total_tokens": stats.get("total_tokens", 0),
+                "avg_latency_ms": round(stats.get("total_latency", 0.0) / count, 2) if count else 0.0,
+            }
+
+    qps_current = 0.0
+    last_at = None
+    for stats in _model_stats.values():
+        la = stats.get("last_request_at")
+        if la and (last_at is None or la > last_at):
+            last_at = la
+    if last_at:
+        last_dt = datetime.fromtimestamp(last_at, tz=UTC)
+        elapsed = (datetime.now(UTC) - last_dt).total_seconds()
+        if elapsed < 60:
+            qps_current = round(total_requests / max(elapsed, 1.0), 2)
+
+    return {
+        "key_id": key_id,
+        "total_requests": total_requests,
+        "qps_current": qps_current,
+        "qps_limit": ak.qps_limit,
+        "last_used": ak.last_used_at.isoformat() if ak.last_used_at else None,
+        "by_model": by_model,
+    }

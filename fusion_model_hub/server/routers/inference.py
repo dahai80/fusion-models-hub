@@ -66,6 +66,8 @@ async def _get_model_idle_ttl(model_id: str) -> int:
         async with sf() as session:
             m = await crud.get_model(session, model_id)
             if m:
+                if m.ttl_seconds is not None and m.ttl_seconds > 0:
+                    return m.ttl_seconds
                 return m.idle_timeout_minutes * 60
     except Exception:
         logger.debug("Failed to get model idle timeout", exc_info=True)
@@ -109,19 +111,23 @@ async def _cleanup_loaded_models() -> None:
         logger.info("TTL evicted model: id=%s name=%s", model_id, model_name)
 
 
-def _update_model_stats(model_id: str, latency_ms: float, tokens: int = 0) -> None:
+def _update_model_stats(model_id: str, latency_ms: float, tokens: int = 0, source_module: str = "") -> None:
     if model_id not in _model_stats:
         _model_stats[model_id] = {
             "request_count": 0,
             "total_latency": 0.0,
             "total_tokens": 0,
+            "first_request_at": time.time(),
             "last_request_at": None,
+            "source_module": "",
         }
     stats = _model_stats[model_id]
     stats["request_count"] += 1
     stats["total_latency"] += latency_ms
     stats["total_tokens"] += tokens
     stats["last_request_at"] = time.time()
+    if source_module:
+        stats["source_module"] = source_module
 
 
 async def _write_inference_audit(model_id: str, action_type: str, latency_ms: float, request: Request) -> None:
@@ -281,7 +287,7 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
         usage = result.get("usage", {})
         if usage:
             tokens = usage.get("total_tokens", 0)
-        _update_model_stats(model_id, latency_ms, tokens)
+        _update_model_stats(model_id, latency_ms, tokens, request.headers.get("X-Fusion-Module", "").lower())
         await _write_inference_audit(model_id, "chat", latency_ms, request)
         return result
     except httpx.ConnectError:
@@ -323,7 +329,7 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
         usage = result.get("usage", {})
         if usage:
             tokens = usage.get("total_tokens", 0)
-        _update_model_stats(model_id, latency_ms, tokens)
+        _update_model_stats(model_id, latency_ms, tokens, request.headers.get("X-Fusion-Module", "").lower())
         await _write_inference_audit(model_id, "completions", latency_ms, request)
         return result
     except httpx.ConnectError:
@@ -352,7 +358,7 @@ async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: 
         usage = result.get("usage", {})
         if usage:
             tokens = usage.get("total_tokens", 0)
-        _update_model_stats(model_id, latency_ms, tokens)
+        _update_model_stats(model_id, latency_ms, tokens, request.headers.get("X-Fusion-Module", "").lower())
         await _write_inference_audit(model_id, "embeddings", latency_ms, request)
         return result
     except httpx.ConnectError:

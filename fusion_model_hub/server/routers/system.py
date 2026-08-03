@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import subprocess
 from collections import defaultdict
 
 import httpx
@@ -199,3 +201,94 @@ async def disk_cleanup(session: SessionDep):
                 })
     logger.info("Cleanup scan found %d retired versions with files", len(candidates))
     return {"candidates": candidates, "total": len(candidates)}
+
+
+def _collect_hardware_info() -> dict:
+    gpu_name = ""
+    gpu_memory_total_mb = 0
+    gpu_memory_used_mb = 0
+    gpu_utilization = 0.0
+    cpu_cores = 0
+    memory_total_gb = 0.0
+    memory_used_gb = 0.0
+
+    try:
+        result = subprocess.run(
+            ["/usr/sbin/system_profiler", "SPDisplaysDataType"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                stripped = line.strip()
+                if "Chipset Model:" in stripped or "Chipset:" in stripped:
+                    gpu_name = stripped.split(":")[-1].strip()
+                elif "VRAM (Dynamic, Max):" in stripped or "VRAM (Total):" in stripped:
+                    val = stripped.split(":")[-1].strip()
+                    if "MB" in val:
+                        gpu_memory_total_mb = int("".join(c for c in val if c.isdigit()))
+                    elif "GB" in val:
+                        gpu_memory_total_mb = int(float("".join(c for c in val if c.isdigit() or c == ".")) * 1024)
+    except Exception:
+        logger.debug("GPU info collection failed", exc_info=True)
+
+    import os
+    cpu_cores = os.cpu_count() or 0
+
+    try:
+        result = subprocess.run(
+            ["/usr/bin/vm_stat"], capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            page_size = 16384
+            free_pages = 0
+            total_pages = 0
+            for line in result.stdout.splitlines():
+                if "Pages free:" in line:
+                    free_pages += int(line.split(":")[-1].strip().rstrip("."))
+                elif "Pages active:" in line or "Pages inactive:" in line:
+                    total_pages += int(line.split(":")[-1].strip().rstrip("."))
+                elif "Pages speculative:" in line:
+                    free_pages += int(line.split(":")[-1].strip().rstrip("."))
+                elif "Pages wired down:" in line:
+                    total_pages += int(line.split(":")[-1].strip().rstrip("."))
+            if total_pages + free_pages > 0:
+                memory_total_gb = round((total_pages + free_pages) * page_size / (1024 ** 3), 2)
+                memory_used_gb = round(total_pages * page_size / (1024 ** 3), 2)
+    except Exception:
+        logger.debug("Memory info collection failed", exc_info=True)
+
+    try:
+        result = subprocess.run(
+            ["/usr/sbin/sysctl", "-n", "hw.memsize"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            memory_total_gb = round(int(result.stdout.strip()) / (1024 ** 3), 2)
+    except Exception:
+        logger.debug("sysctl memsize failed", exc_info=True)
+
+    if not gpu_name:
+        try:
+            result = subprocess.run(
+                ["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_name = result.stdout.strip()
+        except Exception:
+            logger.debug("CPU brand detection failed", exc_info=True)
+
+    return {
+        "gpu_name": gpu_name,
+        "gpu_memory_total_mb": gpu_memory_total_mb,
+        "gpu_memory_used_mb": gpu_memory_used_mb,
+        "gpu_utilization": gpu_utilization,
+        "cpu_cores": cpu_cores,
+        "memory_total_gb": memory_total_gb,
+        "memory_used_gb": memory_used_gb,
+    }
+
+
+@router.get("/system/hardware")
+async def hardware_info():
+    return await asyncio.to_thread(_collect_hardware_info)

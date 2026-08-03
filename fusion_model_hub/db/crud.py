@@ -126,7 +126,7 @@ async def list_models(
 _MODEL_UPDATABLE = {
     "description", "model_type", "architecture", "params_size",
     "license", "author", "language", "task_types", "owner", "hf_repo",
-    "model_modules", "idle_timeout_minutes", "pinned",
+    "model_modules", "idle_timeout_minutes", "ttl_seconds", "pinned",
 }
 
 
