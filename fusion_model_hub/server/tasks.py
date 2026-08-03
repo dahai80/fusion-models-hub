@@ -133,6 +133,34 @@ async def _run_quantize(
                             logger.warning("Bench auto-trigger returned %d", resp.status_code)
             except Exception:
                 logger.exception("Bench auto-trigger failed for model=%s", source_ver.model_id)
+            try:
+                threshold = settings.precision_loss_threshold
+                src_score = float(source_ver.benchmark_score or 0)
+                if src_score > 0 and new_ver:
+                    async with session_factory() as session:
+                        out_ver = await get_version(session, new_ver.id)
+                        if out_ver:
+                            out_score = float(out_ver.benchmark_score or 0)
+                            if out_score > 0:
+                                loss_pct = (src_score - out_score) / src_score * 100
+                                if loss_pct > threshold:
+                                    logger.warning(
+                                        "Precision loss %.1f%% exceeds threshold %.1f%% for model=%s quant=%dbit",
+                                        loss_pct, threshold, source_ver.model_id, quant_bits,
+                                    )
+                                    try:
+                                        await dispatch_webhook_event("quantize.precision_warning", {
+                                            "model_id": source_ver.model_id,
+                                            "source_version_id": source_ver.id,
+                                            "output_version_id": new_ver.id,
+                                            "loss_percent": round(loss_pct, 2),
+                                            "threshold": threshold,
+                                            "quant_bits": quant_bits,
+                                        })
+                                    except Exception:
+                                        logger.exception("Precision warning webhook dispatch failed")
+            except Exception:
+                logger.exception("Precision loss check failed for model=%s", source_ver.model_id)
         else:
             async with session_factory() as session:
                 await update_quantize_task(

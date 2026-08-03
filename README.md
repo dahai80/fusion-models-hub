@@ -43,6 +43,16 @@ Unified model repository and management center for the Fusion-MLX ecosystem on m
 - **Smart Inference Routing** — Cluster inference routing: local MLX first, remote cluster fallback
 - **Model Sync to Cluster** — Push model sync tasks to cluster nodes via fusion-multi-node
 - **Rate Limiting** — Sliding window rate limiter per API key (configurable QPS)
+- **Resident Models** — Pin models to prevent TTL eviction + per-model idle timeout (replaces hardcoded 1h TTL)
+- **API Key Binding** — Bind API keys to specific models and modules (allowed_models, allowed_modules)
+- **Inference Audit** — All inference calls logged to audit trail with latency/tokens; audit logs are non-deletable
+- **Realtime Monitor** — Per-model inference stats (latency, tokens, request count, memory) via /monitor/realtime
+- **Duplicate Scan** — Detect duplicate weight files across model versions
+- **Disk Cleanup** — Identify retired versions with files for cleanup
+- **Quantize Presets** — Built-in presets (chat/code/embedding) for quick quantize task submission
+- **Batch Quantize** — Submit multiple quantize tasks in a single request
+- **Private Repo Search** — Market search includes private/enterprise models (no HF repo) as 4th source
+- **Precision Loss Warning** — Auto-detect quality drop after quantize; webhook alert when loss exceeds configurable threshold
 - **SDK Client** — Synchronous Python client (`FusionModelHubClient`) for all API endpoints
 - **Storage Abstraction** — Pluggable storage backend (LocalStore + MinioStore)
 - **CLI** — `serve`, `export`, `import`, `migrate` subcommands
@@ -155,6 +165,8 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | GET | `/api/v1/system/audit` | Query audit logs |
 | GET | `/api/v1/system/export` | Export all data (models, tenants, webhooks) |
 | POST | `/api/v1/system/import` | Import data |
+| POST | `/api/v1/system/scan-duplicates` | Scan for duplicate weight files |
+| POST | `/api/v1/system/cleanup` | List retired versions with files for cleanup |
 
 ### Auth
 
@@ -208,6 +220,8 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | POST | `/api/v1/inference/{id}/chat` | Chat completion (proxied, gray-release aware) |
 | POST | `/api/v1/inference/{id}/completions` | Text completion (proxied) |
 | POST | `/api/v1/inference/{id}/embeddings` | Embeddings (proxied) |
+| POST | `/api/v1/models/{id}/pin` | Pin model (prevent TTL eviction) |
+| DELETE | `/api/v1/models/{id}/pin` | Unpin model |
 
 ### Quantize
 
@@ -221,6 +235,9 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | POST | `/api/v1/quantize/layered` | Submit per-layer quantize task (per-layer bits, group size, mode) |
 | GET | `/api/v1/quantize/layered/jobs` | List layered quantize jobs |
 | GET | `/api/v1/quantize/layered/jobs/{job_id}` | Get layered quantize job status |
+| POST | `/api/v1/quantize/batch` | Submit multiple quantize tasks at once |
+| GET | `/api/v1/quantize/presets` | List quantize presets (chat/code/embedding) |
+| POST | `/api/v1/quantize/presets/{name}/apply` | Apply a preset to create a quantize task |
 
 ### URL Download
 
@@ -266,6 +283,33 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 ### Rate Limiting
 
 API keys support `qps_limit` field. When set, requests are throttled via sliding window rate limiter per key.
+
+### Monitor
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/monitor/realtime` | Realtime inference stats per model (latency, tokens, memory) |
+
+### API Key Binding
+
+API keys support `allowed_models` (comma-separated model IDs) and `allowed_modules` (comma-separated: chat,code,design,rag,agent) fields. When set, requests are restricted to those models/modules only.
+
+### Resident Models (Pin)
+
+Models can be pinned to prevent TTL eviction. Use `POST /models/{id}/pin` to pin and `DELETE /models/{id}/pin` to unpin. Each model also has `idle_timeout_minutes` (default 60) that controls per-model eviction time.
+
+### Inference Audit
+
+All inference calls (chat/completions/embeddings) are logged to the audit trail with action type, model ID, latency, and module. Audit logs cannot be deleted (DELETE on /audit/ returns 403).
+
+### Downloads
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/downloads` | Create download task (async, with retry and resume) |
+| GET | `/api/v1/downloads` | List download tasks (filter by model_id, status) |
+| GET | `/api/v1/downloads/{task_id}` | Get download task status/progress |
+| DELETE | `/api/v1/downloads/{task_id}` | Cancel download task |
 
 ### Batch & Sync
 
@@ -675,10 +719,10 @@ fusion_model_hub/
 │       ├── models.py      # /api/v1/models + HF import + sync/batch/compare/search/recommend
 │       ├── versions.py    # /api/v1/versions + lifecycle + promote + benchmark + metrics + tar export/import
 │       ├── quantize.py    # /api/v1/quantize + compare + LoRA merge
-│       ├── inference.py   # /api/v1/inference proxy + gray-release routing
+│       ├── inference.py   # /api/v1/inference proxy + gray-release routing + pin/unpin + per-model TTL + stats + audit
 │       ├── auth.py        # /api/v1/auth key management + RBAC roles
 │       ├── cluster.py     # /api/v1/cluster nodes + heartbeat + distributed tasks + sync-model + route-inference
-│       ├── system.py      # /api/v1/system (health + MLX + audit + export/import)
+│       ├── system.py      # /api/v1/system (health + MLX + audit + export/import + duplicate scan + cleanup)
 │       ├── tenants.py     # /api/v1/tenants CRUD
 │       ├── webhooks.py    # /api/v1/webhooks + event dispatcher + retry
 │       ├── deployments.py # /api/v1/deployments + gray release + scale + metrics + MLX integration
@@ -696,7 +740,9 @@ fusion_model_hub/
 │       ├── recommend.py   # /api/v1/recommend (multi-dim scoring + batch MLX)
 │       ├── adapt.py       # /api/v1/adapt (assess + plan + execute pipeline)
 │       ├── benchmarks.py  # /api/v1/benchmarks (proxy MLX benchmarks + trigger)
-│       └── analyze.py     # /api/v1/analyze (proxy MLX model structure analysis)
+│       ├── analyze.py     # /api/v1/analyze (proxy MLX model structure analysis)
+│       ├── monitor.py     # /api/v1/monitor/realtime (per-model inference stats)
+│       └── quantize_presets.py # /api/v1/quantize/presets (chat/code/embedding presets)
 │   ├── rate_limit.py      # Sliding window rate limiter per API key
 ├── sdk/
 │   ├── client.py          # FusionModelHubClient — synchronous Python SDK
@@ -764,6 +810,7 @@ Environment variables:
 | `FMH_TLS_KEYFILE` | `` | TLS private key file path |
 | `FMH_BENCH_URL` | `http://localhost:8081` | Fusion-Bench server URL (for auto bench trigger) |
 | `FMH_BENCH_AUTO_TRIGGER` | `true` | Auto-trigger bench after quantize task completes |
+| `FMH_PRECISION_LOSS_THRESHOLD` | `10.0` | Precision loss % threshold for quantize warning |
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
 

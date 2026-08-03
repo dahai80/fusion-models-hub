@@ -21,6 +21,7 @@ from .routers import (
     branches,
     cluster,
     deployments,
+    downloads,
     encryption,
     evaluations,
     favorites,
@@ -28,7 +29,9 @@ from .routers import (
     hardware,
     inference,
     models,
+    monitor,
     quantize,
+    quantize_presets,
     ratings,
     recommend,
     security,
@@ -137,6 +140,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(versions.router, prefix="/api/v1")
     app.include_router(quantize.router, prefix="/api/v1")
     app.include_router(inference.router, prefix="/api/v1")
+    app.include_router(monitor.router, prefix="/api/v1")
+    app.include_router(quantize_presets.router, prefix="/api/v1")
     app.include_router(system.router, prefix="/api/v1")
     app.include_router(cluster.router, prefix="/api/v1")
     app.include_router(tenants.router, prefix="/api/v1")
@@ -152,6 +157,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ratings.router, prefix="/api/v1")
     app.include_router(favorites.router, prefix="/api/v1")
     app.include_router(branches.router, prefix="/api/v1")
+    app.include_router(downloads.router, prefix="/api/v1")
     app.include_router(hardware.router, prefix="/api/v1")
     app.include_router(recommend.router, prefix="/api/v1")
     app.include_router(adapt.router, prefix="/api/v1")

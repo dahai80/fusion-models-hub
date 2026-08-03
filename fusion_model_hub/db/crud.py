@@ -15,6 +15,7 @@ from .models import (
     ClusterNode,
     Deployment,
     DistributedTask,
+    DownloadTask,
     EvaluationResult,
     GitLfsLock,
     LoraMergeTask,
@@ -125,7 +126,7 @@ async def list_models(
 _MODEL_UPDATABLE = {
     "description", "model_type", "architecture", "params_size",
     "license", "author", "language", "task_types", "owner", "hf_repo",
-    "model_modules", "idle_timeout_minutes",
+    "model_modules", "idle_timeout_minutes", "pinned",
 }
 
 
@@ -140,6 +141,13 @@ async def update_model(session: AsyncSession, model_id: str, **fields) -> Model 
     await session.refresh(m)
     logger.info("Updated model: id=%s fields=%s", model_id, list(fields.keys()))
     return m
+
+
+async def list_pinned_models(session: AsyncSession) -> list[Model]:
+    result = await session.execute(
+        select(Model).where(Model.pinned.is_(True)).order_by(Model.updated_at.desc())
+    )
+    return list(result.scalars().all())
 
 
 async def delete_model(session: AsyncSession, model_id: str) -> bool:
@@ -403,19 +411,25 @@ async def create_api_key(
     permissions: str = "read,write",
     role: str = "developer",
     qps_limit: int = 0,
+    allowed_models: str = "",
+    allowed_modules: str = "",
 ) -> tuple[ApiKey, str]:
     full_key, key_hash, key_prefix = _generate_api_key()
     from .models import UserRole
     ak = ApiKey(
         name=name, tenant_id=tenant_id, key_hash=key_hash,
         key_prefix=key_prefix, permissions=permissions, role=UserRole(role),
-        qps_limit=qps_limit,
+        qps_limit=qps_limit, allowed_models=allowed_models,
+        allowed_modules=allowed_modules,
     )
     session.add(ak)
     await session.commit()
     await session.refresh(ak)
     logger.info("Created API key: id=%s name=%s", ak.id, name)
     return ak, full_key
+
+
+_API_KEY_UPDATABLE = {"permissions", "role", "qps_limit", "allowed_models", "allowed_modules"}
 
 
 async def get_api_key(session: AsyncSession, key_id: str) -> ApiKey | None:
@@ -1222,3 +1236,78 @@ async def delete_model_branch(session: AsyncSession, branch_id: str) -> bool:
     await session.commit()
     logger.info("Deleted model branch: id=%s", branch_id)
     return True
+
+
+# -- DownloadTask CRUD --
+
+async def create_download_task(
+    session: AsyncSession,
+    *,
+    model_id: str,
+    source_url: str,
+    version_id: str = "",
+    speed_limit_kbps: int = 0,
+    max_retries: int = 3,
+) -> DownloadTask:
+    t = DownloadTask(
+        model_id=model_id, source_url=source_url,
+        version_id=version_id, speed_limit_kbps=speed_limit_kbps,
+        max_retries=max_retries,
+    )
+    session.add(t)
+    await session.commit()
+    await session.refresh(t)
+    logger.info("Created download task: id=%s model=%s url=%s", t.id, model_id, source_url)
+    return t
+
+
+async def get_download_task(session: AsyncSession, task_id: str) -> DownloadTask | None:
+    result = await session.execute(select(DownloadTask).where(DownloadTask.id == task_id))
+    return result.scalar_one_or_none()
+
+
+async def list_download_tasks(
+    session: AsyncSession,
+    *,
+    model_id: str = "",
+    status: str = "",
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[DownloadTask], int]:
+    page_size = min(page_size, MAX_PAGE_SIZE)
+    query = select(DownloadTask)
+    count_query = select(func.count()).select_from(DownloadTask)
+    if model_id:
+        query = query.where(DownloadTask.model_id == model_id)
+        count_query = count_query.where(DownloadTask.model_id == model_id)
+    if status:
+        query = query.where(DownloadTask.status == status)
+        count_query = count_query.where(DownloadTask.status == status)
+    total = (await session.execute(count_query)).scalar() or 0
+    offset = (page - 1) * page_size
+    query = query.order_by(DownloadTask.created_at.desc()).offset(offset).limit(page_size)
+    result = await session.execute(query)
+    return list(result.scalars().all()), total
+
+
+_DOWNLOAD_TASK_UPDATABLE = {
+    "status", "progress_percent", "downloaded_bytes", "total_bytes",
+    "retry_count", "error_message", "file_path",
+}
+
+
+async def update_download_task(
+    session: AsyncSession,
+    task_id: str,
+    **fields,
+) -> DownloadTask | None:
+    t = await get_download_task(session, task_id)
+    if not t:
+        return None
+    for k, val in fields.items():
+        if k in _DOWNLOAD_TASK_UPDATABLE and val is not None:
+            setattr(t, k, val)
+    await session.commit()
+    await session.refresh(t)
+    logger.info("Updated download task: id=%s fields=%s", task_id, list(fields.keys()))
+    return t

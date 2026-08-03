@@ -239,10 +239,7 @@ async def route_inference(body: RouteInferenceRequest, session: SessionDep, sett
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             stats_resp = await client.get(f"{settings.mlx_url}/metrics")
-            if stats_resp.status_code == 200:
-                local_ok = True
-            else:
-                local_ok = False
+            local_ok = stats_resp.status_code == 200
     except Exception:
         local_ok = False
 
@@ -259,5 +256,6 @@ async def route_inference(body: RouteInferenceRequest, session: SessionDep, sett
                     logger.info("Routing inference to node %s", node.id)
                     return {"route": "remote", "node_id": node.id, "node_url": node.url, "model_id": body.model_id}
         except Exception:
+            logger.debug("Node %s health check failed", node.id, exc_info=True)
             continue
     raise HTTPException(status_code=503, detail="No available node for inference routing")

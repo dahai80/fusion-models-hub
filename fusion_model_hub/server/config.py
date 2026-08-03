@@ -25,6 +25,8 @@ class Settings:
     tls_keyfile: str = ""
     bench_url: str = ""
     bench_auto_trigger: bool = False
+    download_speed_limit_kbps: int = 0
+    precision_loss_threshold: float = 10.0
 
     def __post_init__(self):
         if not self.data_dir:
@@ -51,3 +53,7 @@ class Settings:
             self.bench_url = os.environ.get("FMH_BENCH_URL", "http://localhost:8090")
         if not self.bench_auto_trigger:
             self.bench_auto_trigger = os.environ.get("FMH_BENCH_AUTO_TRIGGER", "false").lower() == "true"
+        if not self.download_speed_limit_kbps:
+            self.download_speed_limit_kbps = int(os.environ.get("FMH_DOWNLOAD_SPEED_LIMIT", "0"))
+        if not self.precision_loss_threshold:
+            self.precision_loss_threshold = float(os.environ.get("FMH_PRECISION_LOSS_THRESHOLD", "10.0"))

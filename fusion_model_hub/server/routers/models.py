@@ -259,14 +259,14 @@ async def market_search(
     page: int = 1,
     page_size: int = 20,
 ):
-    results = {"local": [], "huggingface": [], "modelscope": []}
+    results = {"local": [], "huggingface": [], "modelscope": [], "private": []}
     if source in ("all", "local"):
         try:
             from ..deps import get_session_factory
             sf = get_session_factory()
             async with sf() as session:
                 tenant_id = getattr(request.state, "tenant_id", "") or ""
-                models, total = await crud.list_models(
+                models, _ = await crud.list_models(
                     session, tenant_id=tenant_id, keyword=keyword, page=page, page_size=page_size,
                 )
                 results["local"] = [_model_to_dict(m) for m in models]
@@ -279,6 +279,21 @@ async def market_search(
             results["modelscope"] = ms.get("items", [])
         except Exception:
             logger.exception("ModelScope search failed")
+    if source in ("all", "private"):
+        try:
+            from ..deps import get_session_factory
+            sf = get_session_factory()
+            async with sf() as session:
+                models, _ = await crud.list_models(
+                    session, keyword=keyword, page=page, page_size=page_size,
+                )
+                private_models = [
+                    _model_to_dict(m) for m in models
+                    if not m.hf_repo
+                ]
+                results["private"] = private_models
+        except Exception:
+            logger.exception("Private repo search failed")
     if source in ("all", "huggingface"):
         try:
             hf_url = "https://hf-mirror.com/api/models"

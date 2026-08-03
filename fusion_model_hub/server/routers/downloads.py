@@ -1,0 +1,212 @@
+import asyncio
+import logging
+import time
+from urllib.parse import urlparse
+
+import httpx
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from ...db import crud
+from ..deps import SessionDep, SettingsDep, get_session_factory
+
+logger = logging.getLogger(__name__)
+router = APIRouter(tags=["downloads"])
+
+
+class DownloadCreate(BaseModel):
+    model_id: str
+    source_url: str
+    version_id: str = ""
+    speed_limit_kbps: int = 0
+    max_retries: int = 3
+
+
+@router.post("/downloads", status_code=201)
+async def create_download(body: DownloadCreate, session: SessionDep, settings: SettingsDep):
+    parsed = urlparse(body.source_url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Only http/https URLs allowed")
+
+    m = await crud.get_model(session, body.model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    task = await crud.create_download_task(
+        session,
+        model_id=body.model_id,
+        source_url=body.source_url,
+        version_id=body.version_id,
+        speed_limit_kbps=body.speed_limit_kbps,
+        max_retries=body.max_retries,
+    )
+
+    _download_task = asyncio.create_task(_run_download(task.id, body.source_url, settings))  # noqa: RUF006
+
+    logger.info("Download task created: id=%s model=%s url=%s", task.id, body.model_id, body.source_url)
+    return {
+        "task_id": task.id,
+        "model_id": task.model_id,
+        "status": task.status,
+        "source_url": task.source_url,
+    }
+
+
+@router.get("/downloads")
+async def list_downloads(
+    session: SessionDep,
+    model_id: str = "",
+    status: str = "",
+    page: int = 1,
+    page_size: int = 20,
+):
+    tasks, total = await crud.list_download_tasks(
+        session, model_id=model_id, status=status, page=page, page_size=page_size,
+    )
+    return {
+        "tasks": [
+            {
+                "task_id": t.id,
+                "model_id": t.model_id,
+                "version_id": t.version_id,
+                "source_url": t.source_url,
+                "status": t.status,
+                "progress_percent": t.progress_percent,
+                "downloaded_bytes": t.downloaded_bytes,
+                "total_bytes": t.total_bytes,
+                "speed_limit_kbps": t.speed_limit_kbps,
+                "retry_count": t.retry_count,
+                "max_retries": t.max_retries,
+                "error_message": t.error_message,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            }
+            for t in tasks
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/downloads/{task_id}")
+async def get_download(task_id: str, session: SessionDep):
+    t = await crud.get_download_task(session, task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Download task not found")
+    return {
+        "task_id": t.id,
+        "model_id": t.model_id,
+        "version_id": t.version_id,
+        "source_url": t.source_url,
+        "status": t.status,
+        "progress_percent": t.progress_percent,
+        "downloaded_bytes": t.downloaded_bytes,
+        "total_bytes": t.total_bytes,
+        "speed_limit_kbps": t.speed_limit_kbps,
+        "retry_count": t.retry_count,
+        "max_retries": t.max_retries,
+        "error_message": t.error_message,
+        "file_path": t.file_path,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+    }
+
+
+@router.delete("/downloads/{task_id}")
+async def cancel_download(task_id: str, session: SessionDep):
+    t = await crud.get_download_task(session, task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Download task not found")
+    if t.status in ("completed", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"Cannot cancel task in {t.status} state")
+    await crud.update_download_task(session, task_id, status="cancelled")
+    logger.info("Download task cancelled: id=%s", task_id)
+    return {"task_id": task_id, "status": "cancelled"}
+
+
+async def _run_download(task_id: str, source_url: str, settings):
+    sf = get_session_factory()
+    max_retries = 3
+    async with sf() as session:
+        t = await crud.get_download_task(session, task_id)
+        if t:
+            max_retries = t.max_retries
+
+    for attempt in range(max_retries + 1):
+        try:
+            async with sf() as session:
+                await crud.update_download_task(
+                    session, task_id, status="downloading", retry_count=attempt,
+                )
+
+            downloaded = 0
+            total = 0
+            headers = {}
+
+            async with sf() as session:
+                t = await crud.get_download_task(session, task_id)
+                if t and t.downloaded_bytes > 0:
+                    headers["Range"] = f"bytes={t.downloaded_bytes}-"
+                    downloaded = t.downloaded_bytes
+
+            async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:  # noqa: SIM117
+                async with client.stream("GET", source_url, headers=headers) as resp:
+                    if resp.status_code not in (200, 206):
+                        raise Exception(f"HTTP {resp.status_code}")
+
+                    total = int(resp.headers.get("content-length", 0))
+                    if resp.status_code == 206:
+                        content_range = resp.headers.get("content-range", "")
+                        if "/" in content_range:
+                            total = int(content_range.split("/")[-1])
+
+                    chunk_size = 1024 * 1024
+                    last_update = time.time()
+
+                    async for chunk in resp.aiter_bytes(chunk_size):
+                        downloaded += len(chunk)
+                        now = time.time()
+                        if now - last_update >= 1.0:
+                            progress = (downloaded / total * 100) if total > 0 else 0
+                            async with sf() as session:
+                                await crud.update_download_task(
+                                    session, task_id,
+                                    downloaded_bytes=downloaded,
+                                    total_bytes=total,
+                                    progress_percent=round(progress, 1),
+                                )
+                            last_update = now
+
+            async with sf() as session:
+                await crud.update_download_task(
+                    session, task_id,
+                    status="completed",
+                    downloaded_bytes=downloaded,
+                    total_bytes=total,
+                    progress_percent=100.0,
+                )
+            logger.info("Download completed: id=%s bytes=%d", task_id, downloaded)
+            return
+
+        except asyncio.CancelledError:
+            async with sf() as session:
+                await crud.update_download_task(session, task_id, status="cancelled")
+            logger.info("Download cancelled: id=%s", task_id)
+            return
+
+        except Exception as e:
+            logger.warning(
+                "Download attempt %d/%d failed for task %s: %s",
+                attempt + 1, max_retries + 1, task_id, e,
+            )
+            if attempt >= max_retries:
+                async with sf() as session:
+                    await crud.update_download_task(
+                        session, task_id,
+                        status="failed",
+                        error_message=str(e)[:500],
+                        retry_count=attempt + 1,
+                    )
+                logger.error("Download permanently failed: id=%s error=%s", task_id, e)
+                return
+            await asyncio.sleep(2 ** attempt)

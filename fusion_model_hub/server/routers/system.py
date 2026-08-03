@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 
 import httpx
 from fastapi import APIRouter, Request
@@ -156,3 +157,45 @@ async def import_data(session: SessionDep, data: dict):
 
     logger.info("Imported data: %d items created", count)
     return {"imported": count}
+
+
+@router.post("/system/scan-duplicates")
+async def scan_duplicate_weights(session: SessionDep):
+    all_models, _ = await crud.list_models(session, page_size=10000)
+
+    hash_groups: dict[str, list[dict]] = defaultdict(list)
+    for m in all_models:
+        for v in m.versions:
+            if v.file_hash:
+                hash_groups[v.file_hash].append({
+                    "model_id": m.id,
+                    "model_name": m.name,
+                    "version_id": v.id,
+                    "version": v.version,
+                    "file_hash": v.file_hash,
+                    "file_size": v.file_size,
+                })
+
+    duplicates = [group for group in hash_groups.values() if len(group) > 1]
+    logger.info("Duplicate scan found %d duplicate groups", len(duplicates))
+    return {"duplicate_groups": duplicates, "total_groups": len(duplicates)}
+
+
+@router.post("/system/cleanup")
+async def disk_cleanup(session: SessionDep):
+    all_models, _ = await crud.list_models(session, page_size=10000)
+    candidates = []
+    for m in all_models:
+        for v in m.versions:
+            if v.status.value == "retired" and v.file_path:
+                candidates.append({
+                    "model_id": m.id,
+                    "model_name": m.name,
+                    "version_id": v.id,
+                    "version": v.version,
+                    "file_path": v.file_path,
+                    "file_size": v.file_size,
+                    "status": v.status.value,
+                })
+    logger.info("Cleanup scan found %d retired versions with files", len(candidates))
+    return {"candidates": candidates, "total": len(candidates)}

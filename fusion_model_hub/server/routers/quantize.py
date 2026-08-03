@@ -325,3 +325,36 @@ async def evaluate_quantize(body: QuantizeEvaluateRequest, settings: SettingsDep
     except Exception as e:
         logger.exception("Quantize evaluation failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class BatchQuantizeItem(BaseModel):
+    source_version_id: str
+    quant_bits: int = 4
+
+
+class BatchQuantizeRequest(BaseModel):
+    items: list[BatchQuantizeItem]
+
+
+@router.post("/quantize/batch", status_code=202)
+async def batch_quantize(body: BatchQuantizeRequest):
+    task_ids = []
+    errors = []
+    for item in body.items:
+        if item.quant_bits not in (2, 4, 6, 8):
+            errors.append({
+                "source_version_id": item.source_version_id,
+                "error": f"quant_bits must be one of: 2, 4, 6, 8, got {item.quant_bits}",
+            })
+            continue
+        try:
+            task_id = await submit_quantize(
+                source_version_id=item.source_version_id,
+                quant_bits=item.quant_bits,
+            )
+            task_ids.append({"source_version_id": item.source_version_id, "task_id": task_id})
+        except Exception as e:
+            logger.exception("Batch quantize item failed: %s", item.source_version_id)
+            errors.append({"source_version_id": item.source_version_id, "error": str(e)})
+    logger.info("Batch quantize submitted: %d tasks, %d errors", len(task_ids), len(errors))
+    return {"task_ids": task_ids, "errors": errors}

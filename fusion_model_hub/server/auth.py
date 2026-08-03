@@ -48,7 +48,51 @@ def _check_role_permission(role: UserRole, method: str) -> JSONResponse | None:
     return JSONResponse(status_code=403, content={"detail": "Unknown role"})
 
 
+def _extract_model_id_from_path(path: str) -> str:
+    parts = path.strip("/").split("/")
+    for i, p in enumerate(parts):
+        if p == "models" and i + 1 < len(parts):
+            candidate = parts[i + 1]
+            if candidate not in (
+                "import", "sync", "batch", "compare",
+            ):
+                return candidate
+    return ""
+
+
+def _check_model_access(ak: ApiKey, request: Request) -> JSONResponse | None:
+    if not ak.allowed_models:
+        return None
+    allowed_set = {x.strip() for x in ak.allowed_models.split(",") if x.strip()}
+    if not allowed_set:
+        return None
+    model_id = _extract_model_id_from_path(request.url.path)
+    if not model_id:
+        return None
+    if model_id not in allowed_set:
+        return JSONResponse(status_code=403, content={"detail": f"Model '{model_id}' not allowed for this API key"})
+    return None
+
+
+def _check_module_access(ak: ApiKey, request: Request) -> JSONResponse | None:
+    if not ak.allowed_modules:
+        return None
+    allowed_set = {x.strip() for x in ak.allowed_modules.split(",") if x.strip()}
+    if not allowed_set:
+        return None
+    module = request.headers.get("X-Fusion-Module", "")
+    if not module:
+        return None
+    module = module.lower().strip()
+    if module not in allowed_set:
+        return JSONResponse(status_code=403, content={"detail": f"Module '{module}' not allowed for this API key"})
+    return None
+
+
 async def auth_middleware(request: Request, call_next):
+    if "/audit" in request.url.path and request.method == "DELETE":
+        return JSONResponse(status_code=403, content={"detail": "Audit logs cannot be deleted"})
+
     if request.method not in WRITE_METHODS:
         return await call_next(request)
 
@@ -73,6 +117,14 @@ async def auth_middleware(request: Request, call_next):
         if role_denied:
             return role_denied
 
+        model_denied = _check_model_access(ak, request)
+        if model_denied:
+            return model_denied
+
+        module_denied = _check_module_access(ak, request)
+        if module_denied:
+            return module_denied
+
         from .rate_limit import check_rate_limit
         if not check_rate_limit(ak.key_prefix, ak.qps_limit):
             return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
@@ -89,16 +141,19 @@ async def auth_middleware(request: Request, call_next):
         resource_type = _extract_resource_type(request.url.path)
         resource_id = _extract_resource_id(request.url.path)
         action = f"{request.method.lower()}_{resource_type}"
-        async with session_factory() as session:
-            await create_audit_log(
-                session,
-                action=action,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                api_key_id=getattr(request.state, "api_key_id", ""),
-                tenant_id=getattr(request.state, "tenant_id", ""),
-                detail=f"{request.method} {request.url.path}",
-            )
+        if "/inference/" in request.url.path:
+            pass
+        else:
+            async with session_factory() as session:
+                await create_audit_log(
+                    session,
+                    action=action,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    api_key_id=getattr(request.state, "api_key_id", ""),
+                    tenant_id=getattr(request.state, "tenant_id", ""),
+                    detail=f"{request.method} {request.url.path}",
+                )
     except Exception:
         logger.exception("Failed to write audit log")
 

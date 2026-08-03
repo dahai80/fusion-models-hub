@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -84,6 +84,7 @@ class Model(Base):
     download_count: Mapped[int] = mapped_column(Integer, default=0)
     model_modules: Mapped[str] = mapped_column(String(256), default="")
     idle_timeout_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -193,6 +194,8 @@ class ApiKey(Base):
     permissions: Mapped[str] = mapped_column(String(128), default="read,write")
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.DEVELOPER)
     qps_limit: Mapped[int] = mapped_column(Integer, default=0)
+    allowed_models: Mapped[str] = mapped_column(String(512), default="")
+    allowed_modules: Mapped[str] = mapped_column(String(256), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -445,3 +448,23 @@ class ModelBranch(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     model: Mapped["Model"] = relationship(back_populates="branches")
+
+
+class DownloadTask(Base):
+    __tablename__ = "download_tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    model_id: Mapped[str] = mapped_column(String(36), ForeignKey("models.id"), nullable=False)
+    version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    progress_percent: Mapped[float] = mapped_column(Float, default=0.0)
+    downloaded_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    speed_limit_kbps: Mapped[int] = mapped_column(Integer, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, default=3)
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    file_path: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

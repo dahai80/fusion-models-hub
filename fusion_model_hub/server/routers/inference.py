@@ -1,3 +1,4 @@
+import json
 import logging
 import random
 import time
@@ -7,13 +8,14 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ...db import crud
-from ..deps import SessionDep, SettingsDep
+from ..deps import SessionDep, SettingsDep, get_session_factory
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
 
 _LOADED_TTL = 3600
 _loaded_models: dict[str, dict] = {}
+_model_stats: dict[str, dict] = {}
 _VALID_MODULES = {"chat", "code", "design", "rag", "agent"}
 
 
@@ -58,9 +60,39 @@ async def _resolve_model_name_for_inference(model_id: str) -> tuple[str, str | N
     return "", None
 
 
+async def _get_model_idle_ttl(model_id: str) -> int:
+    try:
+        sf = get_session_factory()
+        async with sf() as session:
+            m = await crud.get_model(session, model_id)
+            if m:
+                return m.idle_timeout_minutes * 60
+    except Exception:
+        logger.debug("Failed to get model idle timeout", exc_info=True)
+    return _LOADED_TTL
+
+
+async def _is_model_pinned(model_id: str) -> bool:
+    try:
+        sf = get_session_factory()
+        async with sf() as session:
+            m = await crud.get_model(session, model_id)
+            return bool(m and m.pinned)
+    except Exception:
+        logger.debug("Failed to check model pinned status", exc_info=True)
+        return False
+
+
 async def _cleanup_loaded_models() -> None:
     now = time.time()
-    expired = [(k, v) for k, v in _loaded_models.items() if now - v.get("loaded_at", 0) > _LOADED_TTL]
+    expired = []
+    for k, v in list(_loaded_models.items()):
+        pinned = await _is_model_pinned(k)
+        if pinned:
+            continue
+        model_ttl = await _get_model_idle_ttl(k)
+        if now - v.get("loaded_at", 0) > model_ttl:
+            expired.append((k, v))
     for model_id, info in expired:
         model_name = info.get("model_name", "")
         if model_name:
@@ -75,6 +107,44 @@ async def _cleanup_loaded_models() -> None:
                 logger.warning("MLX unload during TTL eviction failed for %s: %s", model_id, e)
         _loaded_models.pop(model_id, None)
         logger.info("TTL evicted model: id=%s name=%s", model_id, model_name)
+
+
+def _update_model_stats(model_id: str, latency_ms: float, tokens: int = 0) -> None:
+    if model_id not in _model_stats:
+        _model_stats[model_id] = {
+            "request_count": 0,
+            "total_latency": 0.0,
+            "total_tokens": 0,
+            "last_request_at": None,
+        }
+    stats = _model_stats[model_id]
+    stats["request_count"] += 1
+    stats["total_latency"] += latency_ms
+    stats["total_tokens"] += tokens
+    stats["last_request_at"] = time.time()
+
+
+async def _write_inference_audit(model_id: str, action_type: str, latency_ms: float, request: Request) -> None:
+    try:
+        sf = get_session_factory()
+        async with sf() as session:
+            module = request.headers.get("X-Fusion-Module", "")
+            detail = json.dumps({
+                "module": module,
+                "model_id": model_id,
+                "latency_ms": round(latency_ms, 2),
+            })
+            await crud.create_audit_log(
+                session,
+                action=f"inference_{action_type}",
+                resource_type="inference",
+                resource_id=model_id,
+                api_key_id=getattr(request.state, "api_key_id", "") if hasattr(request, "state") else "",
+                tenant_id=getattr(request.state, "tenant_id", "") if hasattr(request, "state") else "",
+                detail=detail,
+            )
+    except Exception:
+        logger.debug("Failed to write inference audit log", exc_info=True)
 
 
 class ServeRequest(BaseModel):
@@ -124,7 +194,13 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     }
     await _cleanup_loaded_models()
     logger.info("Model served: id=%s version=%s mlx_model=%s", model_id, version_id, model_name)
-    return {"model_id": model_id, "version_id": version_id, "status": "loaded", "mlx_model": model_name}
+    return {
+        "model_id": model_id,
+        "version_id": version_id,
+        "status": "loaded",
+        "mlx_model": model_name,
+        "pinned": m.pinned,
+    }
 
 
 @router.delete("/models/{model_id}/serve")
@@ -154,6 +230,24 @@ async def get_serve_status(model_id: str):
     return {"model_id": model_id, **info}
 
 
+@router.post("/models/{model_id}/pin")
+async def pin_model(model_id: str, session: SessionDep):
+    m = await crud.update_model(session, model_id, pinned=True)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    logger.info("Model pinned: id=%s", model_id)
+    return {"model_id": model_id, "pinned": True}
+
+
+@router.delete("/models/{model_id}/pin")
+async def unpin_model(model_id: str, session: SessionDep):
+    m = await crud.update_model(session, model_id, pinned=False)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    logger.info("Model unpinned: id=%s", model_id)
+    return {"model_id": model_id, "pinned": False}
+
+
 @router.post("/inference/{model_id}/chat")
 async def chat_completion(model_id: str, body: dict, settings: SettingsDep, request: Request):
     await _check_module_access(model_id, request)
@@ -176,11 +270,20 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
             logger.debug("Gray version model lookup failed", exc_info=True)
 
     payload = {**body, "model": model_name}
+    start_time = time.time()
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(f"{settings.mlx_url}/v1/chat/completions", json=payload)
             resp.raise_for_status()
-            return resp.json()
+            result = resp.json()
+        latency_ms = (time.time() - start_time) * 1000
+        tokens = 0
+        usage = result.get("usage", {})
+        if usage:
+            tokens = usage.get("total_tokens", 0)
+        _update_model_stats(model_id, latency_ms, tokens)
+        await _write_inference_audit(model_id, "chat", latency_ms, request)
+        return result
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
@@ -209,11 +312,20 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
             logger.debug("Gray version model lookup failed", exc_info=True)
 
     payload = {**body, "model": model_name}
+    start_time = time.time()
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(f"{settings.mlx_url}/v1/completions", json=payload)
             resp.raise_for_status()
-            return resp.json()
+            result = resp.json()
+        latency_ms = (time.time() - start_time) * 1000
+        tokens = 0
+        usage = result.get("usage", {})
+        if usage:
+            tokens = usage.get("total_tokens", 0)
+        _update_model_stats(model_id, latency_ms, tokens)
+        await _write_inference_audit(model_id, "completions", latency_ms, request)
+        return result
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
@@ -229,11 +341,20 @@ async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: 
 
     model_name = info["model_name"]
     payload = {**body, "model": model_name}
+    start_time = time.time()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(f"{settings.mlx_url}/v1/embeddings", json=payload)
             resp.raise_for_status()
-            return resp.json()
+            result = resp.json()
+        latency_ms = (time.time() - start_time) * 1000
+        tokens = 0
+        usage = result.get("usage", {})
+        if usage:
+            tokens = usage.get("total_tokens", 0)
+        _update_model_stats(model_id, latency_ms, tokens)
+        await _write_inference_audit(model_id, "embeddings", latency_ms, request)
+        return result
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:

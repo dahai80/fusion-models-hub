@@ -16,6 +16,8 @@ class ApiKeyCreate(BaseModel):
     permissions: str = "read,write"
     role: str = Field("developer", pattern="^(admin|developer|viewer)$")
     qps_limit: int = 0
+    allowed_models: str = ""
+    allowed_modules: str = ""
 
 
 @router.post("/auth/keys", status_code=201)
@@ -23,7 +25,7 @@ async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request):
     tenant_id = body.tenant_id or getattr(request.state, "tenant_id", "") or ""
     ak, full_key = await crud.create_api_key(
         session, name=body.name, tenant_id=tenant_id, permissions=body.permissions, role=body.role,
-        qps_limit=body.qps_limit,
+        qps_limit=body.qps_limit, allowed_models=body.allowed_models, allowed_modules=body.allowed_modules,
     )
     return {
         "id": ak.id,
@@ -34,6 +36,8 @@ async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request):
         "permissions": ak.permissions,
         "role": ak.role.value,
         "qps_limit": ak.qps_limit,
+        "allowed_models": ak.allowed_models,
+        "allowed_modules": ak.allowed_modules,
         "is_active": ak.is_active,
         "created_at": ak.created_at.isoformat() if ak.created_at else None,
     }
@@ -52,6 +56,8 @@ async def list_keys(session: SessionDep):
                 "permissions": k.permissions,
                 "role": k.role.value,
                 "qps_limit": k.qps_limit,
+                "allowed_models": k.allowed_models,
+                "allowed_modules": k.allowed_modules,
                 "is_active": k.is_active,
                 "created_at": k.created_at.isoformat() if k.created_at else None,
                 "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
