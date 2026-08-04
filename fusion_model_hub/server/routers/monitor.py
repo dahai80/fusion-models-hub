@@ -89,3 +89,45 @@ async def realtime_monitor():
         "total_requests_today": total_requests_today,
     }
     return {"models": models_data, "summary": summary}
+
+
+@router.get("/monitor/model-stats")
+async def model_stats():
+    sf = get_session_factory()
+    stats_list = []
+    logger.debug("model-stats: collecting per-model inference stats")
+    async with sf() as session:
+        all_models, _ = await crud.list_models(session, page_size=10000)
+        for m in all_models:
+            info = _loaded_models.get(m.id)
+            stats = _model_stats.get(m.id, {})
+            req_count = stats.get("request_count", 0)
+            total_lat = stats.get("total_latency", 0.0)
+            avg_lat = round(total_lat / req_count, 2) if req_count > 0 else 0.0
+            total_tokens = stats.get("total_tokens", 0)
+            last_at = stats.get("last_request_at", 0)
+            first_at = stats.get("first_request_at", last_at)
+            duration = max(last_at - first_at, 1.0) if last_at else 1.0
+            tps = round(total_tokens / duration, 2) if req_count > 0 and last_at else 0.0
+            rpm = round(req_count / max(duration / 60.0, 1.0), 2) if req_count > 0 else 0.0
+            active = 1 if (last_at and (time.time() - last_at) < 60) else 0
+            mem_mb = 0.0
+            if info:
+                v = await crud.get_version(session, info.get("version_id", ""))
+                if v and v.memory_usage > 0:
+                    mem_mb = float(v.memory_usage)
+            stats_list.append({
+                "id": m.id,
+                "model_id": m.id,
+                "model_name": m.name,
+                "requests_per_min": rpm,
+                "avg_latency_ms": avg_lat,
+                "tokens_per_second": tps,
+                "active_sessions": active,
+                "memory_mb": mem_mb,
+                "node": "local",
+                "source": stats.get("source_module", ""),
+                "uptime": "",
+            })
+    logger.info("model-stats: %d entries", len(stats_list))
+    return {"stats": stats_list}

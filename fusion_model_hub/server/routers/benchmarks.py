@@ -52,6 +52,47 @@ async def list_benchmarks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/compare")
+async def compare_benchmarks(
+    model_ids: str = "",
+    chip: str | None = None,
+    settings: SettingsDep = None,
+):
+    if not model_ids:
+        raise HTTPException(status_code=400, detail="model_ids is required (comma-separated)")
+    ids = [m.strip() for m in model_ids.split(",") if m.strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="model_ids is required (comma-separated)")
+    mlx_url = settings.mlx_url.rstrip("/")
+    params: dict = {}
+    if chip:
+        params["chip"] = chip
+    results: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for mid in ids:
+                resp = await client.get(f"{mlx_url}/v1/benchmarks/{mid}", params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        for item in data:
+                            item.setdefault("model_id", mid)
+                        results.extend(data)
+                    else:
+                        entry = {**data, "model_id": mid} if isinstance(data, dict) else {"model_id": mid, "data": data}
+                        results.append(entry)
+                else:
+                    logger.warning("MLX benchmark compare: %s returned %d", mid, resp.status_code)
+                    results.append({"model_id": mid, "error": f"status {resp.status_code}"})
+    except httpx.ConnectError as e:
+        logger.error("MLX not available for benchmark compare: %s", e)
+        raise HTTPException(status_code=503, detail="Fusion-MLX not available")
+    except Exception as e:
+        logger.exception("Benchmark compare failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"items": results, "model_ids": ids}
+
+
 @router.get("/{model_id}")
 async def get_benchmark(
     model_id: str,

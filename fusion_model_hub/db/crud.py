@@ -29,6 +29,7 @@ from .models import (
     ModelVersion,
     Quantization,
     QuantizeTask,
+    Role,
     SecurityScan,
     Tenant,
     VersionStatus,
@@ -565,6 +566,69 @@ async def delete_tenant(session: AsyncSession, tenant_id: str) -> bool:
     await session.delete(t)
     await session.commit()
     logger.info("Deleted tenant: id=%s", tenant_id)
+    return True
+
+
+# -- Role CRUD --
+
+async def create_role(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    name: str,
+    permissions: str = "read",
+) -> Role:
+    r = Role(tenant_id=tenant_id, name=name, permissions=permissions)
+    session.add(r)
+    await session.commit()
+    await session.refresh(r)
+    logger.info("Created role: id=%s tenant=%s name=%s", r.id, tenant_id, name)
+    return r
+
+
+async def get_role(session: AsyncSession, role_id: str) -> Role | None:
+    result = await session.execute(select(Role).where(Role.id == role_id))
+    return result.scalar_one_or_none()
+
+
+async def list_roles(session: AsyncSession, tenant_id: str) -> list[Role]:
+    result = await session.execute(
+        select(Role).where(Role.tenant_id == tenant_id).order_by(Role.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def update_role(
+    session: AsyncSession,
+    role_id: str,
+    *,
+    name: str | None = None,
+    permissions: str | None = None,
+    is_active: bool | None = None,
+) -> Role | None:
+    r = await get_role(session, role_id)
+    if not r:
+        return None
+    if name is not None:
+        r.name = name
+    if permissions is not None:
+        r.permissions = permissions
+    if is_active is not None:
+        r.is_active = is_active
+    r.updated_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(r)
+    logger.info("Updated role: id=%s", role_id)
+    return r
+
+
+async def delete_role(session: AsyncSession, role_id: str) -> bool:
+    r = await get_role(session, role_id)
+    if not r:
+        return False
+    await session.delete(r)
+    await session.commit()
+    logger.info("Deleted role: id=%s", role_id)
     return True
 
 

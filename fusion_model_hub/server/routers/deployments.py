@@ -125,8 +125,26 @@ async def delete_deployment(deployment_id: str, session: SessionDep, settings: S
 
 
 class GrayReleaseRequest(BaseModel):
-    gray_version_id: str = Field(..., min_length=1)
+    gray_version_id: str = Field("", min_length=0)
     gray_traffic_ratio: int = Field(10, ge=1, le=100)
+
+
+@router.post("/{deployment_id}/stop", response_model=DeploymentOut)
+async def stop_deployment(deployment_id: str, session: SessionDep, settings: SettingsDep):
+    d = await crud.get_deployment(session, deployment_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    m = await crud.get_model(session, d.model_id)
+    if m:
+        model_name = m.hf_repo or m.name
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                await client.post(f"{settings.mlx_url}/v1/models/{model_name}/unload")
+        except Exception as e:
+            logger.warning("MLX unload on stop failed: %s", e)
+    d = await crud.update_deployment(session, deployment_id, status=DeploymentStatus.STOPPED)
+    logger.info("Deployment stopped: id=%s", deployment_id)
+    return d
 
 
 @router.post("/{deployment_id}/gray", response_model=DeploymentOut)
