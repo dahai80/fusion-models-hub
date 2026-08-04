@@ -1,6 +1,7 @@
 # Fusion Model Hub
 
 [![CI](https://github.com/dahai80/fusion-models-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/dahai80/fusion-models-hub/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 English | [中文](README_CN.md)
 
@@ -15,12 +16,14 @@ Unified model repository and management center for the Fusion-MLX ecosystem on m
 - **HuggingFace Import** — Import model metadata from HuggingFace repos via HF Mirror API, with optional `download=true`
 - **Download Tracking** — Download counting and file serving
 - **Status Lifecycle** — Version state machine: draft → testing → published → deprecated → retired
+- **Model Approval** — New models default to DRAFT; must be published before serving (POST /models/{id}/publish)
+- **File Hash Verification** — Serve-time file integrity check; auto-compute and store hash if missing
 - **Version Promote** — One-call promotion through the full lifecycle (DRAFT→TESTING→PUBLISHED) with webhook dispatch
 - **Quantization** — Async quantize tasks (2/4/6/8-bit) via Fusion-MLX with task tracking + compare endpoint
 - **LoRA Merge** — Async LoRA adapter merge tasks with quantization support
 - **URL Download** — Download model versions from URL with async background processing (SSRF-protected)
 - **MLX Health Check** — System health includes Fusion-MLX availability detection
-- **RBAC** — Role-based access control (admin/developer/viewer) via API key roles
+- **RBAC** — Role-based access control (admin/developer/viewer) via API key roles, auth enabled by default
 - **Multi-Tenant** — Tenant isolation with tenant_id on models, API keys, audit logs
 - **Model Ownership** — Owner-based access control; only the creator can edit/delete their models (when auth enabled)
 - **Webhooks** — Event notifications with HMAC-SHA256 signing and retry with exponential backoff
@@ -41,12 +44,14 @@ Unified model repository and management center for the Fusion-MLX ecosystem on m
 - **Module Access Control** — Tag models by module (NLP/CV/Audio/Multimodal/Code/Science) with API key module-level permissions
 - **Auto Bench After Quantize** — Quantize tasks automatically trigger fusion-bench evaluation
 - **Smart Inference Routing** — Cluster inference routing: local MLX first, remote cluster fallback
+- **Cluster Topology** — GET /cluster/topology returns nodes + edges + routes for visualization
+- **Hub→MLX Auth** — Bearer token injection for Hub→MLX requests via MLX_INTERNAL_API_KEY
 - **Model Sync to Cluster** — Push model sync tasks to cluster nodes via fusion-multi-node
 - **Rate Limiting** — Sliding window rate limiter per API key (configurable QPS)
-- **Resident Models** — Pin models to prevent TTL eviction + per-model idle timeout (replaces hardcoded 1h TTL)
+- **Resident Models** — Pin models to prevent TTL eviction + per-model idle timeout + per-model `ttl_seconds` (overrides `idle_timeout_minutes`)
 - **API Key Binding** — Bind API keys to specific models and modules (allowed_models, allowed_modules)
 - **Inference Audit** — All inference calls logged to audit trail with latency/tokens; audit logs are non-deletable
-- **Realtime Monitor** — Per-model inference stats (latency, tokens, request count, memory) via /monitor/realtime
+- **Realtime Monitor** — Per-model inference stats (latency, tokens, request count, memory, tokens_per_second, source_module, concurrent_requests) via /monitor/realtime
 - **Duplicate Scan** — Detect duplicate weight files across model versions
 - **Disk Cleanup** — Identify retired versions with files for cleanup
 - **Quantize Presets** — Built-in presets (chat/code/embedding) for quick quantize task submission
@@ -63,7 +68,7 @@ Unified model repository and management center for the Fusion-MLX ecosystem on m
 - **Evaluation Thresholds** — Enforce minimum benchmark scores before publishing (L1≥50, L2≥70, L3≥85)
 - **Compliance Fields** — License type and data compliance tracking on model versions
 - **Calibration Dataset** — Quantize tasks support calibration dataset specification
-- **Hardware Detection** — Apple Silicon chip detection (M1-M5), VRAM/RAM profiling via Fusion-MLX with 5-min cache
+- **Hardware Detection** — Apple Silicon chip detection (M1-M5), VRAM/RAM profiling via Fusion-MLX with 5-min cache + direct system_profiler fallback via /system/hardware
 - **Smart Recommendation** — Multi-dim scoring (hardware fit + quality + speed + popularity) with preference-based weight profiles, batch MLX evaluation
 - **Adaptation Decision** — Migration level assessment (L0-L4), compile strategy, quantize suggestions, migration plans, execute pipeline (assess→convert→quantize)
 - **3-Level Cache** — raw/ → converted/ → quantized/{bits}bit/ with index, GC, validation, MLX version awareness
@@ -117,6 +122,8 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | POST | `/api/v1/models/import/hf` | Import from HuggingFace repo (optional `download: true`) |
 | GET | `/api/v1/models/search` | Advanced search (keyword, architecture, quantization, benchmark score) |
 | GET | `/api/v1/models/recommend` | Recommend models by task type, model type, params size |
+| POST | `/api/v1/models/{id}/publish` | Publish model (admin only, enables serving) |
+| POST | `/api/v1/models/{id}/deprecate` | Deprecate model (admin only, blocks new serves) |
 
 ### Versions
 
@@ -162,6 +169,7 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 |--------|------|-------------|
 | GET | `/api/v1/system/health` | Health check (includes MLX status) |
 | GET | `/api/v1/system/storage` | Storage statistics |
+| GET | `/api/v1/system/hardware` | Hardware info (GPU name/VRAM/utilization, CPU cores, memory) |
 | GET | `/api/v1/system/audit` | Query audit logs |
 | GET | `/api/v1/system/export` | Export all data (models, tenants, webhooks) |
 | POST | `/api/v1/system/import` | Import data |
@@ -176,6 +184,7 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | GET | `/api/v1/auth/keys` | List API keys |
 | DELETE | `/api/v1/auth/keys/{id}` | Delete API key |
 | POST | `/api/v1/auth/keys/{id}/deactivate` | Deactivate API key |
+| GET | `/api/v1/auth/keys/{id}/usage` | API key usage stats (requests, tokens, latency, QPS) |
 
 ### Tenants
 
@@ -254,6 +263,7 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | GET | `/api/v1/cluster/nodes/{id}` | Get node detail |
 | DELETE | `/api/v1/cluster/nodes/{id}` | Remove node |
 | POST | `/api/v1/cluster/nodes/{id}/heartbeat` | Node heartbeat |
+| GET | `/api/v1/cluster/topology` | Cluster topology (nodes, edges, routes) for visualization |
 
 ### Market Search
 
@@ -288,7 +298,7 @@ API keys support `qps_limit` field. When set, requests are throttled via sliding
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/monitor/realtime` | Realtime inference stats per model (latency, tokens, memory) |
+| GET | `/api/v1/monitor/realtime` | Realtime inference stats per model (latency, tokens, memory, tokens_per_second, source_module, concurrent_requests) |
 
 ### API Key Binding
 
@@ -296,7 +306,7 @@ API keys support `allowed_models` (comma-separated model IDs) and `allowed_modul
 
 ### Resident Models (Pin)
 
-Models can be pinned to prevent TTL eviction. Use `POST /models/{id}/pin` to pin and `DELETE /models/{id}/pin` to unpin. Each model also has `idle_timeout_minutes` (default 60) that controls per-model eviction time.
+Models can be pinned to prevent TTL eviction. Use `POST /models/{id}/pin` to pin and `DELETE /models/{id}/pin` to unpin. Each model also has `idle_timeout_minutes` (default 60) that controls per-model eviction time. For finer control, set `ttl_seconds` on a model — this takes priority over `idle_timeout_minutes` when specified.
 
 ### Inference Audit
 
@@ -793,8 +803,8 @@ Environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FMH_DATA_DIR` | `./data` | Data directory for DB and files |
-| `FMH_MLX_URL` | `http://localhost:11434` | Fusion-MLX server URL |
-| `FMH_AUTH_ENABLED` | `false` | Enable API key authentication |
+| `FMH_MLX_URL` | `http://localhost:11432` | Fusion-MLX server URL |
+| `FMH_AUTH_ENABLED` | `true` | Enable API key authentication (default: enabled) |
 | `FMH_CORS_ORIGINS` | `*` | Allowed CORS origins |
 | `FMH_MAX_UPLOAD_SIZE_MB` | `500` | Max upload file size |
 | `FMH_DB_URL` | `sqlite+aiosqlite:///data/fmh.db` | Database URL (supports PostgreSQL) |
@@ -811,6 +821,7 @@ Environment variables:
 | `FMH_BENCH_URL` | `http://localhost:8081` | Fusion-Bench server URL (for auto bench trigger) |
 | `FMH_BENCH_AUTO_TRIGGER` | `true` | Auto-trigger bench after quantize task completes |
 | `FMH_PRECISION_LOSS_THRESHOLD` | `10.0` | Precision loss % threshold for quantize warning |
+| `MLX_INTERNAL_API_KEY` | `` | Bearer token for Hub→MLX requests |
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
 
@@ -867,3 +878,7 @@ pytest --cov=fusion_model_hub --cov-report=term-missing
 ## Model Download Mirror
 
 Use `https://hf-mirror.com` for downloading models in regions with limited HuggingFace access.
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import random
@@ -8,15 +9,31 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ...db import crud
+from ...db.models import ModelStatus
 from ..deps import SessionDep, SettingsDep, get_session_factory
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
 
+
+def _mlx_headers(settings) -> dict[str, str]:
+    headers = {"X-Fusion-Source": "model-hub"}
+    if settings.mlx_internal_api_key:
+        headers["Authorization"] = f"Bearer {settings.mlx_internal_api_key}"
+    return headers
+
 _LOADED_TTL = 3600
 _loaded_models: dict[str, dict] = {}
 _model_stats: dict[str, dict] = {}
 _VALID_MODULES = {"chat", "code", "design", "rag", "agent"}
+
+
+def _compute_file_hash(file_path: str) -> str:
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 async def _check_module_access(model_id: str, request) -> None:
@@ -104,6 +121,7 @@ async def _cleanup_loaded_models() -> None:
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     await client.post(
                         f"{settings.mlx_url}/v1/models/{model_name}/unload",
+                        headers=_mlx_headers(settings),
                     )
             except Exception as e:
                 logger.warning("MLX unload during TTL eviction failed for %s: %s", model_id, e)
@@ -164,6 +182,11 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
 
+    if m.model_status == ModelStatus.DRAFT:
+        raise HTTPException(status_code=403, detail="Model not published. Only published models can be served.")
+    if m.model_status == ModelStatus.DEPRECATED:
+        raise HTTPException(status_code=403, detail="Model is deprecated. New serve requests are not allowed.")
+
     version_id = body.version_id
     if not version_id and m.versions:
         published = [v for v in m.versions if v.status.value == "published"]
@@ -179,12 +202,35 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     if not v:
         raise HTTPException(status_code=404, detail="Version not found")
 
+    if v.file_path:
+        import os
+        if not os.path.exists(v.file_path):
+            raise HTTPException(status_code=403, detail="File integrity check failed. Model files may be corrupted.")
+        if not v.file_hash:
+            computed = _compute_file_hash(v.file_path)
+            await crud.update_version(session, version_id, file_hash=computed)
+            logger.info("Computed and stored file_hash for version %s", version_id)
+        else:
+            computed = _compute_file_hash(v.file_path)
+            if computed != v.file_hash.lower():
+                logger.error(
+                    "File hash mismatch for version %s: "
+                    "expected=%s computed=%s",
+                    version_id, v.file_hash, computed,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="File integrity check failed. "
+                           "Model files may be corrupted.",
+                )
+
     model_name = m.hf_repo or m.name
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{settings.mlx_url}/v1/models/{model_name}/load",
                 json={"gpu": body.gpu},
+                headers=_mlx_headers(settings),
             )
             resp.raise_for_status()
     except httpx.ConnectError:
@@ -219,6 +265,7 @@ async def unload_model(model_id: str, settings: SettingsDep):
         async with httpx.AsyncClient(timeout=30.0) as client:
             await client.post(
                 f"{settings.mlx_url}/v1/models/{model_name}/unload",
+                headers=_mlx_headers(settings),
             )
     except Exception as e:
         logger.warning("MLX unload failed: %s", e)
@@ -279,7 +326,11 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
     start_time = time.time()
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(f"{settings.mlx_url}/v1/chat/completions", json=payload)
+            resp = await client.post(
+                f"{settings.mlx_url}/v1/chat/completions",
+                json=payload,
+                headers=_mlx_headers(settings),
+            )
             resp.raise_for_status()
             result = resp.json()
         latency_ms = (time.time() - start_time) * 1000
@@ -321,7 +372,7 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
     start_time = time.time()
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(f"{settings.mlx_url}/v1/completions", json=payload)
+            resp = await client.post(f"{settings.mlx_url}/v1/completions", json=payload, headers=_mlx_headers(settings))
             resp.raise_for_status()
             result = resp.json()
         latency_ms = (time.time() - start_time) * 1000
@@ -350,7 +401,7 @@ async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: 
     start_time = time.time()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(f"{settings.mlx_url}/v1/embeddings", json=payload)
+            resp = await client.post(f"{settings.mlx_url}/v1/embeddings", json=payload, headers=_mlx_headers(settings))
             resp.raise_for_status()
             result = resp.json()
         latency_ms = (time.time() - start_time) * 1000

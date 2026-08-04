@@ -10,7 +10,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-from fusion_model_hub.db.models import Base
+from fusion_model_hub.db.models import Base  # noqa: E402
 
 target_metadata = Base.metadata
 

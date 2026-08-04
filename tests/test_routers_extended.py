@@ -32,6 +32,8 @@ def app(settings):
 
 @pytest.fixture
 async def client(app, settings):
+    from fusion_model_hub.server.auth import set_auth_enabled
+    set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
     init_deps(settings, engine)
@@ -48,6 +50,9 @@ async def _create_model(client, name="ext-test-model"):
         "architecture": "qwen2",
         "params_size": "7B",
     })
+    if resp.status_code == 201:
+        model_id = resp.json()["id"]
+        await client.post(f"/api/v1/models/{model_id}/publish")
     assert resp.status_code == 201
     return resp.json()
 
@@ -208,6 +213,7 @@ class TestInferenceServeModel:
             "hf_repo": "Qwen/Qwen2.5-7B",
         })
         model = model_resp.json()
+        await client.post(f"/api/v1/models/{model['id']}/publish")
         ver = await _create_published_version(client, model["id"])
 
         mock_resp = MagicMock()

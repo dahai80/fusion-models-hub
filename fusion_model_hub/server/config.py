@@ -8,11 +8,11 @@ class Settings:
     port: int = 11444
     data_dir: str = ""
     db_url: str = ""
-    mlx_url: str = "http://localhost:11434"
+    mlx_url: str = "http://localhost:11432"
     log_level: str = "INFO"
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
     max_upload_size_mb: int = 50000  # 50GB
-    auth_enabled: bool = False
+    auth_enabled: bool = True
     storage_type: str = "local"
     minio_endpoint: str = ""
     minio_access_key: str = ""
@@ -27,6 +27,7 @@ class Settings:
     bench_auto_trigger: bool = False
     download_speed_limit_kbps: int = 0
     precision_loss_threshold: float = 10.0
+    mlx_internal_api_key: str = ""
 
     def __post_init__(self):
         if not self.data_dir:
@@ -34,7 +35,7 @@ class Settings:
         if not self.db_url:
             self.db_url = f"sqlite+aiosqlite:///{os.path.join(self.data_dir, 'hub.db')}"
         if not self.mlx_url:
-            self.mlx_url = os.environ.get("FMH_MLX_URL", "http://localhost:11434")
+            self.mlx_url = os.environ.get("FMH_MLX_URL", "http://localhost:11432")
         if not self.storage_type:
             self.storage_type = os.environ.get("FMH_STORAGE_TYPE", "local")
         if not self.minio_endpoint:
@@ -57,3 +58,16 @@ class Settings:
             self.download_speed_limit_kbps = int(os.environ.get("FMH_DOWNLOAD_SPEED_LIMIT", "0"))
         if not self.precision_loss_threshold:
             self.precision_loss_threshold = float(os.environ.get("FMH_PRECISION_LOSS_THRESHOLD", "10.0"))
+        auth_env = os.environ.get("MODEL_HUB_AUTH_ENABLED", "").lower()
+        if auth_env in ("false", "0", "no"):
+            self.auth_enabled = False
+        elif auth_env in ("true", "1", "yes"):
+            self.auth_enabled = True
+        if not self.mlx_internal_api_key:
+            self.mlx_internal_api_key = os.environ.get("MLX_INTERNAL_API_KEY", "")
+        if not self.mlx_internal_api_key:
+            import logging
+            logging.getLogger(__name__).warning(
+                "MLX_INTERNAL_API_KEY not set — "
+                "Hub→MLX requests will have no Bearer token"
+            )

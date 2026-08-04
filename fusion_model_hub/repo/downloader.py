@@ -80,9 +80,20 @@ class ModelDownloader:
             hash_ok = True
             if expected_hash:
                 hash_ok = self._verify_hash(file_path, expected_hash)
+                if not hash_ok:
+                    logger.error("Hash mismatch for %s — deleting corrupted file", model_id)
+                    file_path.unlink(missing_ok=True)
+                    return {
+                        "status": "hash_mismatch",
+                        "path": "",
+                        "size_bytes": 0,
+                        "hash_verified": False,
+                        "resumed": resume_offset > 0,
+                        "error": "Downloaded file hash does not match expected hash — file deleted",
+                    }
 
             return {
-                "status": "completed" if hash_ok else "hash_mismatch",
+                "status": "completed",
                 "path": str(file_path),
                 "size_bytes": file_path.stat().st_size,
                 "hash_verified": hash_ok,

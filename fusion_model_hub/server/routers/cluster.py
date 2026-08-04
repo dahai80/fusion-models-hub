@@ -202,6 +202,36 @@ class SyncModelRequest(BaseModel):
     target_nodes: list[str] = []
 
 
+@router.get("/cluster/topology")
+async def cluster_topology(session: SessionDep, settings: SettingsDep):
+    nodes = await list_cluster_nodes(session)
+    nodes_data = [_node_to_dict(n) for n in nodes]
+    edges = []
+    for node in nodes:
+        if node.status == "active":
+            edges.append({"source": "hub", "target": node.id, "type": "management"})
+    routes = []
+    active_nodes = [n for n in nodes if n.status == "active"]
+    if active_nodes:
+        routes.append({
+            "pattern": "default",
+            "strategy": "local-first",
+            "fallback_nodes": [n.id for n in active_nodes],
+        })
+    return {
+        "nodes": [*[
+            {
+                "id": "hub",
+                "name": "model-hub",
+                "status": "active",
+                "address": f"http://{settings.host}:{settings.port}",
+            }
+        ], *nodes_data],
+        "edges": edges,
+        "routes": routes,
+    }
+
+
 @router.post("/cluster/sync-model")
 async def sync_model_to_cluster(body: SyncModelRequest, session: SessionDep, settings: SettingsDep):
     m = await crud.get_model(session, body.model_id)

@@ -70,7 +70,7 @@ def upgrade() -> None:
     sa.Column('model_id', sa.String(length=16), nullable=False),
     sa.Column('version_id', sa.String(length=16), nullable=False),
     sa.Column('target_nodes', sa.Text(), nullable=False),
-    sa.Column('status', sa.Enum('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'PARTIAL', name='distributedtaskstatus'), nullable=False),
+    sa.Column('status', sa.Enum('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'PARTIAL', name='distributedtaskstatus'), nullable=False),  # noqa: E501
     sa.Column('progress', sa.Text(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('completed_at', sa.DateTime(), nullable=True),

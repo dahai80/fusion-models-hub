@@ -57,6 +57,12 @@ class ModelSource(str, enum.Enum):
     LOCAL = "local"
 
 
+class ModelStatus(str, enum.Enum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    DEPRECATED = "deprecated"
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -86,6 +92,7 @@ class Model(Base):
     idle_timeout_minutes: Mapped[int] = mapped_column(Integer, default=60)
     ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    model_status: Mapped[ModelStatus] = mapped_column(Enum(ModelStatus), default=ModelStatus.DRAFT)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 

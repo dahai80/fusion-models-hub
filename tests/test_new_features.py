@@ -29,6 +29,8 @@ def app(settings):
 
 @pytest.fixture
 async def client(app, settings):
+    from fusion_model_hub.server.auth import set_auth_enabled
+    set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
     init_deps(settings, engine)

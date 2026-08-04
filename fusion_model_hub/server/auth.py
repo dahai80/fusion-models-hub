@@ -14,13 +14,9 @@ WRITE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 DELETE_METHODS = {"DELETE"}
 PUBLIC_PATHS = {
     "/api/v1/system/health",
-    "/api/v1/system/storage",
+    "/docs",
+    "/openapi.json",
     "/api/v1/auth/keys",
-    "/api/v1/cluster/nodes",
-    "/api/v1/models/sync",
-    "/api/v1/models/batch",
-    "/api/v1/models/compare",
-    "/metrics",
 }
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -93,17 +89,13 @@ async def auth_middleware(request: Request, call_next):
     if "/audit" in request.url.path and request.method == "DELETE":
         return JSONResponse(status_code=403, content={"detail": "Audit logs cannot be deleted"})
 
-    if request.method not in WRITE_METHODS:
-        return await call_next(request)
-
     for public in PUBLIC_PATHS:
         if request.url.path.startswith(public):
             return await call_next(request)
 
     api_key_str = request.headers.get("X-API-Key", "")
     if not api_key_str:
-        auth_enabled = _is_auth_enabled()
-        if not auth_enabled:
+        if not _is_auth_enabled():
             return await call_next(request)
         return JSONResponse(status_code=401, content={"detail": "API key required"})
 
@@ -113,17 +105,18 @@ async def auth_middleware(request: Request, call_next):
         if not ak:
             return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
 
-        role_denied = _check_role_permission(ak.role, request.method)
-        if role_denied:
-            return role_denied
+        if request.method in WRITE_METHODS:
+            role_denied = _check_role_permission(ak.role, request.method)
+            if role_denied:
+                return role_denied
 
-        model_denied = _check_model_access(ak, request)
-        if model_denied:
-            return model_denied
+            model_denied = _check_model_access(ak, request)
+            if model_denied:
+                return model_denied
 
-        module_denied = _check_module_access(ak, request)
-        if module_denied:
-            return module_denied
+            module_denied = _check_module_access(ak, request)
+            if module_denied:
+                return module_denied
 
         from .rate_limit import check_rate_limit
         if not check_rate_limit(ak.key_prefix, ak.qps_limit):

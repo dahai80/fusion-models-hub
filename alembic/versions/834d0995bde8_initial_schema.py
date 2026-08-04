@@ -71,7 +71,7 @@ def upgrade() -> None:
     sa.Column('tenant_id', sa.String(length=16), nullable=False),
     sa.Column('name', sa.String(length=64), nullable=False),
     sa.Column('description', sa.Text(), nullable=False),
-    sa.Column('model_type', sa.Enum('LLM', 'CHAT', 'EMBEDDING', 'MULTIMODAL', 'LORA', 'CODE', 'AUDIO', 'IMAGE', name='modeltype'), nullable=False),
+    sa.Column('model_type', sa.Enum('LLM', 'CHAT', 'EMBEDDING', 'MULTIMODAL', 'LORA', 'CODE', 'AUDIO', 'IMAGE', name='modeltype'), nullable=False),  # noqa: E501
     sa.Column('architecture', sa.String(length=64), nullable=False),
     sa.Column('params_size', sa.String(length=16), nullable=False),
     sa.Column('license', sa.String(length=64), nullable=False),
@@ -112,8 +112,8 @@ def upgrade() -> None:
     sa.Column('model_id', sa.String(length=16), nullable=False),
     sa.Column('version', sa.String(length=32), nullable=False),
     sa.Column('format', sa.Enum('MLX', 'SAFETENSORS', 'GGUF', 'PYTORCH', 'ONNX', name='modelformat'), nullable=False),
-    sa.Column('quantization', sa.Enum('FP32', 'FP16', 'BF16', 'Q8', 'Q6', 'Q4', 'Q2', 'NONE', name='quantization'), nullable=False),
-    sa.Column('status', sa.Enum('DRAFT', 'TESTING', 'PUBLISHED', 'DEPRECATED', 'RETIRED', name='versionstatus'), nullable=False),
+    sa.Column('quantization', sa.Enum('FP32', 'FP16', 'BF16', 'Q8', 'Q6', 'Q4', 'Q2', 'NONE', name='quantization'), nullable=False),  # noqa: E501
+    sa.Column('status', sa.Enum('DRAFT', 'TESTING', 'PUBLISHED', 'DEPRECATED', 'RETIRED', name='versionstatus'), nullable=False),  # noqa: E501
     sa.Column('file_path', sa.String(length=512), nullable=False),
     sa.Column('file_hash', sa.String(length=64), nullable=False),
     sa.Column('file_size', sa.Integer(), nullable=False),

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from ...db import crud
 from ...db.models import (
+    ModelStatus,
     ModelType,
 )
 from ..deps import SessionDep, StoreDep
@@ -58,6 +59,7 @@ class ModelUpdate(BaseModel):
     model_modules: str | None = None
     idle_timeout_minutes: int | None = None
     ttl_seconds: int | None = None
+    model_status: str | None = None
     tags: list[dict[str, str]] | None = None
 
 
@@ -94,6 +96,7 @@ def _model_to_dict(m) -> dict[str, Any]:
         "model_modules": m.model_modules,
         "idle_timeout_minutes": m.idle_timeout_minutes,
         "ttl_seconds": m.ttl_seconds,
+        "model_status": m.model_status.value,
         "tags": [{"key": t.key, "value": t.value} for t in m.tags],
         "versions_count": len(m.versions),
         "created_at": m.created_at.isoformat() if m.created_at else None,
@@ -567,6 +570,30 @@ async def update_model_modules(model_id: str, body: ModelModulesUpdate, session:
         raise HTTPException(status_code=404, detail="Model not found")
     logger.info("Updated model modules: id=%s modules=%s", model_id, body.modules)
     return {"id": m.id, "model_modules": m.model_modules}
+
+
+@router.post("/models/{model_id}/publish")
+async def publish_model(model_id: str, session: SessionDep, request: Request):
+    m = await crud.get_model(session, model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    if hasattr(request.state, "user_role") and request.state.user_role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can publish models")
+    m = await crud.update_model(session, model_id, model_status=ModelStatus.PUBLISHED)
+    logger.info("Model published: id=%s", model_id)
+    return {"id": model_id, "model_status": "published"}
+
+
+@router.post("/models/{model_id}/deprecate")
+async def deprecate_model(model_id: str, session: SessionDep, request: Request):
+    m = await crud.get_model(session, model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    if hasattr(request.state, "user_role") and request.state.user_role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can deprecate models")
+    m = await crud.update_model(session, model_id, model_status=ModelStatus.DEPRECATED)
+    logger.info("Model deprecated: id=%s", model_id)
+    return {"id": model_id, "model_status": "deprecated"}
 
 
 @router.delete("/models/{model_id}")
