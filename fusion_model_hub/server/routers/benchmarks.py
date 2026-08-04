@@ -79,7 +79,8 @@ async def compare_benchmarks(
                             item.setdefault("model_id", mid)
                         results.extend(data)
                     else:
-                        results.append({**data, "model_id": mid} if isinstance(data, dict) else {"model_id": mid, "data": data})
+                        entry = {**data, "model_id": mid} if isinstance(data, dict) else {"model_id": mid, "data": data}
+                        results.append(entry)
                 else:
                     logger.warning("MLX benchmark compare: %s returned %d", mid, resp.status_code)
                     results.append({"model_id": mid, "error": f"status {resp.status_code}"})
