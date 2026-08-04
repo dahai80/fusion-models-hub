@@ -190,6 +190,18 @@ class Tenant(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class Role(Base):
+    __tablename__ = "roles"
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), default="")
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    permissions: Mapped[str] = mapped_column(String(512), default="read")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class ApiKey(Base):
     __tablename__ = "api_keys"
 
