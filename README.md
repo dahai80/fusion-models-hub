@@ -45,7 +45,7 @@ Unified model repository and management center for the Fusion-MLX ecosystem on m
 - **Auto Bench After Quantize** — Quantize tasks automatically trigger fusion-bench evaluation
 - **Smart Inference Routing** — Cluster inference routing: local MLX first, remote cluster fallback
 - **Cluster Topology** — GET /cluster/topology returns nodes + edges + routes for visualization
-- **Hub→MLX Auth** — Bearer token injection for Hub→MLX requests via MLX_INTERNAL_API_KEY
+- **Hub→MLX Auth** — Bearer token injection for Hub→MLX requests via FUSION_MLX_API_KEY
 - **Model Sync to Cluster** — Push model sync tasks to cluster nodes via fusion-multi-node
 - **Rate Limiting** — Sliding window rate limiter per API key (configurable QPS)
 - **Resident Models** — Pin models to prevent TTL eviction + per-model idle timeout + per-model `ttl_seconds` (overrides `idle_timeout_minutes`)
@@ -803,7 +803,7 @@ Environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FMH_DATA_DIR` | `./data` | Data directory for DB and files |
-| `FMH_MLX_URL` | `http://localhost:11432` | Fusion-MLX server URL |
+| `FMH_MLX_URL` | `http://127.0.0.1:11434` | Fusion-MLX server URL |
 | `FMH_AUTH_ENABLED` | `true` | Enable API key authentication (default: enabled) |
 | `FMH_CORS_ORIGINS` | `*` | Allowed CORS origins |
 | `FMH_MAX_UPLOAD_SIZE_MB` | `500` | Max upload file size |
@@ -821,7 +821,7 @@ Environment variables:
 | `FMH_BENCH_URL` | `http://localhost:8081` | Fusion-Bench server URL (for auto bench trigger) |
 | `FMH_BENCH_AUTO_TRIGGER` | `true` | Auto-trigger bench after quantize task completes |
 | `FMH_PRECISION_LOSS_THRESHOLD` | `10.0` | Precision loss % threshold for quantize warning |
-| `MLX_INTERNAL_API_KEY` | `` | Bearer token for Hub→MLX requests |
+| `FUSION_MLX_API_KEY` | `` | Bearer token for Hub→MLX requests (MLX_INTERNAL_API_KEY as deprecated fallback) |
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
 
