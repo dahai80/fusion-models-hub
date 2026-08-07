@@ -19,6 +19,7 @@ from .routers import (
     auth,
     benchmarks,
     branches,
+    cache,
     cluster,
     deployments,
     downloads,
@@ -157,6 +158,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ratings.router, prefix="/api/v1")
     app.include_router(favorites.router, prefix="/api/v1")
     app.include_router(branches.router, prefix="/api/v1")
+    app.include_router(cache.router, prefix="/api/v1")
     app.include_router(downloads.router, prefix="/api/v1")
     app.include_router(hardware.router, prefix="/api/v1")
     app.include_router(recommend.router, prefix="/api/v1")

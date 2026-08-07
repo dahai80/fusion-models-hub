@@ -12,10 +12,11 @@ from .config import Settings
 _settings: Settings | None = None
 _session_factory = None
 _store: StorageBackend | None = None
+_cache = None
 
 
 def init_deps(settings: Settings, engine) -> None:
-    global _settings, _session_factory, _store
+    global _settings, _session_factory, _store, _cache
     _settings = settings
     _session_factory = _make_session_factory(engine)
     if settings.storage_type == "minio" and settings.minio_endpoint:
@@ -29,6 +30,8 @@ def init_deps(settings: Settings, engine) -> None:
         )
     else:
         _store = LocalStore(data_dir=settings.data_dir)
+    from ..cache.manager import CacheManager
+    _cache = CacheManager(cache_root=settings.cache_dir)
 
 
 def get_settings() -> Settings:
@@ -56,6 +59,13 @@ def get_store() -> StorageBackend:
     return _store
 
 
+def get_cache_manager():
+    if _cache is None:
+        raise RuntimeError("Dependencies not initialized — call init_deps() first")
+    return _cache
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 StoreDep = Annotated[StorageBackend, Depends(get_store)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+CacheDep = Annotated[object, Depends(get_cache_manager)]

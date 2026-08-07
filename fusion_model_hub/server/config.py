@@ -28,8 +28,11 @@ class Settings:
     download_speed_limit_kbps: int = 0
     precision_loss_threshold: float = 10.0
     mlx_internal_api_key: str = ""
+    cache_dir: str = ""
 
     def __post_init__(self):
+        if not self.cache_dir:
+            self.cache_dir = os.environ.get("FMH_CACHE_DIR", str(os.path.join(self.data_dir or os.getcwd(), "cache")))
         if not self.data_dir:
             self.data_dir = os.environ.get("FMH_DATA_DIR", str(os.path.join(os.getcwd(), "data")))
         if not self.db_url:

@@ -248,6 +248,19 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | GET | `/api/v1/quantize/presets` | List quantize presets (chat/code/embedding) |
 | POST | `/api/v1/quantize/presets/{name}/apply` | Apply a preset to create a quantize task |
 
+> Quantize tasks check the 3-level cache before calling Fusion-MLX. A cache hit (same `model_id` + `quant_bits`) returns the cached artifact and skips the MLX quantize call; a miss runs quantize then stores the output.
+
+### Cache
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/cache` | Cache stats (entries, size, per-level counts) |
+| GET | `/api/v1/cache/entries` | List cache entries (optional `?level=raw\|converted\|quantized`) |
+| POST | `/api/v1/cache/gc` | Garbage-collect cache (`max_size_gb`, `max_age_days` query params) |
+| POST | `/api/v1/cache/validate` | Validate cached files exist on disk (`mlx_version` query) |
+| DELETE | `/api/v1/cache/{model_id}` | Remove all cache entries for a model |
+| DELETE | `/api/v1/cache/{model_id}/{level}` | Remove a single cache entry (`quant_bits` query for quantized) |
+
 ### URL Download
 
 | Method | Path | Description |

@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
+from ..cache.types import CacheLevel
 from ..convert.converter import ModelConverter
 from ..db.crud import (
     create_quantize_task,
@@ -12,7 +13,7 @@ from ..db.crud import (
 )
 from ..db.models import ModelFormat, Quantization, TaskStatus
 from .config import Settings
-from .deps import get_session_factory, get_settings
+from .deps import get_cache_manager, get_session_factory, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +83,44 @@ async def _run_quantize(
         format_enum = ModelFormat(target_format)
 
         converter = ModelConverter(mlx_url=settings.mlx_url)
-        result = await converter.quantize(
-            mlx_path=source_ver.file_path,
-            bits=quant_bits,
-        )
+        model_id = source_ver.model_id
+
+        result = None
+        cache_hit = False
+        try:
+            cache = get_cache_manager()
+            if cache.has(model_id, CacheLevel.QUANTIZED, quant_bits):
+                entry = cache.get(model_id, CacheLevel.QUANTIZED, quant_bits)
+                if entry and entry.path:
+                    logger.info("Cache hit for quantize: model=%s bits=%d", model_id, quant_bits)
+                    result = {
+                        "status": "completed",
+                        "output_path": entry.path,
+                        "file_hash": entry.sha256,
+                        "file_size": entry.size_bytes,
+                    }
+                    cache_hit = True
+        except Exception:
+            logger.exception("Cache lookup failed for quantize: model=%s", model_id)
+
+        if not cache_hit:
+            result = await converter.quantize(
+                mlx_path=source_ver.file_path,
+                bits=quant_bits,
+            )
+            out_path = result.get("output_path", "")
+            if result.get("status") == "completed" and out_path:
+                try:
+                    cache = get_cache_manager()
+                    cache.put(
+                        model_id=model_id,
+                        level=CacheLevel.QUANTIZED,
+                        source_path=out_path,
+                        quant_bits=quant_bits,
+                    )
+                    logger.info("Cached quantize output: model=%s bits=%d", model_id, quant_bits)
+                except Exception:
+                    logger.exception("Cache put failed for quantize: model=%s", model_id)
 
         output_path = result.get("output_path", "")
         output_hash = result.get("file_hash", "")
