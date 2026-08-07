@@ -154,7 +154,7 @@ def main():
     serve_parser.add_argument("--port", type=int, default=11444, help="Bind port (default: 11444)")
     serve_parser.add_argument("--data-dir", default="", help="Data directory (default: ./data)")
     serve_parser.add_argument("--db-url", default="", help="Database URL")
-    serve_parser.add_argument("--mlx-url", default="http://localhost:11434", help="Fusion-MLX API URL")
+    serve_parser.add_argument("--mlx-url", default="http://localhost:11432", help="Fusion-MLX API URL")
     serve_parser.add_argument("--log-level", default="INFO", help="Log level")
     serve_parser.add_argument("--tls-certfile", default="", help="TLS certificate file path")
     serve_parser.add_argument("--tls-keyfile", default="", help="TLS private key file path")

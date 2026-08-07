@@ -41,7 +41,7 @@ def _parse_chip_generation(gpu_name: str) -> ChipGeneration:
 
 
 class HardwareDetector:
-    def __init__(self, mlx_url: str = "http://localhost:11434"):
+    def __init__(self, mlx_url: str = "http://localhost:11432"):
         self.mlx_url = mlx_url.rstrip("/")
         self._cache: HardwareProfile | None = None
         self._cache_time: float = 0

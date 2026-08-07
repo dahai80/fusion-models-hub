@@ -28,7 +28,7 @@ _COST_MAP = {
 
 
 class AdaptDecisionEngine:
-    def __init__(self, mlx_url: str = "http://localhost:11434"):
+    def __init__(self, mlx_url: str = "http://localhost:11432"):
         self.mlx_url = mlx_url.rstrip("/")
         self._hw_detector = HardwareDetector(mlx_url)
 

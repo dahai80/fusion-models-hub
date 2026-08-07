@@ -20,7 +20,7 @@ class FusionMLXBase:
     This module provides detection, version checking, and compatibility verification.
     """
 
-    def __init__(self, mlx_url: str = "http://localhost:11434"):
+    def __init__(self, mlx_url: str = "http://localhost:11432"):
         self.mlx_url = mlx_url.rstrip("/")
 
     async def detect(self) -> dict[str, Any]:

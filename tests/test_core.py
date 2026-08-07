@@ -265,7 +265,7 @@ class TestFusionMLXBase:
 
     @pytest.mark.asyncio
     async def test_detect_running(self):
-        base = FusionMLXBase(mlx_url="http://localhost:11434")
+        base = FusionMLXBase(mlx_url="http://localhost:11432")
         with patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
