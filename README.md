@@ -250,7 +250,12 @@ Studio integration requires these contracts:
   version's `inference_latency`, `tokensPerSecond` from `throughput`; fields with
   no live source are `null` (studio `Double?`/`Int?` decode `null` → `nil`).
   Full live values for `requestsPerSecond`/`errorRate`/`activeConnections` require
-  a JSON metrics endpoint in fusion-mlx (tracked upstream).
+  fusion-mlx's `GET /v1/metrics/json` (upstream PR dahai80/fusion-mlx#541, issue
+  #539). The hub currently calls `/v1/models/status` (no such route → 404 → empty
+  `mlx_metrics`); once #541 merges, `get_deployment_metrics` will switch to
+  `/v1/metrics/json` and populate the four fields from
+  `total_requests`/`uptime_seconds`, `failed_requests`/`total_requests`,
+  `active_requests`, and `avg_generation_tps` respectively.
 - **Benchmark trigger** — `POST /benchmarks/trigger` accepts studio's `template`
   field as an alias for `suite` (Fusion-Bench's field). Studio's
   `{model_id, template}` is forwarded to Fusion-Bench as `{model_id, suite}` so
