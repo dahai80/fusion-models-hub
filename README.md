@@ -243,6 +243,12 @@ Studio integration requires these contracts:
   (Hub canonical) and camelCase keys (`modelId`, `modelName`, `scale`,
   `canaryPercent`, `strategy`, `createdAt`, `updatedAt`) so `HubDeployment`
   decodes without a custom `CodingKeys` block.
+- **Deployment metrics** — `GET /deployments/{id}/metrics` emits the studio
+  `HubDeploymentMetricsResponse` keys (`deploymentId`, `requestsPerSecond`,
+  `avgLatencyMs`, `errorRate`, `tokensPerSecond`, `activeConnections`) alongside
+  the Hub-internal `mlx_metrics`/`version_metrics`. `avgLatencyMs` maps from the
+  version's `inference_latency`, `tokensPerSecond` from `throughput`; fields with
+  no live source are `null` (studio `Double?`/`Int?` decode `null` → `nil`).
 
 Tests: `tests/test_studio_compat.py` pins each contract above.
 

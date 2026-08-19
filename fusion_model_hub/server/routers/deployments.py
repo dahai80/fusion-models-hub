@@ -24,10 +24,18 @@ async def _load_model_via_mlx(settings, model_name: str) -> bool:
             if resp.status_code in (200, 409):
                 return True
             if resp.status_code == 404:
-                logger.info("MLX /load 404 for %s (upstream route shadowing), falling back to chat auto-load", model_name)
+                logger.info(
+                    "MLX /load 404 for %s (upstream route shadowing), falling back to chat auto-load",
+                    model_name,
+                )
                 chat_resp = await client.post(
                     f"{settings.mlx_url}/v1/chat/completions",
-                    json={"model": model_name, "messages": [{"role": "user", "content": "."}], "max_tokens": 1, "stream": False},
+                    json={
+                        "model": model_name,
+                        "messages": [{"role": "user", "content": "."}],
+                        "max_tokens": 1,
+                        "stream": False,
+                    },
                     headers=headers,
                 )
                 return chat_resp.status_code == 200
@@ -320,6 +328,14 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
                 "memory_usage": v.memory_usage,
                 "benchmark_score": v.benchmark_score,
             }
+    # studio HubDeploymentMetricsResponse mirror (all optional):
+    #   deploymentId / requestsPerSecond / avgLatencyMs / errorRate /
+    #   tokensPerSecond / activeConnections.
+    # Real sources only for avgLatencyMs (version.inference_latency, ms) and
+    # tokensPerSecond (version.throughput); others null (studio Double?/Int?
+    # decode null -> nil). Emitted always so the shape is stable + testable.
+    avg_latency = float(version_metrics.get("inference_latency") or 0.0)
+    tps = float(version_metrics.get("throughput") or 0.0)
     return {
         "deployment_id": deployment_id,
         "status": d.status.value,
@@ -327,4 +343,10 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
         "gray_enabled": d.gray_enabled,
         "mlx_metrics": mlx_metrics,
         "version_metrics": version_metrics,
+        "deploymentId": deployment_id,
+        "requestsPerSecond": None,
+        "avgLatencyMs": round(avg_latency, 2) if avg_latency > 0 else None,
+        "errorRate": None,
+        "tokensPerSecond": round(tps, 2) if tps > 0 else None,
+        "activeConnections": None,
     }

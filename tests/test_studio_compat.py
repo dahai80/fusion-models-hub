@@ -126,3 +126,21 @@ class TestDeploymentStudioContract:
         item = data["deployments"][0]
         for key in ("modelId", "modelName", "scale", "canaryPercent"):
             assert key in item, f"missing studio key in list item: {key}"
+
+
+class TestDeploymentMetricsStudioContract:
+    @pytest.mark.asyncio
+    async def test_metrics_has_studio_camel_keys(self, client):
+        # studio getDeploymentMetrics -> HubDeploymentMetricsResponse
+        # {deploymentId, requestsPerSecond, avgLatencyMs, errorRate,
+        #  tokensPerSecond, activeConnections} — all optional.
+        model = await _make_model(client, "dep-metrics")
+        create = await client.post("/api/v1/deployments", json={"model_id": model["id"], "name": "mt"})
+        did = create.json()["id"]
+        resp = await client.get(f"/api/v1/deployments/{did}/metrics")
+        assert resp.status_code == 200
+        data = resp.json()
+        for key in ("deploymentId", "requestsPerSecond", "avgLatencyMs",
+                    "errorRate", "tokensPerSecond", "activeConnections"):
+            assert key in data, f"missing studio metrics key: {key}"
+        assert data["deploymentId"] == did
