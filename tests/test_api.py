@@ -784,7 +784,8 @@ class TestDeploymentCRUD:
         await client.post("/api/v1/deployments", json={"model_id": mid, "name": "d2"})
         resp = await client.get("/api/v1/deployments")
         assert resp.status_code == 200
-        assert len(resp.json()) >= 2
+        assert resp.json()["total"] >= 2
+        assert "deployments" in resp.json()
 
     @pytest.mark.asyncio
     async def test_update_deployment(self, client):

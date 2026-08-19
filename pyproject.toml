@@ -1,6 +1,6 @@
 [project]
 name = "fusion-model-hub"
-version = "1.0.6"
+version = "1.0.8"
 description = "Fusion-Model-Hub — Unified model repository & manager for the Fusion-MLX ecosystem"
 license = "Apache-2.0"
 requires-python = ">=3.12"

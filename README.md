@@ -219,6 +219,33 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | POST | `/api/v1/deployments/{id}/scale` | Scale replicas |
 | GET | `/api/v1/deployments/{id}/metrics` | Get deployment metrics (MLX status + version) |
 
+### Fusion-Studio Integration (DTO Compatibility)
+
+The Hub API emits JSON shapes that fusion-studio's Swift `Codable` DTOs decode
+with a plain `JSONDecoder` (default key-matching + explicit `CodingKeys` aliases).
+Studio integration requires these contracts:
+
+- **List envelopes** — `GET /tenants`, `/webhooks`, `/deployments` return
+  `{<plural>: [...], total: int}` (not bare arrays), matching
+  `HubTenantListResponse` / `HubWebhookListResponse` / `HubDeploymentListResponse`.
+- **Hardware** — `GET /hardware` returns a flat shape alongside the nested one:
+  `chip`, `cpuCores`, `gpuCores`, `memoryGB`, `diskFree`, `metalSupport`,
+  `aneSupport` (matches `HubHardwareResponse`).
+- **Health** — `GET /system/health` includes `version`, `uptime`,
+  `mlxConnected: bool`, and `storage` shaped as `HubDiskStats`
+  (`used`, `total`, `modelsPath`, `modelsSize`), matching `HubHealthResponse`.
+- **Deployment create** — `POST /deployments` accepts studio's
+  `{model_id, scale, canary_percent}` (no `name` required — auto-named from
+  model; `scale` is an alias for `replicas`).
+- **Deployment scale** — `POST /deployments/{id}/scale` accepts studio's
+  `{scale: int}` (alias for `replicas`).
+- **Deployment response** — every deployment endpoint emits both snake_case
+  (Hub canonical) and camelCase keys (`modelId`, `modelName`, `scale`,
+  `canaryPercent`, `strategy`, `createdAt`, `updatedAt`) so `HubDeployment`
+  decodes without a custom `CodingKeys` block.
+
+Tests: `tests/test_studio_compat.py` pins each contract above.
+
 ### Inference
 
 | Method | Path | Description |

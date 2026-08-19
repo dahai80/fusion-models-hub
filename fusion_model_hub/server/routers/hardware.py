@@ -31,6 +31,8 @@ async def get_hardware_info(settings: SettingsDep):
         raise HTTPException(status_code=503, detail="Hardware detection unavailable — is Fusion-MLX running?")
 
     gpu_info = None
+    gpu_cores = 0
+    chip_name = "Unknown"
     if profile.gpu:
         gpu_info = {
             "name": profile.gpu.name,
@@ -41,22 +43,45 @@ async def get_hardware_info(settings: SettingsDep):
             "shared_memory": profile.gpu.shared_memory,
             "chip_generation": profile.gpu.chip_generation.value,
         }
+        chip_name = profile.gpu.name
+        for tok in chip_name.split():
+            if tok.isdigit():
+                gpu_cores = int(tok)
+                break
+
+    cpu_info = {
+        "name": profile.cpu.name,
+        "cores": profile.cpu.cores,
+    }
+    ram_info = {
+        "total_bytes": profile.ram_bytes,
+        "total_gb": round(profile.ram_gb, 2),
+    }
+    disk_info = {
+        "free_bytes": profile.disk_free_bytes,
+        "free_gb": round(profile.disk_free_gb, 2),
+    }
+
+    logger.info(
+        "Hardware detected: chip=%s cpu_cores=%d gpu_cores=%d ram_gb=%.2f disk_free_gb=%.2f",
+        chip_name, profile.cpu.cores, gpu_cores, profile.ram_gb, profile.disk_free_gb,
+    )
 
     return {
+        # nested form kept for recommend/adapt internal callers
         "gpu": gpu_info,
-        "cpu": {
-            "name": profile.cpu.name,
-            "cores": profile.cpu.cores,
-        },
-        "ram": {
-            "total_bytes": profile.ram_bytes,
-            "total_gb": round(profile.ram_gb, 2),
-        },
-        "disk": {
-            "free_bytes": profile.disk_free_bytes,
-            "free_gb": round(profile.disk_free_gb, 2),
-        },
+        "cpu": cpu_info,
+        "ram": ram_info,
+        "disk": disk_info,
         "os": profile.os_name,
+        # flat form for fusion-studio HubHardwareResponse (all keys optional there)
+        "chip": chip_name,
+        "cpuCores": profile.cpu.cores,
+        "gpuCores": gpu_cores,
+        "memoryGB": round(profile.ram_gb, 2),
+        "diskFree": round(profile.disk_free_gb, 2),
+        "metalSupport": True,
+        "aneSupport": True,
     }
 
 

@@ -38,9 +38,11 @@ async def create_tenant(body: TenantCreate, session: SessionDep):
     return t
 
 
-@router.get("", response_model=list[TenantOut])
+@router.get("")
 async def list_tenants(session: SessionDep):
-    return await crud.list_tenants(session)
+    items = await crud.list_tenants(session)
+    logger.info("Listed tenants: %d", len(items))
+    return {"tenants": items, "total": len(items)}
 
 
 @router.get("/{tenant_id}", response_model=TenantOut)
