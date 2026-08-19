@@ -249,13 +249,22 @@ Studio integration requires these contracts:
   the Hub-internal `mlx_metrics`/`version_metrics`. `avgLatencyMs` maps from the
   version's `inference_latency`, `tokensPerSecond` from `throughput`; fields with
   no live source are `null` (studio `Double?`/`Int?` decode `null` → `nil`).
-  Full live values for `requestsPerSecond`/`errorRate`/`activeConnections` require
-  fusion-mlx's `GET /v1/metrics/json` (upstream PR dahai80/fusion-mlx#541, issue
-  #539). The hub currently calls `/v1/models/status` (no such route → 404 → empty
-  `mlx_metrics`); once #541 merges, `get_deployment_metrics` will switch to
+  `mlx_metrics` comes from fusion-mlx `GET /v1/models/status` (the model-load
+  registry: per-model loaded/loading state, memory ceilings). Live values for
+  `requestsPerSecond`/`errorRate`/`activeConnections` require fusion-mlx's
+  `GET /v1/metrics/json` (upstream PR dahai80/fusion-mlx#541, issue #539), which
+  returns `ServerMetrics.to_dict()` (inference throughput/error counters, not
+  load state). Once #541 merges, `get_deployment_metrics` will additionally call
   `/v1/metrics/json` and populate the four fields from
   `total_requests`/`uptime_seconds`, `failed_requests`/`total_requests`,
   `active_requests`, and `avg_generation_tps` respectively.
+
+  **Auth:** hub→MLX requests carry `Authorization: Bearer <key>` from
+  `mlx_internal_api_key`, resolved in order `FUSION_MLX_API_KEY` env →
+  `MLX_INTERNAL_API_KEY` env → `~/.fusion-mlx/settings.json` `auth.api_key`.
+  MLX rejects keyless callers with 401; without a matching key `mlx_metrics` is
+  empty and model load silently fails. `start.sh` resolves the same way before
+  launch.
 - **Benchmark trigger** — `POST /benchmarks/trigger` accepts studio's `template`
   field as an alias for `suite` (Fusion-Bench's field). Studio's
   `{model_id, template}` is forwarded to Fusion-Bench as `{model_id, suite}` so

@@ -79,6 +79,27 @@ class Settings:
                     "migrate to FUSION_MLX_API_KEY"
                 )
         if not self.mlx_internal_api_key:
+            # Env unset — fall back to the Fusion-MLX server's own settings so a
+            # local install works without separately configuring the key. MLX
+            # gates on ~/.fusion-mlx/settings.json auth.api_key; without a
+            # matching Bearer every hub→MLX call 401s (mlx_metrics empty, model
+            # never loads, cluster nodes inactive). Mirror the resolution order
+            # fusion-mlx/start.sh uses.
+            import json
+            import logging
+            logger = logging.getLogger(__name__)
+            mlx_settings = os.path.expanduser("~/.fusion-mlx/settings.json")
+            try:
+                with open(mlx_settings) as f:
+                    key = json.load(f).get("auth", {}).get("api_key", "")
+                if key:
+                    self.mlx_internal_api_key = key
+                    logger.info("MLX API key loaded from %s", mlx_settings)
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                logger.warning("Failed to read MLX settings %s: %s", mlx_settings, e)
+        if not self.mlx_internal_api_key:
             import logging
             logging.getLogger(__name__).warning(
                 "FUSION_MLX_API_KEY not set — "
