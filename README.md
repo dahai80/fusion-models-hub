@@ -247,17 +247,17 @@ Studio integration requires these contracts:
   `HubDeploymentMetricsResponse` keys (`deploymentId`, `requestsPerSecond`,
   `avgLatencyMs`, `errorRate`, `tokensPerSecond`, `activeConnections`) alongside
   the Hub-internal `mlx_metrics`/`version_metrics`. `avgLatencyMs` maps from the
-  version's `inference_latency`, `tokensPerSecond` from `throughput`; fields with
-  no live source are `null` (studio `Double?`/`Int?` decode `null` → `nil`).
-  `mlx_metrics` comes from fusion-mlx `GET /v1/models/status` (the model-load
-  registry: per-model loaded/loading state, memory ceilings). Live values for
-  `requestsPerSecond`/`errorRate`/`activeConnections` require fusion-mlx's
-  `GET /v1/metrics/json` (upstream PR dahai80/fusion-mlx#541, issue #539), which
-  returns `ServerMetrics.to_dict()` (inference throughput/error counters, not
-  load state). Once #541 merges, `get_deployment_metrics` will additionally call
-  `/v1/metrics/json` and populate the four fields from
-  `total_requests`/`uptime_seconds`, `failed_requests`/`total_requests`,
-  `active_requests`, and `avg_generation_tps` respectively.
+  version's `inference_latency`. `mlx_metrics` comes from fusion-mlx
+  `GET /v1/models/status` (the model-load registry: per-model loaded/loading
+  state, memory ceilings). For a `RUNNING` deployment the hub additionally calls
+  fusion-mlx `GET /v1/metrics/json` (PR dahai80/fusion-mlx#541, issue #539),
+  which returns `ServerMetrics.to_dict()` (inference throughput/error counters),
+  and derives `requestsPerSecond` = `total_requests`/`uptime_seconds`,
+  `errorRate` = `failed_requests`/`total_requests`, `activeConnections` =
+  `active_requests`, `tokensPerSecond` = `avg_generation_tps` (preferring the
+  live counter over the version's `throughput`). The call is 404-tolerant: until
+  #541 merges the four live fields stay `null` and the response shape is
+  unchanged (studio `Double?`/`Int?` decode `null` → `nil`).
 
   **Auth:** hub→MLX requests carry `Authorization: Bearer <key>` from
   `mlx_internal_api_key`, resolved in order `FUSION_MLX_API_KEY` env →

@@ -145,6 +145,82 @@ class TestDeploymentMetricsStudioContract:
             assert key in data, f"missing studio metrics key: {key}"
         assert data["deploymentId"] == did
 
+    @pytest.mark.asyncio
+    async def test_metrics_fills_live_fields_from_mlx_metrics_json(self, client):
+        # RUNNING deployment + MLX /v1/metrics/json 200 (ServerMetrics.to_dict)
+        # -> requestsPerSecond/errorRate/activeConnections/tokensPerSecond filled
+        # from real counters (total_requests/uptime_seconds, failed/total,
+        # active_requests, avg_generation_tps). /v1/models/status gives load
+        # state into mlx_metrics. Pins the PR #541 consumer wiring.
+        from unittest.mock import AsyncMock, MagicMock, patch
+        model = await _make_model(client, "dep-live-metrics")
+        # MLX /load POST returns 200 so the deployment becomes RUNNING.
+        load_resp = MagicMock()
+        load_resp.status_code = 200
+        status_resp = MagicMock()
+        status_resp.status_code = 200
+        status_resp.json.return_value = {"test/dep-live-metrics": {"state": "loaded"}}
+        metrics_resp = MagicMock()
+        metrics_resp.status_code = 200
+        metrics_resp.json.return_value = {
+            "total_requests": 100,
+            "successful_requests": 95,
+            "failed_requests": 5,
+            "active_requests": 3,
+            "avg_generation_tps": 42.5,
+            "uptime_seconds": 50,
+        }
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_ctx.post = AsyncMock(return_value=load_resp)
+        mock_ctx.get = AsyncMock(side_effect=[status_resp, metrics_resp])
+        with patch("httpx.AsyncClient", return_value=mock_ctx):
+            create = await client.post(
+                "/api/v1/deployments", json={"model_id": model["id"], "name": "live"},
+            )
+            did = create.json()["id"]
+            resp = await client.get(f"/api/v1/deployments/{did}/metrics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["requestsPerSecond"] == 2.0  # 100 / 50
+        assert data["errorRate"] == 0.05  # 5 / 100
+        assert data["activeConnections"] == 3
+        assert data["tokensPerSecond"] == 42.5
+        assert data["mlx_metrics"] == {"state": "loaded"}
+
+    @pytest.mark.asyncio
+    async def test_metrics_null_live_fields_when_endpoint_404(self, client):
+        # Pre PR #541 merge: MLX /v1/metrics/json 404 -> live 4 fields null,
+        # shape stable. /v1/models/status still 200 so mlx_metrics populated.
+        from unittest.mock import AsyncMock, MagicMock, patch
+        model = await _make_model(client, "dep-404-metrics")
+        load_resp = MagicMock()
+        load_resp.status_code = 200
+        status_resp = MagicMock()
+        status_resp.status_code = 200
+        status_resp.json.return_value = {"test/dep-404-metrics": {"state": "loaded"}}
+        not_found_resp = MagicMock()
+        not_found_resp.status_code = 404
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_ctx.post = AsyncMock(return_value=load_resp)
+        mock_ctx.get = AsyncMock(side_effect=[status_resp, not_found_resp])
+        with patch("httpx.AsyncClient", return_value=mock_ctx):
+            create = await client.post(
+                "/api/v1/deployments", json={"model_id": model["id"], "name": "nf"},
+            )
+            did = create.json()["id"]
+            resp = await client.get(f"/api/v1/deployments/{did}/metrics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["requestsPerSecond"] is None
+        assert data["errorRate"] is None
+        assert data["activeConnections"] is None
+        assert data["tokensPerSecond"] is None
+        assert data["mlx_metrics"] == {"state": "loaded"}
+
 
 class TestBenchTriggerStudioContract:
     @pytest.mark.asyncio

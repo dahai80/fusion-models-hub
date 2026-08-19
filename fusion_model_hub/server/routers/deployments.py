@@ -47,6 +47,70 @@ async def _load_model_via_mlx(settings, model_name: str) -> bool:
     return False
 
 
+async def _fetch_mlx_inference_metrics(settings, model_name: str) -> dict:
+    # fusion-mlx exposes inference throughput/error counters via
+    # GET /v1/metrics/json (upstream PR dahai80/fusion-mlx#541), mgmt-gated,
+    # returning ServerMetrics.to_dict(): total_requests / successful_requests /
+    # failed_requests / active_requests / avg_generation_tps / uptime_seconds +
+    # per-model model_stats. Derive the four studio deployment-metrics fields
+    # that were previously always null:
+    #   requestsPerSecond   = total_requests / uptime_seconds
+    #   errorRate           = failed_requests / total_requests   (fraction 0..1)
+    #   activeConnections   = active_requests
+    #   tokensPerSecond     = avg_generation_tps
+    # Tolerates 404 (endpoint absent until #541 merges) by returning {} so the
+    # caller keeps the keys null — shape stays stable.
+    headers = _mlx_headers(settings)
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{settings.mlx_url}/v1/metrics/json", headers=headers,
+            )
+            if resp.status_code == 404:
+                logger.info(
+                    "MLX /v1/metrics/json 404 for %s (PR #541 not merged); "
+                    "deployment metrics 4 fields stay null",
+                    model_name,
+                )
+                return {}
+            if resp.status_code != 200:
+                logger.warning(
+                    "MLX /v1/metrics/json returned %d for %s", resp.status_code, model_name,
+                )
+                return {}
+            data = resp.json()
+            if not isinstance(data, dict):
+                return {}
+            stats = data.get("model_stats", {}).get(model_name) if isinstance(
+                data.get("model_stats"), dict
+            ) else None
+            source = stats or data
+            total = float(source.get("total_requests") or 0)
+            failed = float(source.get("failed_requests") or 0)
+            uptime = float(source.get("uptime_seconds") or 0)
+            active = source.get("active_requests")
+            gen_tps = source.get("avg_generation_tps")
+            rps = round(total / uptime, 3) if uptime > 0 else None
+            error_rate = round(failed / total, 4) if total > 0 else 0.0
+            tokens_per_sec = round(float(gen_tps), 2) if gen_tps is not None else None
+            active_conn = int(active) if active is not None else None
+            logger.info(
+                "MLX inference metrics for %s: rps=%s err=%s active=%s tps=%s",
+                model_name, rps, error_rate, active_conn, tokens_per_sec,
+            )
+            return {
+                "requestsPerSecond": rps,
+                "errorRate": error_rate,
+                "activeConnections": active_conn,
+                "tokensPerSecond": tokens_per_sec,
+            }
+    except httpx.ConnectError:
+        logger.warning("Fusion-MLX server unavailable for metrics of %s", model_name)
+    except Exception as e:
+        logger.warning("MLX metrics call failed for %s: %s", model_name, e)
+    return {}
+
+
 
 class DeploymentCreate(BaseModel):
     model_id: str = Field(..., min_length=1)
@@ -305,6 +369,7 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
     m = await crud.get_model(session, d.model_id)
     model_name = m.hf_repo or m.name if m else ""
     mlx_metrics = {}
+    inference_fields = {}
     if model_name and d.status == DeploymentStatus.RUNNING:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -318,6 +383,10 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
                         mlx_metrics = status_data.get(model_name, status_data)
         except Exception as e:
             logger.warning("Failed to fetch MLX metrics: %s", e)
+        # /v1/models/status gives load state; /v1/metrics/json (PR #541) gives
+        # inference throughput/error counters. Derive the 4 studio live fields
+        # from the latter. Falls back to null if the endpoint is absent (404).
+        inference_fields = await _fetch_mlx_inference_metrics(settings, model_name)
     version_metrics = {}
     if d.version_id:
         v = await crud.get_version(session, d.version_id)
@@ -331,11 +400,13 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
     # studio HubDeploymentMetricsResponse mirror (all optional):
     #   deploymentId / requestsPerSecond / avgLatencyMs / errorRate /
     #   tokensPerSecond / activeConnections.
-    # Real sources only for avgLatencyMs (version.inference_latency, ms) and
-    # tokensPerSecond (version.throughput); others null (studio Double?/Int?
-    # decode null -> nil). Emitted always so the shape is stable + testable.
+    # avgLatencyMs <- version.inference_latency (ms); requestsPerSecond /
+    # errorRate / activeConnections / tokensPerSecond <- MLX /v1/metrics/json
+    # (null when endpoint absent or deployment not RUNNING). Emitted always so
+    # the shape is stable + testable.
     avg_latency = float(version_metrics.get("inference_latency") or 0.0)
-    tps = float(version_metrics.get("throughput") or 0.0)
+    ver_tps = float(version_metrics.get("throughput") or 0.0)
+    live_tps = inference_fields.get("tokensPerSecond")
     return {
         "deployment_id": deployment_id,
         "status": d.status.value,
@@ -344,9 +415,11 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
         "mlx_metrics": mlx_metrics,
         "version_metrics": version_metrics,
         "deploymentId": deployment_id,
-        "requestsPerSecond": None,
+        "requestsPerSecond": inference_fields.get("requestsPerSecond"),
         "avgLatencyMs": round(avg_latency, 2) if avg_latency > 0 else None,
-        "errorRate": None,
-        "tokensPerSecond": round(tps, 2) if tps > 0 else None,
-        "activeConnections": None,
+        "errorRate": inference_fields.get("errorRate"),
+        "tokensPerSecond": live_tps if live_tps is not None else (
+            round(ver_tps, 2) if ver_tps > 0 else None
+        ),
+        "activeConnections": inference_fields.get("activeConnections"),
     }
