@@ -299,10 +299,17 @@ async def sync_model_to_cluster(body: SyncModelRequest, session: SessionDep, set
                 local_ok = resp.status_code in (200, 409)
                 logger.info("Sync model %s to local MLX /load: %d", body.model_id, resp.status_code)
                 if resp.status_code == 404:
-                    logger.info("MLX /load 404 (upstream route shadowing), falling back to chat auto-load")
+                    logger.info(
+                        "MLX /load 404 (upstream route shadowing), falling back to chat auto-load"
+                    )
                     chat_resp = await client.post(
                         f"{settings.mlx_url}/v1/chat/completions",
-                        json={"model": model_name, "messages": [{"role": "user", "content": "."}], "max_tokens": 1, "stream": False},
+                        json={
+                            "model": model_name,
+                            "messages": [{"role": "user", "content": "."}],
+                            "max_tokens": 1,
+                            "stream": False,
+                        },
                         headers=_mlx_headers(settings),
                     )
                     local_ok = chat_resp.status_code == 200

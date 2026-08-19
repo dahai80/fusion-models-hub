@@ -144,3 +144,26 @@ class TestDeploymentMetricsStudioContract:
                     "errorRate", "tokensPerSecond", "activeConnections"):
             assert key in data, f"missing studio metrics key: {key}"
         assert data["deploymentId"] == did
+
+
+class TestBenchTriggerStudioContract:
+    @pytest.mark.asyncio
+    async def test_template_alias_mapped_to_suite(self, client):
+        # studio triggerBenchmark posts {model_id, template: "general"}.
+        # Hub must forward `suite` (Fusion-Bench's field), mapping template -> suite.
+        from unittest.mock import AsyncMock, MagicMock, patch
+        mock_resp = MagicMock()
+        mock_resp.status_code = 202
+        mock_resp.json.return_value = {"task_id": "bt-template"}
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_ctx.post = AsyncMock(return_value=mock_resp)
+        with patch("httpx.AsyncClient", return_value=mock_ctx):
+            resp = await client.post("/api/v1/benchmarks/trigger", json={
+                "model_id": "t-model", "template": "speed",
+            })
+        assert resp.status_code == 200
+        forwarded = mock_ctx.post.call_args.kwargs["json"]
+        assert forwarded["suite"] == "speed"
+        assert forwarded["model_id"] == "t-model"

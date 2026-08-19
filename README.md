@@ -249,6 +249,12 @@ Studio integration requires these contracts:
   the Hub-internal `mlx_metrics`/`version_metrics`. `avgLatencyMs` maps from the
   version's `inference_latency`, `tokensPerSecond` from `throughput`; fields with
   no live source are `null` (studio `Double?`/`Int?` decode `null` → `nil`).
+  Full live values for `requestsPerSecond`/`errorRate`/`activeConnections` require
+  a JSON metrics endpoint in fusion-mlx (tracked upstream).
+- **Benchmark trigger** — `POST /benchmarks/trigger` accepts studio's `template`
+  field as an alias for `suite` (Fusion-Bench's field). Studio's
+  `{model_id, template}` is forwarded to Fusion-Bench as `{model_id, suite}` so
+  the chosen benchmark suite is no longer silently dropped.
 
 Tests: `tests/test_studio_compat.py` pins each contract above.
 
