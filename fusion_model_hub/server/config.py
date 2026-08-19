@@ -8,7 +8,7 @@ class Settings:
     port: int = 11444
     data_dir: str = ""
     db_url: str = ""
-    mlx_url: str = "http://127.0.0.1:11432"
+    mlx_url: str = "http://127.0.0.1:11434"
     log_level: str = "INFO"
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
     max_upload_size_mb: int = 50000  # 50GB
@@ -38,7 +38,7 @@ class Settings:
         if not self.db_url:
             self.db_url = f"sqlite+aiosqlite:///{os.path.join(self.data_dir, 'hub.db')}"
         if not self.mlx_url:
-            self.mlx_url = os.environ.get("FMH_MLX_URL", "http://127.0.0.1:11432")
+            self.mlx_url = os.environ.get("FMH_MLX_URL", "http://127.0.0.1:11434")
         if not self.storage_type:
             self.storage_type = os.environ.get("FMH_STORAGE_TYPE", "local")
         if not self.minio_endpoint:

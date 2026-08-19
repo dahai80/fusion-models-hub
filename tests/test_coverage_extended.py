@@ -9,6 +9,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from fusion_model_hub.db.database import get_engine, init_db
+from fusion_model_hub.server.config import Settings
+from fusion_model_hub.server.deps import init_deps
+
 logger = logging.getLogger(__name__)
 
 
@@ -358,6 +362,21 @@ class TestLocalStoreExtended:
 
 
 class TestCRUDExtended:
+    @pytest.fixture(autouse=True)
+    async def _init_deps(self):
+        settings = Settings(
+            host="127.0.0.1", port=11444,
+            data_dir="/tmp/fmh_test_cov_ext",
+            db_url="sqlite+aiosqlite:///:memory:",
+            log_level="WARNING",
+        )
+        engine = get_engine(settings.db_url)
+        await init_db(engine)
+        init_deps(settings, engine)
+        yield
+        import shutil
+        shutil.rmtree("/tmp/fmh_test_cov_ext", ignore_errors=True)
+
     @pytest.mark.asyncio
     async def test_list_models_with_filters(self):
         from fusion_model_hub.db import crud

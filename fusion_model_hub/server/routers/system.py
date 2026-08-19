@@ -25,12 +25,18 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
 
     mlx_status = "unavailable"
     mlx_info: dict = {}
+    mlx_headers = {"X-Fusion-Source": "model-hub"}
+    if settings.mlx_internal_api_key:
+        mlx_headers["Authorization"] = f"Bearer {settings.mlx_internal_api_key}"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.mlx_url}/api/health")
+            resp = await client.get(f"{settings.mlx_url}/health", headers=mlx_headers)
             if resp.status_code == 200:
                 mlx_status = "available"
-                mlx_info = resp.json()
+                try:
+                    mlx_info = resp.json()
+                except Exception:
+                    mlx_info = {"raw": resp.text[:200]}
             else:
                 mlx_status = f"error_{resp.status_code}"
     except httpx.ConnectError:

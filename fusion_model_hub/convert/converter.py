@@ -20,7 +20,7 @@ class ModelConverter:
     All conversion operations call fusion-mlx's conversion API.
     """
 
-    def __init__(self, mlx_url: str = "http://localhost:11432"):
+    def __init__(self, mlx_url: str = "http://localhost:11434"):
         self.mlx_url = mlx_url.rstrip("/")
 
     async def convert(self, source_path: str, source_format: str = "",

@@ -711,10 +711,10 @@ curl -X POST http://localhost:11444/api/v1/cluster/sync-model \
   -H "Content-Type: application/json" \
   -d '{"model_id": "model-id", "target_nodes": ["node-1"]}'
 
-# Route inference request
+# Route inference request (local MLX first, cluster fallback)
 curl -X POST http://localhost:11444/api/v1/cluster/route-inference \
   -H "Content-Type: application/json" \
-  -d '{"model_id": "model-id", "payload": {"prompt": "Hello"}}'
+  -d '{"model_id": "model-id", "messages": [{"role": "user", "content": "Hello"}], "mode": "auto"}'
 ```
 
 ## Architecture
@@ -816,7 +816,7 @@ Environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FMH_DATA_DIR` | `./data` | Data directory for DB and files |
-| `FMH_MLX_URL` | `http://127.0.0.1:11432` | Fusion-MLX server URL |
+| `FMH_MLX_URL` | `http://127.0.0.1:11434` | Fusion-MLX server URL (direct, not gateway) |
 | `FMH_AUTH_ENABLED` | `true` | Enable API key authentication (default: enabled) |
 | `FMH_CORS_ORIGINS` | `*` | Allowed CORS origins |
 | `FMH_MAX_UPLOAD_SIZE_MB` | `500` | Max upload file size |

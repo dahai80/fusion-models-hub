@@ -7,10 +7,37 @@ from pydantic import BaseModel, Field
 from ...db import crud
 from ...db.models import DeploymentStatus
 from ..deps import SessionDep, SettingsDep
+from .inference import _mlx_headers
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
+
+
+async def _load_model_via_mlx(settings, model_name: str) -> bool:
+    headers = _mlx_headers(settings)
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.mlx_url}/v1/models/{model_name}/load", headers=headers,
+            )
+            if resp.status_code in (200, 409):
+                return True
+            if resp.status_code == 404:
+                logger.info("MLX /load 404 for %s (upstream route shadowing), falling back to chat auto-load", model_name)
+                chat_resp = await client.post(
+                    f"{settings.mlx_url}/v1/chat/completions",
+                    json={"model": model_name, "messages": [{"role": "user", "content": "."}], "max_tokens": 1, "stream": False},
+                    headers=headers,
+                )
+                return chat_resp.status_code == 200
+            logger.warning("MLX load returned %d for %s", resp.status_code, model_name)
+    except httpx.ConnectError:
+        logger.warning("Fusion-MLX server unavailable for load of %s", model_name)
+    except Exception as e:
+        logger.warning("MLX load call failed for %s: %s", model_name, e)
+    return False
+
 
 
 class DeploymentCreate(BaseModel):
@@ -47,18 +74,7 @@ async def create_deployment(body: DeploymentCreate, session: SessionDep, request
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     model_name = m.hf_repo or m.name
-    mlx_loaded = False
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(f"{settings.mlx_url}/v1/models/{model_name}/load")
-            if resp.status_code not in (200, 409):
-                logger.warning("MLX load returned %d for %s", resp.status_code, model_name)
-            else:
-                mlx_loaded = True
-    except httpx.ConnectError:
-        logger.warning("Fusion-MLX server unavailable, deployment created in pending state")
-    except Exception as e:
-        logger.warning("MLX load call failed: %s", e)
+    mlx_loaded = await _load_model_via_mlx(settings, model_name)
     d = await crud.create_deployment(
         session, model_id=body.model_id, name=body.name,
         tenant_id=tenant_id, version_id=body.version_id, replicas=body.replicas,
@@ -117,7 +133,10 @@ async def delete_deployment(deployment_id: str, session: SessionDep, settings: S
         model_name = m.hf_repo or m.name
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                await client.post(f"{settings.mlx_url}/v1/models/{model_name}/unload")
+                await client.post(
+                    f"{settings.mlx_url}/v1/models/{model_name}/unload",
+                    headers=_mlx_headers(settings),
+                )
         except Exception as e:
             logger.warning("MLX unload call failed: %s", e)
     await crud.delete_deployment(session, deployment_id)
@@ -139,7 +158,10 @@ async def stop_deployment(deployment_id: str, session: SessionDep, settings: Set
         model_name = m.hf_repo or m.name
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                await client.post(f"{settings.mlx_url}/v1/models/{model_name}/unload")
+                await client.post(
+                    f"{settings.mlx_url}/v1/models/{model_name}/unload",
+                    headers=_mlx_headers(settings),
+                )
         except Exception as e:
             logger.warning("MLX unload on stop failed: %s", e)
     d = await crud.update_deployment(session, deployment_id, status=DeploymentStatus.STOPPED)
@@ -191,12 +213,7 @@ async def scale_deployment(deployment_id: str, body: ScaleRequest, session: Sess
     if body.replicas > 0 and d.status == DeploymentStatus.RUNNING:
         m = await crud.get_model(session, d.model_id)
         if m:
-            model_name = m.hf_repo or m.name
-            try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    await client.post(f"{settings.mlx_url}/v1/models/{model_name}/load")
-            except Exception as e:
-                logger.warning("MLX load on scale failed: %s", e)
+            await _load_model_via_mlx(settings, m.hf_repo or m.name)
     logger.info("Deployment scaled: id=%s replicas=%d", deployment_id, body.replicas)
     return d
 
@@ -212,7 +229,10 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
     if model_name and d.status == DeploymentStatus.RUNNING:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{settings.mlx_url}/v1/models/status")
+                resp = await client.get(
+                    f"{settings.mlx_url}/v1/models/status",
+                    headers=_mlx_headers(settings),
+                )
                 if resp.status_code == 200:
                     status_data = resp.json()
                     if isinstance(status_data, dict):

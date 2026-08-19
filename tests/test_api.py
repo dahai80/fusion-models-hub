@@ -491,7 +491,11 @@ class TestClusterNodes:
         await client.post("/api/v1/cluster/nodes", json={"name": "node-list", "url": "http://n2:11444"})
         resp = await client.get("/api/v1/cluster/nodes")
         assert resp.status_code == 200
-        assert len(resp.json()) >= 1
+        data = resp.json()
+        assert "nodes" in data and "total" in data
+        assert data["total"] >= 2
+        ids = [n["id"] for n in data["nodes"]]
+        assert "local" in ids
 
     @pytest.mark.asyncio
     async def test_get_node(self, client):

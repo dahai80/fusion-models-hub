@@ -16,7 +16,7 @@ _BATCH_SIZE = 50
 
 
 class RecommendEngine:
-    def __init__(self, mlx_url: str = "http://localhost:11432"):
+    def __init__(self, mlx_url: str = "http://localhost:11434"):
         self.mlx_url = mlx_url.rstrip("/")
         self._hw_detector = HardwareDetector(mlx_url)
 
