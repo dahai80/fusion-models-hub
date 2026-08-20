@@ -219,6 +219,59 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | POST | `/api/v1/deployments/{id}/scale` | Scale replicas |
 | GET | `/api/v1/deployments/{id}/metrics` | Get deployment metrics (MLX status + version) |
 
+### Fusion-Studio Integration (DTO Compatibility)
+
+The Hub API emits JSON shapes that fusion-studio's Swift `Codable` DTOs decode
+with a plain `JSONDecoder` (default key-matching + explicit `CodingKeys` aliases).
+Studio integration requires these contracts:
+
+- **List envelopes** — `GET /tenants`, `/webhooks`, `/deployments` return
+  `{<plural>: [...], total: int}` (not bare arrays), matching
+  `HubTenantListResponse` / `HubWebhookListResponse` / `HubDeploymentListResponse`.
+- **Hardware** — `GET /hardware` returns a flat shape alongside the nested one:
+  `chip`, `cpuCores`, `gpuCores`, `memoryGB`, `diskFree`, `metalSupport`,
+  `aneSupport` (matches `HubHardwareResponse`).
+- **Health** — `GET /system/health` includes `version`, `uptime`,
+  `mlxConnected: bool`, and `storage` shaped as `HubDiskStats`
+  (`used`, `total`, `modelsPath`, `modelsSize`), matching `HubHealthResponse`.
+- **Deployment create** — `POST /deployments` accepts studio's
+  `{model_id, scale, canary_percent}` (no `name` required — auto-named from
+  model; `scale` is an alias for `replicas`).
+- **Deployment scale** — `POST /deployments/{id}/scale` accepts studio's
+  `{scale: int}` (alias for `replicas`).
+- **Deployment response** — every deployment endpoint emits both snake_case
+  (Hub canonical) and camelCase keys (`modelId`, `modelName`, `scale`,
+  `canaryPercent`, `strategy`, `createdAt`, `updatedAt`) so `HubDeployment`
+  decodes without a custom `CodingKeys` block.
+- **Deployment metrics** — `GET /deployments/{id}/metrics` emits the studio
+  `HubDeploymentMetricsResponse` keys (`deploymentId`, `requestsPerSecond`,
+  `avgLatencyMs`, `errorRate`, `tokensPerSecond`, `activeConnections`) alongside
+  the Hub-internal `mlx_metrics`/`version_metrics`. `avgLatencyMs` maps from the
+  version's `inference_latency`. `mlx_metrics` comes from fusion-mlx
+  `GET /v1/models/status` (the model-load registry: per-model loaded/loading
+  state, memory ceilings). For a `RUNNING` deployment the hub additionally calls
+  fusion-mlx `GET /v1/metrics/json` (PR dahai80/fusion-mlx#541, issue #539),
+  which returns `ServerMetrics.to_dict()` (inference throughput/error counters),
+  and derives `requestsPerSecond` = `total_requests`/`uptime_seconds`,
+  `errorRate` = `failed_requests`/`total_requests`, `activeConnections` =
+  `active_requests`, `tokensPerSecond` = `avg_generation_tps` (preferring the
+  live counter over the version's `throughput`). The call is 404-tolerant: until
+  #541 merges the four live fields stay `null` and the response shape is
+  unchanged (studio `Double?`/`Int?` decode `null` → `nil`).
+
+  **Auth:** hub→MLX requests carry `Authorization: Bearer <key>` from
+  `mlx_internal_api_key`, resolved in order `FUSION_MLX_API_KEY` env →
+  `MLX_INTERNAL_API_KEY` env → `~/.fusion-mlx/settings.json` `auth.api_key`.
+  MLX rejects keyless callers with 401; without a matching key `mlx_metrics` is
+  empty and model load silently fails. `start.sh` resolves the same way before
+  launch.
+- **Benchmark trigger** — `POST /benchmarks/trigger` accepts studio's `template`
+  field as an alias for `suite` (Fusion-Bench's field). Studio's
+  `{model_id, template}` is forwarded to Fusion-Bench as `{model_id, suite}` so
+  the chosen benchmark suite is no longer silently dropped.
+
+Tests: `tests/test_studio_compat.py` pins each contract above.
+
 ### Inference
 
 | Method | Path | Description |
@@ -711,10 +764,10 @@ curl -X POST http://localhost:11444/api/v1/cluster/sync-model \
   -H "Content-Type: application/json" \
   -d '{"model_id": "model-id", "target_nodes": ["node-1"]}'
 
-# Route inference request
+# Route inference request (local MLX first, cluster fallback)
 curl -X POST http://localhost:11444/api/v1/cluster/route-inference \
   -H "Content-Type: application/json" \
-  -d '{"model_id": "model-id", "payload": {"prompt": "Hello"}}'
+  -d '{"model_id": "model-id", "messages": [{"role": "user", "content": "Hello"}], "mode": "auto"}'
 ```
 
 ## Architecture
@@ -816,7 +869,7 @@ Environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FMH_DATA_DIR` | `./data` | Data directory for DB and files |
-| `FMH_MLX_URL` | `http://127.0.0.1:11432` | Fusion-MLX server URL |
+| `FMH_MLX_URL` | `http://127.0.0.1:11434` | Fusion-MLX server URL (direct, not gateway) |
 | `FMH_AUTH_ENABLED` | `true` | Enable API key authentication (default: enabled) |
 | `FMH_CORS_ORIGINS` | `*` | Allowed CORS origins |
 | `FMH_MAX_UPLOAD_SIZE_MB` | `500` | Max upload file size |

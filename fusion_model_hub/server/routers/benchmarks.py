@@ -17,6 +17,16 @@ class BenchTriggerRequest(BaseModel):
     model_id: str = ""
     suite: str = "general"
     callback_url: str = ""
+    # fusion-studio alias: triggerBenchmark posts {model_id, template}.
+    # Fusion-Bench's TaskCreateRequest accepts `suite` (alias: general/standard/full),
+    # not `template` — so map studio's `template` onto `suite` when caller omits it.
+    template: str | None = None
+
+    @property
+    def effective_suite(self) -> str:
+        if self.template and self.suite == "general":
+            return self.template
+        return self.suite
 
 
 @router.get("")
@@ -131,8 +141,9 @@ async def get_benchmark(
 @router.post("/trigger")
 async def trigger_benchmark(body: BenchTriggerRequest, settings: SettingsDep):
     bench_url = settings.bench_url.rstrip("/")
+    suite = body.effective_suite
     payload = {
-        "suite": body.suite,
+        "suite": suite,
         "model_id": body.model_id,
     }
     if body.callback_url:
@@ -141,7 +152,7 @@ async def trigger_benchmark(body: BenchTriggerRequest, settings: SettingsDep):
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(f"{bench_url}/api/v1/tasks", json=payload)
             if resp.status_code in (200, 201, 202):
-                logger.info("Bench trigger submitted: model=%s suite=%s", body.model_id, body.suite)
+                logger.info("Bench trigger submitted: model=%s suite=%s", body.model_id, suite)
                 return {"status": "submitted", "detail": resp.json()}
             logger.warning("Bench trigger returned %d: %s", resp.status_code, resp.text)
             raise HTTPException(status_code=resp.status_code, detail=resp.text)

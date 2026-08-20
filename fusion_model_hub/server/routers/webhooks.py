@@ -41,10 +41,12 @@ async def create_webhook(body: WebhookCreate, session: SessionDep):
     return w
 
 
-@router.get("", response_model=list[WebhookOut])
+@router.get("")
 async def list_webhooks(session: SessionDep, request: Request):
     tenant_id = getattr(request.state, "tenant_id", "") or ""
-    return await crud.list_webhooks(session, tenant_id=tenant_id)
+    items = await crud.list_webhooks(session, tenant_id=tenant_id)
+    logger.info("Listed webhooks: %d (tenant=%s)", len(items), tenant_id)
+    return {"webhooks": items, "total": len(items)}
 
 
 @router.get("/{webhook_id}", response_model=WebhookOut)

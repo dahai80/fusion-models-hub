@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import subprocess
+import time
 from collections import defaultdict
 
 import httpx
@@ -14,6 +15,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["system"])
 
 
+def _format_uptime(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    m, s = divmod(seconds, 60)
+    if m < 60:
+        return f"{m}m{s}s"
+    h, m = divmod(m, 60)
+    if h < 24:
+        return f"{h}h{m}m"
+    d, h = divmod(h, 24)
+    return f"{d}d{h}h{m}m"
+
+
 @router.get("/system/health")
 async def health_check(session: SessionDep, store: StoreDep, settings: SettingsDep):
     model_count = 0
@@ -25,12 +40,18 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
 
     mlx_status = "unavailable"
     mlx_info: dict = {}
+    mlx_headers = {"X-Fusion-Source": "model-hub"}
+    if settings.mlx_internal_api_key:
+        mlx_headers["Authorization"] = f"Bearer {settings.mlx_internal_api_key}"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.mlx_url}/api/health")
+            resp = await client.get(f"{settings.mlx_url}/health", headers=mlx_headers)
             if resp.status_code == 200:
                 mlx_status = "available"
-                mlx_info = resp.json()
+                try:
+                    mlx_info = resp.json()
+                except Exception:
+                    mlx_info = {"raw": resp.text[:200]}
             else:
                 mlx_status = f"error_{resp.status_code}"
     except httpx.ConnectError:
@@ -41,15 +62,45 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
 
     storage = store.get_storage_stats()
     overall = "healthy" if mlx_status == "available" else "degraded"
+
+    # fusion-studio HubHealthResponse expects {status, version, uptime, mlxConnected:Bool, storage:HubDiskStats}
+    try:
+        from fusion_model_hub import __version__ as hub_version
+    except Exception:
+        hub_version = "unknown"
+
+    from ..deps import get_start_ts
+    start_ts = get_start_ts()
+    uptime_str = ""
+    if start_ts:
+        uptime_str = _format_uptime(time.time() - start_ts)
+
+    used_gb = round(storage.get("total_size_gb", 0.0), 2)
+    disk_stats = {
+        # studio HubDiskStats shape (all optional)
+        "used": used_gb,
+        "total": round(used_gb + storage.get("free_gb", 0.0), 2),
+        "modelsPath": storage.get("path", ""),
+        "modelsSize": used_gb,
+        # hub-internal fields kept for existing consumers
+        "path": storage.get("path", ""),
+        "model_count": storage.get("model_count", 0),
+        "file_count": storage.get("file_count", 0),
+        "total_size_gb": used_gb,
+    }
+
     return {
         "status": overall,
+        "version": hub_version,
+        "uptime": uptime_str,
+        "mlxConnected": mlx_status == "available",
         "model_count": model_count,
         "mlx": {
             "status": mlx_status,
             "url": settings.mlx_url,
             "info": mlx_info,
         },
-        "storage": storage,
+        "storage": disk_stats,
         "data_dir": settings.data_dir,
     }
 

@@ -8,7 +8,7 @@ class Settings:
     port: int = 11444
     data_dir: str = ""
     db_url: str = ""
-    mlx_url: str = "http://127.0.0.1:11432"
+    mlx_url: str = "http://127.0.0.1:11434"
     log_level: str = "INFO"
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
     max_upload_size_mb: int = 50000  # 50GB
@@ -38,7 +38,7 @@ class Settings:
         if not self.db_url:
             self.db_url = f"sqlite+aiosqlite:///{os.path.join(self.data_dir, 'hub.db')}"
         if not self.mlx_url:
-            self.mlx_url = os.environ.get("FMH_MLX_URL", "http://127.0.0.1:11432")
+            self.mlx_url = os.environ.get("FMH_MLX_URL", "http://127.0.0.1:11434")
         if not self.storage_type:
             self.storage_type = os.environ.get("FMH_STORAGE_TYPE", "local")
         if not self.minio_endpoint:
@@ -78,6 +78,27 @@ class Settings:
                     "MLX API key loaded from deprecated env MLX_INTERNAL_API_KEY — "
                     "migrate to FUSION_MLX_API_KEY"
                 )
+        if not self.mlx_internal_api_key:
+            # Env unset — fall back to the Fusion-MLX server's own settings so a
+            # local install works without separately configuring the key. MLX
+            # gates on ~/.fusion-mlx/settings.json auth.api_key; without a
+            # matching Bearer every hub→MLX call 401s (mlx_metrics empty, model
+            # never loads, cluster nodes inactive). Mirror the resolution order
+            # fusion-mlx/start.sh uses.
+            import json
+            import logging
+            logger = logging.getLogger(__name__)
+            mlx_settings = os.path.expanduser("~/.fusion-mlx/settings.json")
+            try:
+                with open(mlx_settings) as f:
+                    key = json.load(f).get("auth", {}).get("api_key", "")
+                if key:
+                    self.mlx_internal_api_key = key
+                    logger.info("MLX API key loaded from %s", mlx_settings)
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                logger.warning("Failed to read MLX settings %s: %s", mlx_settings, e)
         if not self.mlx_internal_api_key:
             import logging
             logging.getLogger(__name__).warning(

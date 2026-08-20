@@ -13,12 +13,15 @@ _settings: Settings | None = None
 _session_factory = None
 _store: StorageBackend | None = None
 _cache = None
+_start_ts: float | None = None
 
 
 def init_deps(settings: Settings, engine) -> None:
-    global _settings, _session_factory, _store, _cache
+    global _settings, _session_factory, _store, _cache, _start_ts
+    import time as _time
     _settings = settings
     _session_factory = _make_session_factory(engine)
+    _start_ts = _time.time()
     if settings.storage_type == "minio" and settings.minio_endpoint:
         from ..storage.minio_store import MinioStore
         _store = MinioStore(
@@ -63,6 +66,10 @@ def get_cache_manager():
     if _cache is None:
         raise RuntimeError("Dependencies not initialized — call init_deps() first")
     return _cache
+
+
+def get_start_ts() -> float | None:
+    return _start_ts
 
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]

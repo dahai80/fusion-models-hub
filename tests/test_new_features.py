@@ -260,7 +260,8 @@ class TestClusterSyncModel:
         assert resp.status_code == 200
         data = resp.json()
         assert data["model_id"] == mid
-        assert data["results"] == []
+        assert "success" in data
+        assert "message" in data
 
     @pytest.mark.asyncio
     async def test_sync_model_to_nodes_mock(self, client):
@@ -275,8 +276,8 @@ class TestClusterSyncModel:
             })
             assert resp.status_code == 200
             data = resp.json()
-            assert len(data["results"]) == 1
-            assert data["results"][0]["status"] == 200
+            assert data["success"] is True
+            assert "remote_ok=1" in data["message"]
 
 
 class TestClusterRouteInference:
@@ -291,13 +292,18 @@ class TestClusterRouteInference:
     async def test_route_inference_local_available(self, client):
         model = await client.post("/api/v1/models", json={"name": "route-local"})
         mid = model.json()["id"]
-        with _mock_httpx_client(response_status=200):
+        chat_resp = {"id": "chat-1", "model": "route-local", "choices": [
+            {"message": {"role": "assistant", "content": "hi"}}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}}
+        with _mock_httpx_client(response_status=200, response_json=chat_resp):
             resp = await client.post("/api/v1/cluster/route-inference", json={
                 "model_id": mid,
+                "messages": [{"role": "user", "content": "ping"}],
             })
             assert resp.status_code == 200
             data = resp.json()
-            assert data["route"] == "local"
+            assert data["routedTo"] == "local"
+            assert data["content"] == "hi"
 
     @pytest.mark.asyncio
     async def test_route_inference_no_nodes_available(self, client):
@@ -306,6 +312,7 @@ class TestClusterRouteInference:
         with _mock_httpx_client(side_effect=Exception("fail")):
             resp = await client.post("/api/v1/cluster/route-inference", json={
                 "model_id": mid,
+                "messages": [{"role": "user", "content": "ping"}],
             })
             assert resp.status_code == 503
 
