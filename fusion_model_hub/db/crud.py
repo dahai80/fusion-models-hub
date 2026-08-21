@@ -49,6 +49,7 @@ async def create_model(
     tenant_id: str = "",
     description: str = "",
     model_type: ModelType = ModelType.LLM,
+    base_model_id: str = "",
     architecture: str = "",
     params_size: str = "",
     license: str = "",
@@ -62,7 +63,7 @@ async def create_model(
 ) -> Model:
     m = Model(
         name=name, tenant_id=tenant_id, description=description, model_type=model_type,
-        architecture=architecture, params_size=params_size,
+        base_model_id=base_model_id, architecture=architecture, params_size=params_size,
         license=license, author=author, language=language,
         task_types=task_types, owner=owner, hf_repo=hf_repo,
         model_modules=model_modules, idle_timeout_minutes=idle_timeout_minutes,
@@ -125,7 +126,7 @@ async def list_models(
 
 
 _MODEL_UPDATABLE = {
-    "description", "model_type", "architecture", "params_size",
+    "description", "model_type", "base_model_id", "architecture", "params_size",
     "license", "author", "language", "task_types", "owner", "hf_repo",
     "model_modules", "idle_timeout_minutes", "ttl_seconds", "pinned", "model_status",
 }

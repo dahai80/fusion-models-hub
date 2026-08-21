@@ -32,6 +32,7 @@ class ModelCreate(BaseModel):
     name: str = Field(..., min_length=3, max_length=64)
     description: str = ""
     model_type: ModelType = ModelType.LLM
+    base_model_id: str = ""
     architecture: str = ""
     params_size: str = ""
     license: str = ""
@@ -48,6 +49,7 @@ class ModelCreate(BaseModel):
 class ModelUpdate(BaseModel):
     description: str | None = None
     model_type: ModelType | None = None
+    base_model_id: str | None = None
     architecture: str | None = None
     params_size: str | None = None
     license: str | None = None
@@ -84,6 +86,7 @@ def _model_to_dict(m) -> dict[str, Any]:
         "tenant_id": m.tenant_id,
         "description": m.description,
         "model_type": m.model_type.value,
+        "base_model_id": m.base_model_id,
         "architecture": m.architecture,
         "params_size": m.params_size,
         "license": m.license,
@@ -112,10 +115,15 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
     if existing:
         raise HTTPException(status_code=409, detail=f"Model name already exists: {body.name}")
     tenant_id = getattr(request.state, "tenant_id", "") or ""
+    if body.model_type == ModelType.LORA and body.base_model_id:
+        base_m = await crud.get_model(session, body.base_model_id)
+        if not base_m:
+            raise HTTPException(status_code=404, detail="base_model_id not found")
     m = await crud.create_model(
         session,
         name=body.name, tenant_id=tenant_id, description=body.description,
-        model_type=body.model_type, architecture=body.architecture,
+        model_type=body.model_type, base_model_id=body.base_model_id,
+        architecture=body.architecture,
         params_size=body.params_size, license=body.license,
         author=body.author, language=body.language,
         task_types=body.task_types, owner=body.owner,
@@ -128,6 +136,12 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
     try:
         from .webhooks import dispatch_webhook_event
         await dispatch_webhook_event("model.created", {"id": m.id, "name": m.name}, tenant_id=tenant_id)
+        if body.model_type == ModelType.LORA:
+            await dispatch_webhook_event(
+                "adapter.published",
+                {"id": m.id, "name": m.name, "base_model_id": body.base_model_id},
+                tenant_id=tenant_id,
+            )
     except Exception:
         logger.exception("Webhook dispatch failed for model.created")
     return _model_to_dict(m)

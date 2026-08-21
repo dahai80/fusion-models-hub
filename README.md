@@ -205,6 +205,20 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | GET | `/api/v1/webhooks/{id}` | Get webhook |
 | DELETE | `/api/v1/webhooks/{id}` | Delete webhook |
 
+**Webhook events** (set `events` to a comma-separated list; substring match):
+
+| Event | Dispatched when |
+|-------|-----------------|
+| `model.created` | New model registered |
+| `model.deleted` | Model deleted |
+| `model.hot_reloaded` | FR-015 hot-reload swapped served version |
+| `version.published` | Version promoted to `published` |
+| `version.deprecated` | Version marked `deprecated` |
+| `quantize.completed` | Quantize task finished |
+| `quantize.failed` | Quantize task failed |
+| `adapter.published` | #22 LoRA adapter model created |
+| `adapter.merged` | #22 LoRA merge task completed (new merged version) |
+
 ### Deployments
 
 | Method | Path | Description |
@@ -279,6 +293,7 @@ Tests: `tests/test_studio_compat.py` pins each contract above.
 | POST | `/api/v1/models/{id}/serve` | Load model into Fusion-MLX |
 | DELETE | `/api/v1/models/{id}/serve` | Unload model |
 | GET | `/api/v1/models/{id}/serve` | Get serve status |
+| POST | `/api/v1/models/{id}/hot-reload` | Zero-downtime hot-reload to a new version (FR-015: preloads, swaps served record, dispatches `model.hot_reloaded`) |
 | POST | `/api/v1/inference/{id}/chat` | Chat completion (proxied, gray-release aware) |
 | POST | `/api/v1/inference/{id}/completions` | Text completion (proxied) |
 | POST | `/api/v1/inference/{id}/embeddings` | Embeddings (proxied) |
@@ -445,6 +460,12 @@ All inference calls (chat/completions/embeddings) are logged to the audit trail 
 |--------|------|-------------|
 | POST | `/api/v1/quantize/lora-merge` | Submit LoRA merge task (base + adapter, with quantization) |
 | GET | `/api/v1/quantize/lora-merge/{task_id}` | Get LoRA merge task status |
+
+LoRA models use `model_type=lora` with a `base_model_id` FK to the base LLM. The
+merge runner calls `POST {mlx_url}/v1/models/{name}/merge-adapter` on Fusion-MLX
+to fuse the adapter into a new persisted `ModelVersion`. Until Fusion-MLX ships
+that endpoint (issue fusion-mlx#584), the task fails with a clear
+"upgrade fusion-mlx" message — the hub side is 404-tolerant and ready.
 
 ### Distributed Tasks
 

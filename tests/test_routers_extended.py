@@ -233,6 +233,94 @@ class TestInferenceServeModel:
         inf_mod._loaded_models.clear()
 
 
+class TestInferenceHotReload:
+    @pytest.mark.asyncio
+    async def test_hot_reload_not_served(self, client):
+        resp = await client.post(
+            "/api/v1/models/nonexistent/hot-reload",
+            json={"version_id": "v1"},
+        )
+        assert resp.status_code == 404
+        assert "not currently served" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_hot_reload_same_version_rejected(self, client):
+        from fusion_model_hub.server.routers import inference as inf_mod
+        inf_mod._loaded_models.clear()
+        model = await _create_model(client, "hot-same")
+        ver = await _create_published_version(client, model["id"])
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_ctx = AsyncMock()
+        mock_ctx.post = AsyncMock(return_value=mock_resp)
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        with patch("fusion_model_hub.server.routers.inference.httpx.AsyncClient", return_value=mock_ctx):
+            await client.post(f"/api/v1/models/{model['id']}/serve", json={})
+        resp = await client.post(
+            f"/api/v1/models/{model['id']}/hot-reload",
+            json={"version_id": ver["id"]},
+        )
+        assert resp.status_code == 400
+        assert "already served" in resp.json()["detail"].lower()
+        inf_mod._loaded_models.clear()
+
+    @pytest.mark.asyncio
+    async def test_hot_reload_preload_failure(self, client):
+        from fusion_model_hub.server.routers import inference as inf_mod
+        inf_mod._loaded_models.clear()
+        model = await _create_model(client, "hot-preload-fail")
+        old_ver = await _create_published_version(client, model["id"], "1.0.0")
+        new_ver = await _create_published_version(client, model["id"], "2.0.0")
+        serve_resp = MagicMock()
+        serve_resp.status_code = 200
+        serve_resp.raise_for_status = MagicMock()
+        bad_resp = MagicMock()
+        bad_resp.status_code = 500
+        mock_ctx = AsyncMock()
+        mock_ctx.post = AsyncMock(side_effect=[serve_resp, bad_resp])
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        with patch("fusion_model_hub.server.routers.inference.httpx.AsyncClient", return_value=mock_ctx):
+            await client.post(f"/api/v1/models/{model['id']}/serve", json={})
+            resp = await client.post(
+                f"/api/v1/models/{model['id']}/hot-reload",
+                json={"version_id": new_ver["id"]},
+            )
+        assert resp.status_code == 502
+        assert "preload" in resp.json()["detail"].lower()
+        inf_mod._loaded_models.clear()
+
+    @pytest.mark.asyncio
+    async def test_hot_reload_success_swaps_version(self, client):
+        from fusion_model_hub.server.routers import inference as inf_mod
+        inf_mod._loaded_models.clear()
+        model = await _create_model(client, "hot-ok")
+        old_ver = await _create_published_version(client, model["id"], "1.0.0")
+        new_ver = await _create_published_version(client, model["id"], "2.0.0")
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.raise_for_status = MagicMock()
+        mock_ctx = AsyncMock()
+        mock_ctx.post = AsyncMock(return_value=ok_resp)
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        with patch("fusion_model_hub.server.routers.inference.httpx.AsyncClient", return_value=mock_ctx):
+            await client.post(f"/api/v1/models/{model['id']}/serve", json={})
+            resp = await client.post(
+                f"/api/v1/models/{model['id']}/hot-reload",
+                json={"version_id": new_ver["id"]},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "reloaded"
+        assert data["old_version_id"] == old_ver["id"]
+        assert data["new_version_id"] == new_ver["id"]
+        assert inf_mod._loaded_models[model["id"]]["version_id"] == new_ver["id"]
+        inf_mod._loaded_models.clear()
+
+
 class TestInferenceUnloadModel:
     @pytest.mark.asyncio
     async def test_unload_not_loaded(self, client):
@@ -1316,3 +1404,134 @@ class TestTasksWebhookDispatch:
         status_resp = await client.get(f"/api/v1/quantize/{task_id}")
         assert status_resp.json()["status"] == "completed"
         tasks_mod._running_tasks.clear()
+
+
+# =====================================================================
+# #22 LoRA adapter tests
+# =====================================================================
+
+
+class TestLoraAdapter:
+    @pytest.mark.asyncio
+    async def test_lora_base_model_not_found(self, client):
+        resp = await client.post("/api/v1/models", json={
+            "name": "lora-bad-base",
+            "model_type": "lora",
+            "base_model_id": "nonexistent",
+        })
+        assert resp.status_code == 404
+        assert "base_model_id" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_lora_base_model_id_persisted_and_queryable(self, client):
+        base = await _create_model(client, "lora-base-host")
+        resp = await client.post("/api/v1/models", json={
+            "name": "lora-adapter-1",
+            "model_type": "lora",
+            "base_model_id": base["id"],
+        })
+        assert resp.status_code == 201
+        adapter = resp.json()
+        assert adapter["model_type"] == "lora"
+        assert adapter["base_model_id"] == base["id"]
+        got = await client.get(f"/api/v1/models/{adapter['id']}")
+        assert got.status_code == 200
+        assert got.json()["base_model_id"] == base["id"]
+
+    @pytest.mark.asyncio
+    async def test_lora_update_base_model_id(self, client):
+        base_a = await _create_model(client, "lora-host-a")
+        base_b = await _create_model(client, "lora-host-b")
+        adapter = await client.post("/api/v1/models", json={
+            "name": "lora-adapter-2",
+            "model_type": "lora",
+            "base_model_id": base_a["id"],
+        })
+        upd = await client.put(f"/api/v1/models/{adapter.json()['id']}", json={
+            "base_model_id": base_b["id"],
+        })
+        assert upd.status_code == 200
+        assert upd.json()["base_model_id"] == base_b["id"]
+
+    @pytest.mark.asyncio
+    async def test_adapter_published_webhook_dispatched(self, client):
+        base = await _create_model(client, "lora-host-wh")
+        with patch(
+            "fusion_model_hub.server.routers.webhooks.dispatch_webhook_event",
+            new=AsyncMock(),
+        ) as mock_dispatch:
+            resp = await client.post("/api/v1/models", json={
+                "name": "lora-adapter-wh",
+                "model_type": "lora",
+                "base_model_id": base["id"],
+            })
+        assert resp.status_code == 201
+        events = [call.args[0] for call in mock_dispatch.call_args_list]
+        assert "model.created" in events
+        assert "adapter.published" in events
+
+    @pytest.mark.asyncio
+    async def test_lora_merge_upstream_missing_endpoint(self, client):
+        model = await _create_model(client, "lora-merge-host")
+        v1 = await _create_published_version(client, model["id"], "1.0.0")
+        v2 = await _create_published_version(client, model["id"], "1.1.0")
+        not_found = MagicMock()
+        not_found.status_code = 404
+        not_found.content = b'{"detail":"not found"}'
+        mock_ctx = AsyncMock()
+        mock_ctx.post = AsyncMock(return_value=not_found)
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "fusion_model_hub.server.routers.quantize.httpx.AsyncClient",
+            return_value=mock_ctx,
+        ):
+            cr = await client.post("/api/v1/quantize/lora-merge", json={
+                "base_version_id": v1["id"],
+                "lora_version_id": v2["id"],
+                "quant_bits": 4,
+            })
+            assert cr.status_code == 202
+            task_id = cr.json()["task_id"]
+            await asyncio.sleep(0.4)
+        status = await client.get(f"/api/v1/quantize/lora-merge/{task_id}")
+        assert status.status_code == 200
+        data = status.json()
+        assert data["status"] == "failed"
+        assert "merge-adapter" in data["error_message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_lora_merge_success_creates_version(self, client):
+        model = await _create_model(client, "lora-merge-ok-host")
+        v1 = await _create_published_version(client, model["id"], "1.0.0")
+        v2 = await _create_published_version(client, model["id"], "1.1.0")
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.content = b'{"output_path":"/tmp/merged.safetensors"}'
+        ok.raise_for_status = MagicMock()
+        ok.json = MagicMock(return_value={"output_path": "/tmp/merged.safetensors"})
+        mock_ctx = AsyncMock()
+        mock_ctx.post = AsyncMock(return_value=ok)
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "fusion_model_hub.server.routers.quantize.httpx.AsyncClient",
+            return_value=mock_ctx,
+        ), patch(
+            "fusion_model_hub.server.routers.webhooks.dispatch_webhook_event",
+            new=AsyncMock(),
+        ) as mock_wh:
+            cr = await client.post("/api/v1/quantize/lora-merge", json={
+                "base_version_id": v1["id"],
+                "lora_version_id": v2["id"],
+                "quant_bits": 4,
+            })
+            task_id = cr.json()["task_id"]
+            await asyncio.sleep(0.4)
+        status = await client.get(f"/api/v1/quantize/lora-merge/{task_id}")
+        data = status.json()
+        assert data["status"] == "completed"
+        assert data["output_version_id"]
+        wh_events = [call.args[0] for call in mock_wh.call_args_list]
+        assert "adapter.merged" in wh_events
+
