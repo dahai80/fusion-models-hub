@@ -179,11 +179,10 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
     )
 
     async def _run_merge(task_id: str):
-        # #22 LoRA adapter merge: call Fusion-MLX merge-adapter endpoint (upstream),
-        # then create a new ModelVersion carrying the merged output and record its
-        # id as output_version_id. Upstream gap: fusion-mlx has no merge HTTP
-        # endpoint yet (runtime adapter_path only) -> 404 surfaces a clear error.
-        # See fusion-mlx issue for the missing endpoint.
+        # #22 LoRA adapter merge: call Fusion-MLX POST /v1/merge-adapter (upstream
+        # #584), which loads the base + adapter, fuses LoRA/DoRA layers, and saves
+        # the merged weights. Then create a new ModelVersion carrying the merged
+        # output and record its id as output_version_id.
         from ..deps import get_settings
         from .webhooks import dispatch_webhook_event
         sf = get_session_factory()
@@ -201,21 +200,20 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
                 if settings.mlx_internal_api_key:
                     headers["Authorization"] = f"Bearer {settings.mlx_internal_api_key}"
                 merge_payload = {
+                    "model": model_name,
                     "adapter_path": lora_v.file_path or lora_v.version,
-                    "quant_bits": merge_task.quant_bits,
-                    "target_format": merge_task.target_format,
                 }
                 output_path = ""
                 try:
                     async with httpx.AsyncClient(timeout=300.0) as client:
                         resp = await client.post(
-                            f"{settings.mlx_url}/v1/models/{model_name}/merge-adapter",
+                            f"{settings.mlx_url}/v1/merge-adapter",
                             json=merge_payload,
                             headers=headers,
                         )
                         if resp.status_code == 404:
                             raise RuntimeError(
-                                "Fusion-MLX has no merge-adapter endpoint; "
+                                "Fusion-MLX has no /v1/merge-adapter endpoint; "
                                 "upgrade fusion-mlx to a version with adapter merge support"
                             )
                         resp.raise_for_status()
