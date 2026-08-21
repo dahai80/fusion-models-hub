@@ -177,6 +177,20 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | GET | `/api/v1/webhooks/{id}` | 获取 Webhook |
 | DELETE | `/api/v1/webhooks/{id}` | 删除 Webhook |
 
+**Webhook 事件**（`events` 为逗号分隔列表，子串匹配）：
+
+| 事件 | 触发时机 |
+|------|----------|
+| `model.created` | 注册新模型 |
+| `model.deleted` | 删除模型 |
+| `model.hot_reloaded` | FR-015 热重载切换服务版本 |
+| `version.published` | 版本提升为 `published` |
+| `version.deprecated` | 版本标记为 `deprecated` |
+| `quantize.completed` | 量化任务完成 |
+| `quantize.failed` | 量化任务失败 |
+| `adapter.published` | #22 LoRA 适配器模型创建 |
+| `adapter.merged` | #22 LoRA 合并任务完成（产出合并版本） |
+
 ### 部署
 
 | 方法 | 路径 | 说明 |
@@ -198,6 +212,7 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 | POST | `/api/v1/models/{id}/serve` | 加载模型至 Fusion-MLX |
 | DELETE | `/api/v1/models/{id}/serve` | 卸载模型 |
 | GET | `/api/v1/models/{id}/serve` | 获取服务状态 |
+| POST | `/api/v1/models/{id}/hot-reload` | 零停机热重载到新版本（FR-015：预加载、切换服务记录、派发 `model.hot_reloaded`） |
 | POST | `/api/v1/inference/{id}/chat` | 聊天补全（代理，灰度感知） |
 | POST | `/api/v1/inference/{id}/completions` | 文本补全（代理） |
 | POST | `/api/v1/inference/{id}/embeddings` | 嵌入（代理） |
@@ -289,6 +304,11 @@ fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 |------|------|------|
 | POST | `/api/v1/quantize/lora-merge` | 提交 LoRA 合并任务（基座 + 适配器，含量化） |
 | GET | `/api/v1/quantize/lora-merge/{task_id}` | 获取 LoRA 合并任务状态 |
+
+LoRA 模型使用 `model_type=lora` 并通过 `base_model_id` 外键指向基座 LLM。合并
+运行器调用 Fusion-MLX 的 `POST {mlx_url}/v1/models/{name}/merge-adapter` 将适配器
+融合为新的持久化 `ModelVersion`。在 Fusion-MLX 提供该端点之前（issue
+fusion-mlx#584），任务会以明确的"升级 fusion-mlx"信息失败——Hub 侧对 404 容错且已就绪。
 
 ### 分布式任务
 

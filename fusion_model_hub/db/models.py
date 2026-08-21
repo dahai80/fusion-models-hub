@@ -79,6 +79,7 @@ class Model(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     model_type: Mapped[ModelType] = mapped_column(Enum(ModelType), default=ModelType.LLM)
+    base_model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), default="")
     architecture: Mapped[str] = mapped_column(String(64), default="")
     params_size: Mapped[str] = mapped_column(String(16), default="")
     license: Mapped[str] = mapped_column(String(64), default="")
@@ -248,10 +249,13 @@ class ClusterNode(Base):
 class WebhookEvent(str, enum.Enum):
     MODEL_CREATED = "model.created"
     MODEL_DELETED = "model.deleted"
+    MODEL_HOT_RELOADED = "model.hot_reloaded"
     VERSION_PUBLISHED = "version.published"
     VERSION_DEPRECATED = "version.deprecated"
     QUANTIZE_COMPLETED = "quantize.completed"
     QUANTIZE_FAILED = "quantize.failed"
+    ADAPTER_PUBLISHED = "adapter.published"
+    ADAPTER_MERGED = "adapter.merged"
 
 
 class Webhook(Base):

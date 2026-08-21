@@ -179,16 +179,79 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
     )
 
     async def _run_merge(task_id: str):
+        # #22 LoRA adapter merge: call Fusion-MLX merge-adapter endpoint (upstream),
+        # then create a new ModelVersion carrying the merged output and record its
+        # id as output_version_id. Upstream gap: fusion-mlx has no merge HTTP
+        # endpoint yet (runtime adapter_path only) -> 404 surfaces a clear error.
+        # See fusion-mlx issue for the missing endpoint.
+        from ..deps import get_settings
+        from .webhooks import dispatch_webhook_event
         sf = get_session_factory()
         async with sf() as s:
             try:
                 await crud.update_lora_merge_task(s, task_id, status=TaskStatus.RUNNING)
                 logger.info("LoRA merge running: id=%s", task_id)
-                await asyncio.sleep(0.1)
+                merge_task = await crud.get_lora_merge_task(s, task_id)
+                base_v = await crud.get_version(s, merge_task.base_version_id)
+                lora_v = await crud.get_version(s, merge_task.lora_version_id)
+                base_m = await crud.get_model(s, base_v.model_id)
+                model_name = base_m.hf_repo or base_m.name
+                settings = get_settings()
+                headers = {"X-Fusion-Source": "model-hub"}
+                if settings.mlx_internal_api_key:
+                    headers["Authorization"] = f"Bearer {settings.mlx_internal_api_key}"
+                merge_payload = {
+                    "adapter_path": lora_v.file_path or lora_v.version,
+                    "quant_bits": merge_task.quant_bits,
+                    "target_format": merge_task.target_format,
+                }
+                output_path = ""
+                try:
+                    async with httpx.AsyncClient(timeout=300.0) as client:
+                        resp = await client.post(
+                            f"{settings.mlx_url}/v1/models/{model_name}/merge-adapter",
+                            json=merge_payload,
+                            headers=headers,
+                        )
+                        if resp.status_code == 404:
+                            raise RuntimeError(
+                                "Fusion-MLX has no merge-adapter endpoint; "
+                                "upgrade fusion-mlx to a version with adapter merge support"
+                            )
+                        resp.raise_for_status()
+                        body = resp.json() if resp.content else {}
+                        output_path = body.get("output_path", "")
+                except httpx.ConnectError as e:
+                    raise RuntimeError(f"Fusion-MLX server unavailable: {e}") from e
+                new_ver = await crud.create_version(
+                    s,
+                    model_id=base_v.model_id,
+                    version=f"lora-merge-{task_id[:8]}",
+                    release_notes=f"LoRA merge of {lora_v.version} onto {base_v.version}",
+                    file_path=output_path,
+                )
                 await crud.update_lora_merge_task(
                     s, task_id, status=TaskStatus.COMPLETED,
-                    output_version_id="",
+                    output_version_id=new_ver.id if new_ver else "",
                 )
+                logger.info(
+                    "LoRA merge completed: id=%s output_version=%s",
+                    task_id, new_ver.id if new_ver else "",
+                )
+                try:
+                    await dispatch_webhook_event(
+                        "adapter.merged",
+                        {
+                            "task_id": task_id,
+                            "base_version_id": merge_task.base_version_id,
+                            "lora_version_id": merge_task.lora_version_id,
+                            "output_version_id": new_ver.id if new_ver else "",
+                            "model_id": base_v.model_id,
+                        },
+                        tenant_id=getattr(base_m, "tenant_id", "") or "",
+                    )
+                except Exception:
+                    logger.warning("adapter.merged webhook dispatch failed: id=%s", task_id)
             except Exception as e:
                 await crud.update_lora_merge_task(
                     s, task_id, status=TaskStatus.FAILED,

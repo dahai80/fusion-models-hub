@@ -255,6 +255,81 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     }
 
 
+class HotReloadRequest(BaseModel):
+    version_id: str
+
+
+@router.post("/models/{model_id}/hot-reload")
+async def hot_reload_model(model_id: str, body: HotReloadRequest, session: SessionDep, settings: SettingsDep):
+    # FR-015 zero-downtime hot reload: preload new version, swap served record,
+    # then dispatch webhook. MLX loads by hf_repo; version swap is recorded at
+    # hub layer. Real model swap handled by gateway/MLX routing. Hub does
+    # preload + bookkeeping + notification.
+    info = _loaded_models.get(model_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Model not currently served; use /serve first")
+    old_version_id = info.get("version_id", "")
+    if body.version_id == old_version_id:
+        raise HTTPException(status_code=400, detail="Target version is already served")
+    m = await crud.get_model(session, model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    v = await crud.get_version(session, body.version_id)
+    if not v or v.model_id != model_id:
+        raise HTTPException(status_code=404, detail="Target version not found for this model")
+    if v.status.value != "published":
+        raise HTTPException(status_code=403, detail="Only published versions can be hot-reloaded to")
+    model_name = m.hf_repo or m.name
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.mlx_url}/v1/models/{model_name}/load",
+                json={"gpu": True},
+                headers=_mlx_headers(settings),
+            )
+            if resp.status_code not in (200, 409):
+                logger.warning("Hot-reload preload returned %d for %s", resp.status_code, model_name)
+                raise HTTPException(status_code=502, detail=f"MLX preload failed: {resp.status_code}")
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("Hot-reload preload error for %s: %s", model_name, e)
+        raise HTTPException(status_code=502, detail=f"MLX preload failed: {e}")
+    _loaded_models[model_id] = {
+        "version_id": body.version_id,
+        "model_name": model_name,
+        "status": "loaded",
+        "loaded_at": time.time(),
+    }
+    logger.info(
+        "Hot-reload done: id=%s old_ver=%s new_ver=%s mlx_model=%s",
+        model_id, old_version_id, body.version_id, model_name,
+    )
+    try:
+        from .webhooks import dispatch_webhook_event
+        await dispatch_webhook_event(
+            "model.hot_reloaded",
+            {
+                "model_id": model_id,
+                "model_name": model_name,
+                "old_version_id": old_version_id,
+                "new_version_id": body.version_id,
+            },
+            tenant_id=getattr(m, "tenant_id", "") or "",
+        )
+    except Exception as e:
+        logger.warning("Hot-reload webhook dispatch failed: %s", e)
+    return {
+        "model_id": model_id,
+        "old_version_id": old_version_id,
+        "new_version_id": body.version_id,
+        "status": "reloaded",
+        "mlx_model": model_name,
+    }
+
+
 @router.delete("/models/{model_id}/serve")
 async def unload_model(model_id: str, settings: SettingsDep):
     if model_id not in _loaded_models:
