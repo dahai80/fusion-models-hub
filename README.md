@@ -462,10 +462,12 @@ All inference calls (chat/completions/embeddings) are logged to the audit trail 
 | GET | `/api/v1/quantize/lora-merge/{task_id}` | Get LoRA merge task status |
 
 LoRA models use `model_type=lora` with a `base_model_id` FK to the base LLM. The
-merge runner calls `POST {mlx_url}/v1/models/{name}/merge-adapter` on Fusion-MLX
-to fuse the adapter into a new persisted `ModelVersion`. Until Fusion-MLX ships
-that endpoint (issue fusion-mlx#584), the task fails with a clear
-"upgrade fusion-mlx" message — the hub side is 404-tolerant and ready.
+merge runner calls `POST {mlx_url}/v1/merge-adapter` on Fusion-MLX with
+`{model, adapter_path}` in the body (base model in the body, not the URL path, so
+HF repos with a slash are handled without encoding) to fuse the adapter into a new
+persisted `ModelVersion`. The hub is 404-tolerant: an older Fusion-MLX without the
+`/v1/merge-adapter` endpoint (shipped in fusion-mlx #584 / PR #591) fails the task
+with a clear "upgrade fusion-mlx" message.
 
 ### Distributed Tasks
 
