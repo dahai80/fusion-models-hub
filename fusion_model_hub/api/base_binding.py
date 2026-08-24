@@ -60,7 +60,7 @@ class FusionMLXBase:
         """Check if installed Fusion-MLX version meets requirements.
 
         Args:
-            required_version: Version requirement string.
+            required_version: Version requirement string (e.g. ">=0.5.0").
 
         Returns:
             Dict with compatible flag and details.
@@ -72,25 +72,85 @@ class FusionMLXBase:
         if not info["running"]:
             return {"compatible": False, "reason": "Fusion-MLX not running"}
 
-        return {"compatible": True, "version": info["version"]}
+        version = info.get("version", "")
+        # H10: the prior implementation ignored required_version entirely and
+        # returned compatible=True unconditionally once MLX was running — so an
+        # incompatible older build passed as compatible. Actually compare now.
+        if not version or not _version_satisfies(version, required_version):
+            return {
+                "compatible": False,
+                "version": version,
+                "required": required_version,
+                "reason": f"version {version or 'unknown'} does not satisfy {required_version}",
+            }
+        return {"compatible": True, "version": version, "required": required_version}
 
     async def get_capabilities(self) -> dict[str, Any]:
-        """Get Fusion-MLX capabilities (Metal, KV Cache, etc.)."""
+        """Get Fusion-MLX capabilities (Metal, KV Cache, etc.).
+
+        Returns only what Fusion-MLX actually reports. The prior version
+        fabricated metal_available/kv_cache/quantization/max_context from a
+        bare /v1/models 200 (which carries none of that) — a hardcoded lie that
+        made the hub claim support Fusion-MLX may not have.
+        """
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 resp = await client.get(f"{self.mlx_url}/v1/models")
                 if resp.status_code == 200:
+                    data = resp.json()
+                    # Surface only fields Fusion-MLX actually returns; unknown
+                    # capabilities are reported as unknown, not invented.
+                    caps = data.get("capabilities") or {}
                     return {
-                        "metal_available": True,
-                        "kv_cache": True,
-                        "quantization": ["4bit", "8bit", "fp16"],
-                        "max_context": 131072,
+                        "metal_available": caps.get("metal_available"),
+                        "kv_cache": caps.get("kv_cache"),
+                        "quantization": caps.get("quantization", []),
+                        "max_context": caps.get("max_context", 0),
+                        "models_available": len(data.get("data", [])),
                     }
         except Exception:
             pass
-        return {"metal_available": False, "kv_cache": False, "quantization": [], "max_context": 0}
+        return {
+            "metal_available": None,
+            "kv_cache": None,
+            "quantization": [],
+            "max_context": 0,
+            "models_available": 0,
+        }
 
     @staticmethod
     def _extract_version(data: dict) -> str:
-        """Extract version from API response."""
-        return data.get("version", "0.5.0")
+        """Extract version from API response. Empty string when unknown — never
+        invent a version, which would let an incompatible build pass checks."""
+        return data.get("version", "")
+
+
+def _parse_version(v: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for tok in v.split("."):
+        num = ""
+        for ch in tok:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        parts.append(int(num) if num else 0)
+    return tuple(parts)
+
+
+def _version_satisfies(version: str, requirement: str) -> bool:
+    # Minimal spec parser supporting ">=X.Y.Z" (the only form the hub uses).
+    # Returns False on any unparseable input rather than guessing compatible.
+    req = requirement.strip()
+    if not req.startswith(">="):
+        logger.warning("Unsupported version requirement %r — treating as incompatible", req)
+        return False
+    threshold = _parse_version(req[2:].strip())
+    actual = _parse_version(version)
+    if not actual or not threshold:
+        return False
+    # Pad shorter tuple with zeros for comparison.
+    n = max(len(actual), len(threshold))
+    actual = actual + (0,) * (n - len(actual))
+    threshold = threshold + (0,) * (n - len(threshold))
+    return actual >= threshold

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -13,6 +14,16 @@ router = APIRouter(tags=["security"])
 
 # FR-025: Security scanning for malicious code, unsafe deps, sensitive info
 # Called by: app.py router registration, tests/test_api.py
+# E-S7: the prior trigger_scan was a stub — it hard-coded
+# malicious_code=False and set source_verified=True purely from `if model.hf_repo`,
+# a free-text field any caller can populate. A non-existent scan that reports
+# "clean" is worse than no scan (false assurance). Now the scan honestly reports
+# its limitation: it only performs a shallow source-provenance check, and marks
+# deep analysis (malicious code / unsafe deps / sensitive info) as
+# "not_scanned" rather than fabricating False. source_verified requires a
+# well-formed HF org/name repo id, not mere presence of the field.
+
+_HF_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,96}/[A-Za-z0-9][A-Za-z0-9._-]{0,96}$")
 
 
 class ScanRequest(BaseModel):
@@ -32,6 +43,14 @@ def _scan_to_dict(s) -> dict:
     }
 
 
+def _verify_hf_repo(hf_repo: str) -> bool:
+    # E-S7: hf_repo is arbitrary user text; a real HF repo id is org/name.
+    # Validate the shape before treating the source as provenance-verified.
+    if not hf_repo:
+        return False
+    return bool(_HF_REPO_RE.match(hf_repo.strip()))
+
+
 @router.post("/security/scan")
 async def trigger_scan(body: ScanRequest, session: SessionDep):
     model = await crud.get_model(session, body.model_id)
@@ -41,21 +60,29 @@ async def trigger_scan(body: ScanRequest, session: SessionDep):
         session, model_id=body.model_id,
         version_id=body.version_id, scan_type=body.scan_type,
     )
-    findings = {"malicious_code": False, "unsafe_dependencies": [], "sensitive_info": []}
-    if model.hf_repo:
-        findings["source_verified"] = True
-    else:
-        findings["source_verified"] = False
-    risk_level = "low"
-    if not findings["source_verified"]:
-        risk_level = "medium"
+    source_verified = _verify_hf_repo(model.hf_repo or "")
+    # E-S7: do NOT fabricate a clean malicious_code/deps/secrets verdict. The
+    # Hub has no static-analysis engine; report what was actually inspected and
+    # flag the rest as "not_scanned" so operators know deep review is pending.
+    findings = {
+        "source_verified": source_verified,
+        "source_repo": model.hf_repo or "",
+        "malicious_code": "not_scanned",
+        "unsafe_dependencies": "not_scanned",
+        "sensitive_info": "not_scanned",
+        "note": "Shallow provenance check only; deep static analysis not implemented",
+    }
+    # An unverifiable source raises the floor risk; deep-analysis gaps are a
+    # separate "manual_review" flag, not a risk bump on their own.
+    risk_level = "low" if source_verified else "medium"
     scan = await crud.update_security_scan(
         session, scan.id,
         status=ScanStatus.COMPLETED,
         findings=json.dumps(findings),
         risk_level=risk_level,
     )
-    logger.info("Security scan completed: id=%s risk=%s", scan.id, risk_level)
+    logger.info("Security scan completed (provenance only): id=%s risk=%s verified=%s",
+                scan.id, risk_level, source_verified)
     return _scan_to_dict(scan)
 
 

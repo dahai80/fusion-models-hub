@@ -66,7 +66,11 @@ class TestCacheManager:
         got = cm.get("m1", CacheLevel.QUANTIZED, 4)
         assert got is not None
         assert got.path.endswith(".mlx")
-        assert got.ref_count == 1
+        # E-R4: ref_count machinery removed (was never persisted/decremented, so
+        # the GC "pin" it fed was fictional). get() now refreshes last_accessed,
+        # which is the real LRU/age signal gc() evicts on.
+        assert got.last_accessed > 0
+        assert got.ref_count == 0
         assert cm.remove("m1", CacheLevel.QUANTIZED, 4) is True
         assert not cm.has("m1", CacheLevel.QUANTIZED, 4)
 
@@ -116,6 +120,92 @@ class TestCacheManager:
         cm._save_index()
         removed = cm.gc(max_age_days=1)
         assert removed >= 1
+
+    def test_gc_keeps_fresh_entry_without_ref_count_pin(self, cache_dir):
+        # E-R4: a freshly-written entry has ref_count 0 (inference never touches
+        # the cache), so the old "ref_count <= 0 and age > max_age_days/2"
+        # clause evicted it at half the age threshold under a fictional "in use"
+        # pin. GC must now keep a fresh entry and only evict by real age.
+        cm = CacheManager(cache_root=cache_dir)
+        cm.put("m-fresh", CacheLevel.QUANTIZED, _write_tmp_file(b"q4"), quant_bits=4)
+        # Reload from index.json to simulate a restart: ref_count was never
+        # persisted, so it reads back 0 — exactly the live-but-evicted scenario.
+        cm2 = CacheManager(cache_root=cache_dir)
+        removed = cm2.gc(max_age_days=30)
+        assert removed == 0
+        assert cm2.has("m-fresh", CacheLevel.QUANTIZED, 4)
+
+    def test_gc_evicts_by_size_lru(self, cache_dir):
+        # E-R4: with a size cap, gc evicts least-recently-accessed first by
+        # last_accessed, not by ref_count.
+        cm = CacheManager(cache_root=cache_dir)
+        cm.put("old-lru", CacheLevel.RAW, _write_tmp_file(b"old" * 1000))
+        cm.put("new-lru", CacheLevel.RAW, _write_tmp_file(b"new" * 1000))
+        # Force old-lru to look older.
+        for k, data in cm._index.items():
+            if "old-lru" in k:
+                data["last_accessed"] = 0
+        cm._save_index()
+        # Cap holds one 3000-byte file: evict the oldest (old-lru) and keep
+        # the newer (new-lru).
+        removed = cm.gc(max_size_gb=3.0e-6)
+        assert removed >= 1
+        assert not cm.has("old-lru", CacheLevel.RAW)
+        assert cm.has("new-lru", CacheLevel.RAW)
+
+    def test_remove_model_no_prefix_collision(self, cache_dir):
+        # E-R5: remove_model used startswith(f"{model_id}:") so deleting "abc"
+        # also purged "abcxyz". Keys must match only when their first
+        # colon-segment equals the model_id exactly.
+        cm = CacheManager(cache_root=cache_dir)
+        cm.put("abc", CacheLevel.RAW, _write_tmp_file(b"a"))
+        cm.put("abcxyz", CacheLevel.RAW, _write_tmp_file(b"b"))
+        removed = cm.remove_model("abc")
+        assert removed == 1
+        assert not cm.has("abc", CacheLevel.RAW)
+        # The unrelated "abcxyz" model must survive.
+        assert cm.has("abcxyz", CacheLevel.RAW)
+
+    def test_gc_reconciler_removes_disk_orphans(self, cache_dir):
+        # E-R6: a file on disk with no index entry is leaked forever under the
+        # old gc (which walked self._index only). gc must now scan the level
+        # dirs and delete orphans, while keeping indexed entries intact.
+        cm = CacheManager(cache_root=cache_dir)
+        cm.put("indexed", CacheLevel.RAW, _write_tmp_file(b"keep me"))
+        # Drop an orphan file directly on disk.
+        orphan = Path(cm.raw_dir) / "orphan-model.mlx"
+        orphan.write_bytes(b"i am a leak")
+        assert orphan.exists()
+        removed = cm.gc(max_age_days=30)
+        assert removed >= 1
+        assert not orphan.exists()
+        # Indexed entry must survive the reconciler.
+        assert cm.has("indexed", CacheLevel.RAW)
+
+    def test_corrupt_index_preserves_disk_then_reconciles(self, cache_dir):
+        # E-R6 + E-R1: a corrupt index.json is quarantined and the in-memory
+        # index starts empty, but the real cache files on disk must NOT be
+        # silently dropped — they become orphans the next gc reclaims, and the
+        # quarantine file itself must not be mistaken for a cache entry.
+        cm = CacheManager(cache_root=cache_dir)
+        cm.put("survivor", CacheLevel.RAW, _write_tmp_file(b"on disk"))
+        disk_path = Path(cm.get("survivor", CacheLevel.RAW).path)
+        assert disk_path.exists()
+        # Corrupt the index on disk, then reload.
+        cm._index_file.write_text("{not valid json", encoding="utf-8")
+        cm2 = CacheManager(cache_root=cache_dir)
+        # Empty index after quarantine — disk file still present.
+        assert len(cm2._index) == 0
+        assert disk_path.exists()
+        # A quarantine sidecar was written alongside the cache dirs' parent.
+        quarantined = list(Path(cache_dir).glob("index.corrupt.*.json"))
+        assert len(quarantined) == 1
+        # gc reconciler reclaims the now-orphaned disk file (and must not try
+        # to delete the .corrupt sidecar, which lives in cache_root not a
+        # level dir, nor any .tmp staging file).
+        removed = cm2.gc(max_age_days=30)
+        assert removed >= 1
+        assert not disk_path.exists()
 
 
 class TestCacheRouter:
@@ -167,6 +257,54 @@ class TestCacheRouter:
         assert resp.status_code == 200
         assert "valid" in resp.json()
 
+    async def test_delete_model_purges_cache(self, client, cache_dir):
+        # E-R2: delete_model/batch_delete only rmtree'd the models_dir tree and
+        # never called cache.remove_model, so cache files + index.json entries
+        # for a deleted model leaked forever. Deleting the model must also drop
+        # its cache entries.
+        from fusion_model_hub.db.crud import create_model
+        from fusion_model_hub.db.models import ModelType
+        from fusion_model_hub.server.deps import _cache, get_session_factory
+
+        sf = get_session_factory()
+        async with sf() as session:
+            model = await create_model(
+                session, name="del-cache-model", model_type=ModelType.LLM,
+                architecture="qwen2", params_size="7B",
+            )
+            model_id = model.id
+        # Seed a cache entry for the model.
+        _cache.put(model_id, CacheLevel.QUANTIZED, _write_tmp_file(b"q4"), quant_bits=4)
+        assert _cache.has(model_id, CacheLevel.QUANTIZED, 4)
+        # Delete the model via the API.
+        resp = await client.delete(f"/api/v1/models/{model_id}")
+        assert resp.status_code == 200
+        # Cache entry for the deleted model must be gone.
+        assert not _cache.has(model_id, CacheLevel.QUANTIZED, 4)
+
+    async def test_batch_delete_purges_cache(self, client, cache_dir):
+        # E-R2: batch_delete path must also purge cache entries.
+        from fusion_model_hub.db.crud import create_model
+        from fusion_model_hub.db.models import ModelType
+        from fusion_model_hub.server.deps import _cache, get_session_factory
+
+        sf = get_session_factory()
+        model_ids = []
+        async with sf() as session:
+            for name in ("batch-del-1", "batch-del-2"):
+                model = await create_model(
+                    session, name=name, model_type=ModelType.LLM,
+                    architecture="qwen2", params_size="7B",
+                )
+                model_ids.append(model.id)
+        for mid in model_ids:
+            _cache.put(mid, CacheLevel.RAW, _write_tmp_file(b"r"))
+            assert _cache.has(mid, CacheLevel.RAW)
+        resp = await client.post("/api/v1/models/batch/delete", json={"model_ids": model_ids})
+        assert resp.status_code == 200
+        for mid in model_ids:
+            assert not _cache.has(mid, CacheLevel.RAW)
+
 
 class TestQuantizeCacheIntegration:
     async def test_quantize_cache_hit_skips_mlx(self, client, cache_dir):
@@ -192,7 +330,9 @@ class TestQuantizeCacheIntegration:
 
         cm = get_cache_manager()
         cached_file = _write_tmp_file(b"cached 4bit output")
-        cm.put(model_id, CacheLevel.QUANTIZED, cached_file, quant_bits=4)
+        # H9/R2: cache is keyed by source_version_id so a new version of the
+        # same model never reuses a prior version's quantized weights.
+        cm.put(model_id, CacheLevel.QUANTIZED, cached_file, quant_bits=4, source_version_id=version_id)
 
         with patch(
             "fusion_model_hub.server.tasks.ModelConverter.quantize",

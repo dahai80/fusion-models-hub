@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...db import crud
@@ -10,6 +10,18 @@ from ..deps import SessionDep
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
+
+
+def _require_admin(request: Request) -> None:
+    # E-S8: tenant create/update/delete is an admin-only privilege. Without this
+    # any developer-role key could create/rename tenants and even delete one
+    # (the prior code had no RBAC at all on these endpoints).
+    from ..auth import _is_auth_enabled
+    if not _is_auth_enabled():
+        return
+    role = getattr(request.state, "user_role", "")
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can manage tenants")
 
 
 class TenantCreate(BaseModel):
@@ -30,7 +42,8 @@ class TenantOut(BaseModel):
 
 
 @router.post("", status_code=201, response_model=TenantOut)
-async def create_tenant(body: TenantCreate, session: SessionDep):
+async def create_tenant(body: TenantCreate, session: SessionDep, request: Request):
+    _require_admin(request)
     existing = await crud.get_tenant_by_name(session, body.name)
     if existing:
         raise HTTPException(status_code=409, detail=f"Tenant already exists: {body.name}")
@@ -39,14 +52,16 @@ async def create_tenant(body: TenantCreate, session: SessionDep):
 
 
 @router.get("")
-async def list_tenants(session: SessionDep):
+async def list_tenants(session: SessionDep, request: Request):
+    _require_admin(request)
     items = await crud.list_tenants(session)
     logger.info("Listed tenants: %d", len(items))
     return {"tenants": items, "total": len(items)}
 
 
 @router.get("/{tenant_id}", response_model=TenantOut)
-async def get_tenant(tenant_id: str, session: SessionDep):
+async def get_tenant(tenant_id: str, session: SessionDep, request: Request):
+    _require_admin(request)
     t = await crud.get_tenant(session, tenant_id)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -54,7 +69,8 @@ async def get_tenant(tenant_id: str, session: SessionDep):
 
 
 @router.patch("/{tenant_id}", response_model=TenantOut)
-async def update_tenant(tenant_id: str, body: TenantUpdate, session: SessionDep):
+async def update_tenant(tenant_id: str, body: TenantUpdate, session: SessionDep, request: Request):
+    _require_admin(request)
     t = await crud.get_tenant(session, tenant_id)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -67,7 +83,25 @@ async def update_tenant(tenant_id: str, body: TenantUpdate, session: SessionDep)
 
 
 @router.delete("/{tenant_id}")
-async def delete_tenant(tenant_id: str, session: SessionDep):
+async def delete_tenant(tenant_id: str, session: SessionDep, request: Request):
+    _require_admin(request)
+    # E-S8: refuse to delete a tenant that still owns models or API keys — a
+    # blind cascade orphans those rows (model.tenant_id pointing at a gone
+    # tenant). The caller must reassign or delete dependents first.
+    owned = await crud.count_models_for_tenant(session, tenant_id=tenant_id)
+    if owned:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete tenant: {owned} model(s) still assigned. "
+                   "Reassign or delete them first.",
+        )
+    keys = await crud.count_api_keys_for_tenant(session, tenant_id=tenant_id)
+    if keys:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete tenant: {keys} API key(s) still active. "
+                   "Deactivate them first.",
+        )
     ok = await crud.delete_tenant(session, tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Tenant not found")

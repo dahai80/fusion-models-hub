@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 import logging
 import random
@@ -29,14 +28,23 @@ _loaded_models: dict[str, dict] = {}
 _model_stats: dict[str, dict] = {}
 _VALID_MODULES = {"chat", "code", "design", "rag", "agent"}
 _loaded_lock = asyncio.Lock()
+# R5: _cleanup_loaded_models ran after EVERY serve_model, holding _loaded_lock
+# for the whole sweep and firing 2 DB queries (pinned + ttl) PER loaded model
+# inside the lock — on a hot inference path that serializes every request.
+# Throttle to at most once per window so a burst of serves sweeps once, not Nx.
+_CLEANUP_MIN_INTERVAL = 60
+_last_cleanup_ts: float = 0.0
+# R6: _model_stats accumulated forever and was never popped on unload — a long
+# run with many transient models leaks unbounded memory exposed via
+# /v1/metrics/json. Cap the tracked set; oldest entry evicted when exceeded.
+_MODEL_STATS_CAP = 500
 
 
 def _compute_file_hash(file_path: str) -> str:
-    h = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    # E-E8: delegate to the shared utils helper so chunk size is consistent.
+    from ...utils.hashing import compute_sha256
+
+    return compute_sha256(file_path)
 
 
 async def _check_module_access(model_id: str, request) -> None:
@@ -106,6 +114,12 @@ async def _is_model_pinned(model_id: str) -> bool:
 
 
 async def _cleanup_loaded_models() -> None:
+    # R5: throttle — skip the sweep entirely if one ran inside the window. The
+    # non-blocking check avoids serializing on the lock just to decide "skip".
+    global _last_cleanup_ts
+    now = time.time()
+    if now - _last_cleanup_ts < _CLEANUP_MIN_INTERVAL:
+        return
     async with _loaded_lock:
         now = time.time()
         expired = []
@@ -133,11 +147,19 @@ async def _cleanup_loaded_models() -> None:
                 except Exception as e:
                     logger.warning("MLX unload during TTL eviction failed for %s: %s", model_id, e)
             _loaded_models.pop(model_id, None)
+            _model_stats.pop(model_id, None)
             logger.info("TTL evicted model: id=%s name=%s", model_id, model_name)
+        _last_cleanup_ts = time.time()
 
 
 def _update_model_stats(model_id: str, latency_ms: float, tokens: int = 0, source_module: str = "") -> None:
     if model_id not in _model_stats:
+        # R6: bound the tracked set so a long run with many transient models
+        # cannot grow _model_stats without limit. Evict the oldest-tracked
+        # entry (smallest first_request_at) when the cap is reached.
+        if len(_model_stats) >= _MODEL_STATS_CAP:
+            oldest = min(_model_stats, key=lambda k: _model_stats[k].get("first_request_at", 0))
+            _model_stats.pop(oldest, None)
         _model_stats[model_id] = {
             "request_count": 0,
             "total_latency": 0.0,
@@ -198,6 +220,11 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     if not version_id and m.versions:
         published = [v for v in m.versions if v.status.value == "published"]
         if published:
+            # E-D6: the prior code took published[0] with no ordering guarantee —
+            # DB insertion order is not guaranteed across updates/repromotes, so
+            # the served version was nondeterministic. Serve the most recently
+            # created published version (stable, deterministic selection).
+            published.sort(key=lambda x: x.created_at or 0, reverse=True)
             version_id = published[0].id
         elif m.versions:
             version_id = m.versions[0].id
@@ -212,6 +239,15 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     if v.file_path:
         import os
         if not os.path.exists(v.file_path):
+            # E-D4: a missing file for a PUBLISHED version is a zombie — the
+            # prior 403 left it published and silently un-servable. Log loudly
+            # with the version id so an operator can retire/rollback it; the
+            # 403 still protects callers.
+            logger.error(
+                "Published version file missing (zombie): version_id=%s path=%s "
+                "— retire or rollback this version",
+                version_id, v.file_path,
+            )
             raise HTTPException(status_code=403, detail="File integrity check failed. Model files may be corrupted.")
         if not v.file_hash:
             computed = await anyio.to_thread.run_sync(_compute_file_hash, v.file_path)
@@ -357,6 +393,7 @@ async def unload_model(model_id: str, settings: SettingsDep):
 
     async with _loaded_lock:
         _loaded_models.pop(model_id, None)
+    _model_stats.pop(model_id, None)
     logger.info("Model unloaded: id=%s", model_id)
     return {"model_id": model_id, "status": "unloaded"}
 

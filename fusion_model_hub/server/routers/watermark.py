@@ -1,10 +1,11 @@
 import hashlib
+import hmac
 import json
 import logging
 import os
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ...db import crud
@@ -16,6 +17,23 @@ router = APIRouter(tags=["watermark"])
 # NFR-003: Model watermark & tracing
 # Called by: app.py include_router, tests/test_api.py
 # Schema: Watermark ORM in db/models.py
+# E-S6: the prior default signing secret was a source-public constant, so a
+# watermark could be forged by anyone with the source. Now refuse to sign unless
+# a non-default FMH_WATERMARK_SECRET is configured. Verification uses a
+# constant-time compare (hmac.compare_digest) so signature-mismatch does not
+# leak timing.
+_DEFAULT_SECRET = "fusion-model-hub-default-secret"
+
+
+def _resolve_wm_secret() -> str:
+    secret = os.environ.get("FMH_WATERMARK_SECRET", "")
+    if not secret or secret == _DEFAULT_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="Watermark disabled: set a non-default FMH_WATERMARK_SECRET env "
+                   "(high entropy) before embedding/verifying watermarks",
+        )
+    return secret
 
 
 class WatermarkEmbedRequest(BaseModel):
@@ -40,21 +58,24 @@ def _wm_to_dict(w) -> dict:
     }
 
 
-def _sign_payload(payload: dict, model_id: str, version_id: str) -> str:
-    secret = os.environ.get("FMH_WATERMARK_SECRET", "fusion-model-hub-default-secret")
+def _sign_payload(payload: dict, model_id: str, version_id: str, secret: str) -> str:
     raw = f"{secret}:{model_id}:{version_id}:{json.dumps(payload, sort_keys=True)}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
 @router.post("/watermark/embed")
-async def embed_watermark(body: WatermarkEmbedRequest, session: SessionDep):
+async def embed_watermark(body: WatermarkEmbedRequest, session: SessionDep, request: Request):
     model = await crud.get_model(session, body.model_id)
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
+    secret = _resolve_wm_secret()
     payload = body.payload or {}
     payload["embedded_at"] = datetime.now(UTC).isoformat()
-    payload["owner"] = model.owner or model.author or ""
-    signature = _sign_payload(payload, body.model_id, body.version_id)
+    # E-S6: owner previously came from model.owner — a forgeable free-text field
+    # any caller could set on model create. Use the authenticated tenant context
+    # instead so the watermark's provenance cannot be self-asserted.
+    payload["owner"] = getattr(request.state, "tenant_id", "") or model.tenant_id or ""
+    signature = _sign_payload(payload, body.model_id, body.version_id, secret)
     wm = await crud.create_watermark(
         session, model_id=body.model_id, version_id=body.version_id,
         watermark_type=body.watermark_type,
@@ -70,9 +91,12 @@ async def verify_watermark(body: WatermarkVerifyRequest, session: SessionDep):
     if not wms:
         return {"verified": False, "reason": "No watermark found"}
     wm = wms[0]
+    secret = _resolve_wm_secret()
     payload = json.loads(wm.payload) if wm.payload else {}
-    expected_sig = _sign_payload(payload, body.model_id, body.version_id)
-    verified = wm.signature == expected_sig
+    expected_sig = _sign_payload(payload, body.model_id, body.version_id, secret)
+    # E-S6: constant-time compare so a signature mismatch does not leak how many
+    # leading bytes matched (timing oracle for forgery).
+    verified = hmac.compare_digest(wm.signature or "", expected_sig)
     return {
         "verified": verified,
         "watermark": _wm_to_dict(wm) if verified else None,

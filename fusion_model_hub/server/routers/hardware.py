@@ -16,8 +16,19 @@ _detector: HardwareDetector | None = None
 
 def _get_detector(settings: SettingsDep) -> HardwareDetector:
     global _detector
-    if _detector is None or _detector.mlx_url != settings.mlx_url:
-        _detector = HardwareDetector(settings.mlx_url)
+    # E-E10: invalidate on mlx_url OR mlx_internal_api_key drift, and clear the
+    # 5-min hardware cache on rebuild so a hot-reload-swapped MLX URL does not
+    # keep serving stale hardware. api_key is carried so /v1/hardware auths when
+    # MLX enforces auth.
+    if (
+        _detector is None
+        or _detector.mlx_url != settings.mlx_url
+        or _detector.api_key != settings.mlx_internal_api_key
+    ):
+        if _detector is not None:
+            _detector.invalidate_cache()
+        _detector = HardwareDetector(settings.mlx_url, api_key=settings.mlx_internal_api_key)
+        logger.info("HardwareDetector (re)built for mlx_url=%s", settings.mlx_url)
     return _detector
 
 

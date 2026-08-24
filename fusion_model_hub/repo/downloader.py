@@ -1,7 +1,6 @@
 """Model downloader — downloads and verifies Fusion-MLX models via HTTP."""
 from __future__ import annotations
 
-import hashlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -51,7 +50,27 @@ class ModelDownloader:
             if resume_offset > 0:
                 headers["Range"] = f"bytes={resume_offset}-"
 
-            async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client, \
+            # E-S14: follow_redirects=True is required for CDN LFS hops (HF →
+            # cdn-lfs.huggingface.co), but a public URL can 302 to an internal
+            # address. Re-validate each redirect target against the SSRF guard
+            # via an async event hook so an internal redirect is refused rather
+            # than silently followed. Raise to abort the stream.
+            from ..server.ssrf import validate_external_url
+
+            async def _ssrf_guard(request: httpx.Request) -> None:
+                try:
+                    validate_external_url(str(request.url))
+                except Exception as guard_exc:
+                    logger.warning(
+                        "SSRF guard rejected redirect to %s: %s",
+                        request.url.host, guard_exc,
+                    )
+                    raise
+
+            async with httpx.AsyncClient(
+                timeout=300.0, follow_redirects=True,
+                event_hooks={"request": [_ssrf_guard]},
+            ) as client, \
                     client.stream("GET", url, headers=headers) as resp:
                     if resume_offset > 0 and resp.status_code not in (206, 200):
                         logger.warning("Server does not support resume, restarting from 0")
@@ -114,18 +133,18 @@ class ModelDownloader:
 
     @staticmethod
     def _compute_hash(file_path: Path) -> str:
-        """Compute SHA256 hex digest of a file."""
-        h = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        # E-E8: delegate to the shared utils helper.
+        from ..utils.hashing import compute_sha256
+
+        return compute_sha256(file_path)
 
     @classmethod
     def _verify_hash(cls, file_path: Path, expected_hash: str) -> bool:
-        """Verify SHA256 hash of a file."""
+        # E-E8: delegate to the shared utils helper (which logs mismatches).
+        from ..utils.hashing import verify_sha256
+
         try:
-            return cls._compute_hash(file_path) == expected_hash.lower()
+            return verify_sha256(file_path, expected_hash)
         except Exception as e:
             logger.error("Hash verification failed: %s", e)
             return False

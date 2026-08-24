@@ -7,39 +7,81 @@ logger = logging.getLogger(__name__)
 
 
 class FusionModelHubClient:
-    def __init__(self, base_url: str = "http://localhost:11444", api_key: str | None = None, timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11444",
+        api_key: str | None = None,
+        timeout: float = 30.0,
+        *,
+        verify: bool | str = True,
+        cert: str | tuple[str, str] | tuple[str, str, str] | None = None,
+        trust_env: bool = True,
+    ):
+        # E-E14: prior __init__ accepted no TLS controls and the default base_url
+        # is http:// (plaintext) — fine for local loopback, but a user pointing
+        # the SDK at a remote Hub over https had no way to configure client cert
+        # auth or a custom CA bundle, and could only disable verification by
+        # reaching into httpx globally. Expose verify/cert/trust_env and thread
+        # them into a single persistent httpx.Client so connections are reused
+        # (the prior code opened a new Client per request = pool churn).
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {}
         if api_key:
             self._headers["X-API-Key"] = api_key
         self._timeout = timeout
+        self._verify = verify
+        self._cert = cert
+        self._trust_env = trust_env
+        self._client: httpx.Client | None = None
+
+    def _get_client(self) -> httpx.Client:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.Client(
+                timeout=self._timeout,
+                headers=self._headers,
+                verify=self._verify,
+                cert=self._cert,
+                trust_env=self._trust_env,
+            )
+        return self._client
+
+    def close(self) -> None:
+        if self._client and not self._client.is_closed:
+            self._client.close()
+            self._client = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     def _url(self, path: str) -> str:
         return f"{self._base_url}/api/v1{path}"
 
     def _get(self, path: str, params: dict | None = None) -> dict:
-        with httpx.Client(timeout=self._timeout) as c:
-            r = c.get(self._url(path), headers=self._headers, params=params)
-            r.raise_for_status()
-            return r.json()
+        c = self._get_client()
+        r = c.get(self._url(path), params=params)
+        r.raise_for_status()
+        return r.json()
 
     def _post(self, path: str, json: dict | None = None, **kwargs: Any) -> dict:
-        with httpx.Client(timeout=self._timeout) as c:
-            r = c.post(self._url(path), headers=self._headers, json=json, **kwargs)
-            r.raise_for_status()
-            return r.json()
+        c = self._get_client()
+        r = c.post(self._url(path), json=json, **kwargs)
+        r.raise_for_status()
+        return r.json()
 
     def _put(self, path: str, json: dict | None = None) -> dict:
-        with httpx.Client(timeout=self._timeout) as c:
-            r = c.put(self._url(path), headers=self._headers, json=json)
-            r.raise_for_status()
-            return r.json()
+        c = self._get_client()
+        r = c.put(self._url(path), json=json)
+        r.raise_for_status()
+        return r.json()
 
     def _delete(self, path: str) -> dict:
-        with httpx.Client(timeout=self._timeout) as c:
-            r = c.delete(self._url(path), headers=self._headers)
-            r.raise_for_status()
-            return r.json()
+        c = self._get_client()
+        r = c.delete(self._url(path))
+        r.raise_for_status()
+        return r.json()
 
     # --- Models ---
     def list_models(self, **params: Any) -> dict:

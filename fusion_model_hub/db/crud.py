@@ -24,6 +24,7 @@ from .models import (
     ModelFavorite,
     ModelFormat,
     ModelRating,
+    ModelStatus,
     ModelTag,
     ModelType,
     ModelVersion,
@@ -31,6 +32,7 @@ from .models import (
     QuantizeTask,
     Role,
     SecurityScan,
+    TaskStatus,
     Tenant,
     VersionStatus,
     Watermark,
@@ -131,6 +133,21 @@ _MODEL_UPDATABLE = {
     "model_modules", "idle_timeout_minutes", "ttl_seconds", "pinned", "model_status",
 }
 
+MODEL_STATUS_TRANSITIONS: dict[ModelStatus, set[ModelStatus]] = {
+    ModelStatus.DRAFT: {ModelStatus.PUBLISHED, ModelStatus.DEPRECATED},
+    ModelStatus.PUBLISHED: {ModelStatus.DEPRECATED},
+    ModelStatus.DEPRECATED: {ModelStatus.PUBLISHED},
+}
+
+
+def check_model_status_transition(current: ModelStatus, target: ModelStatus) -> None:
+    allowed = MODEL_STATUS_TRANSITIONS.get(current, set())
+    if target not in allowed:
+        raise InvalidTransition(
+            f"Model status transition {current.value} -> {target.value} not allowed "
+            f"(allowed: {sorted(s.value for s in allowed) or 'none'})"
+        )
+
 
 async def update_model(session: AsyncSession, model_id: str, **fields) -> Model | None:
     m = await get_model(session, model_id)
@@ -138,6 +155,9 @@ async def update_model(session: AsyncSession, model_id: str, **fields) -> Model 
         return None
     for k, v in fields.items():
         if k in _MODEL_UPDATABLE and v is not None:
+            if k == "model_status" and isinstance(v, (ModelStatus, str)):
+                target = v if isinstance(v, ModelStatus) else ModelStatus(str(v).lower())
+                check_model_status_transition(m.model_status, target)
             setattr(m, k, v)
     await session.commit()
     await session.refresh(m)
@@ -411,10 +431,49 @@ async def update_quantize_task(
     return t
 
 
+async def claim_quantize_task(session: AsyncSession, task_id: str) -> bool:
+    # R3: atomic claim fencing. A conditional UPDATE flips PENDING->RUNNING only
+    # if the row is still PENDING. rowcount==0 means another hub process already
+    # claimed it (or it is no longer pending) — the caller MUST skip, not resume.
+    # Works on both SQLite and Postgres (conditional UPDATE is always atomic);
+    # avoids needing a new column or a real SELECT FOR UPDATE.
+    result = await session.execute(
+        update(QuantizeTask)
+        .where(QuantizeTask.id == task_id, QuantizeTask.status == TaskStatus.PENDING)
+        .values(status=TaskStatus.RUNNING, started_at=datetime.now(UTC))
+    )
+    await session.commit()
+    claimed = (result.rowcount or 0) > 0
+    logger.info("Claim quantize task: id=%s claimed=%s", task_id, claimed)
+    return claimed
+
+
 # -- ApiKey CRUD --
+
+# E-S4: API-key hashing. Old scheme was bare single-round SHA-256 with no salt,
+# no pepper, no slow KDF, and a SQL `==` compare — offline-crackable on DB leak.
+# New scheme: per-key salt derived from the install pepper, then 200k iterations
+# of PBKDF2-HMAC-SHA256. Output is deterministic (same key + pepper -> same
+# hash) so DB `==` lookup keeps working, but a leaked hub.db is useless without
+# the pepper (held in env/config, not the DB). Verify also runs an explicit
+# constant-time compare as defense-in-depth.
+_API_KEY_PEPPER = ""
+_PBKDF2_ITERS = 200_000
+
+
+def set_api_key_pepper(pepper: str) -> None:
+    global _API_KEY_PEPPER
+    _API_KEY_PEPPER = pepper or ""
+    if not _API_KEY_PEPPER:
+        logger.warning("API key pepper is empty — key hashes fall back to plain SHA-256")
 
 
 def _hash_key(key: str) -> str:
+    if _API_KEY_PEPPER:
+        import hmac
+        salt = hmac.new(_API_KEY_PEPPER.encode(), key.encode(), hashlib.sha256).digest()[:16]
+        return hashlib.pbkdf2_hmac("sha256", key.encode(), salt, _PBKDF2_ITERS).hex()
+    # Fallback only when pepper never set (pre-init); log already warned.
     return hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -496,7 +555,17 @@ async def verify_api_key(session: AsyncSession, raw_key: str) -> ApiKey | None:
     )
     ak = result.scalar_one_or_none()
     if ak:
-        logger.info("API key verified: id=%s name=%s", ak.id, ak.name)
+        # E-S4: explicit constant-time guard even though the SQL == already matched.
+        import hmac as _hmac
+        if not _hmac.compare_digest(ak.key_hash, key_hash):
+            logger.warning("API key hash mismatch despite SQL match: id=%s", ak.id)
+            return None
+        # E-E12: this fires on EVERY authenticated request. At INFO it dumps
+        # every key id + human-readable name into log aggregators (Datadog/Loki),
+        # handing an attacker who reads logs a directory of which admin keys
+        # exist. Drop to DEBUG and log only the opaque id + prefix (no free-text
+        # name) so production logs no longer catalog key identities.
+        logger.debug("API key verified: id=%s prefix=%s", ak.id, ak.key_prefix)
     return ak
 
 
@@ -598,8 +667,12 @@ async def get_tenant_by_name(session: AsyncSession, name: str) -> Tenant | None:
     return result.scalar_one_or_none()
 
 
-async def list_tenants(session: AsyncSession) -> list[Tenant]:
-    result = await session.execute(select(Tenant).order_by(Tenant.created_at.desc()))
+async def list_tenants(session: AsyncSession, *, tenant_id: str = "") -> list[Tenant]:
+    stmt = select(Tenant)
+    if tenant_id:
+        stmt = stmt.where(Tenant.id == tenant_id)
+    stmt = stmt.order_by(Tenant.created_at.desc())
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
@@ -611,6 +684,26 @@ async def delete_tenant(session: AsyncSession, tenant_id: str) -> bool:
     await session.commit()
     logger.info("Deleted tenant: id=%s", tenant_id)
     return True
+
+
+async def count_models_for_tenant(session: AsyncSession, *, tenant_id: str) -> int:
+    # E-S8: orphan check before tenant delete — count models still assigned.
+    from sqlalchemy import func
+    result = await session.execute(
+        select(func.count(Model.id)).where(Model.tenant_id == tenant_id)
+    )
+    return int(result.scalar() or 0)
+
+
+async def count_api_keys_for_tenant(session: AsyncSession, *, tenant_id: str) -> int:
+    # E-S8: orphan check before tenant delete — count active API keys.
+    from sqlalchemy import func
+    result = await session.execute(
+        select(func.count(ApiKey.id)).where(
+            ApiKey.tenant_id == tenant_id, ApiKey.is_active.is_(True)
+        )
+    )
+    return int(result.scalar() or 0)
 
 
 # -- Role CRUD --
@@ -728,10 +821,11 @@ async def create_deployment(
     tenant_id: str = "",
     version_id: str = "",
     replicas: int = 1,
+    node_id: str = "local",
 ) -> Deployment:
     d = Deployment(
         model_id=model_id, name=name, tenant_id=tenant_id,
-        version_id=version_id, replicas=replicas,
+        version_id=version_id, replicas=replicas, node_id=node_id,
     )
     session.add(d)
     await session.commit()
@@ -762,7 +856,10 @@ async def list_deployments(
     return list(result.scalars().all())
 
 
-_DEPLOYMENT_UPDATABLE = {"replicas", "status", "version_id", "gray_enabled", "gray_version_id", "gray_traffic_ratio"}
+_DEPLOYMENT_UPDATABLE = {
+    "replicas", "status", "version_id", "gray_enabled",
+    "gray_version_id", "gray_traffic_ratio", "node_id",
+}
 
 
 async def update_deployment(session: AsyncSession, deployment_id: str, **fields) -> Deployment | None:
@@ -1356,11 +1453,12 @@ async def create_download_task(
     version_id: str = "",
     speed_limit_kbps: int = 0,
     max_retries: int = 3,
+    expected_sha256: str = "",
 ) -> DownloadTask:
     t = DownloadTask(
         model_id=model_id, source_url=source_url,
         version_id=version_id, speed_limit_kbps=speed_limit_kbps,
-        max_retries=max_retries,
+        max_retries=max_retries, expected_sha256=expected_sha256,
     )
     session.add(t)
     await session.commit()
@@ -1400,7 +1498,7 @@ async def list_download_tasks(
 
 _DOWNLOAD_TASK_UPDATABLE = {
     "status", "progress_percent", "downloaded_bytes", "total_bytes",
-    "retry_count", "error_message", "file_path",
+    "retry_count", "error_message", "file_path", "file_hash",
 }
 
 

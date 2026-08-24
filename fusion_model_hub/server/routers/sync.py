@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 
@@ -16,12 +15,11 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 
 
 def _disk_hash_and_size(file_path: str) -> tuple[str, int]:
-    stat = os.stat(file_path)
-    sha = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        while chunk := f.read(8192):
-            sha.update(chunk)
-    return sha.hexdigest(), stat.st_size
+    # E-E8: delegate to the shared utils helper. Prior 8KB chunk was the odd
+    # one out among 64KB callers; unified helper uses 64KB everywhere.
+    from ...utils.hashing import compute_sha256_and_size
+
+    return compute_sha256_and_size(file_path)
 
 
 @router.get("/versions/{version_id}/manifest")

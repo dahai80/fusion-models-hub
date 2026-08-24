@@ -19,12 +19,31 @@ router = APIRouter(prefix="/adapt", tags=["adapt"])
 _engine: AdaptDecisionEngine | None = None
 
 _running_executions: dict[str, asyncio.Task] = {}
+# H7: track per-execution errors so a convert/quantize non-200 (previously
+# logged as a warning then reported as "completed") surfaces honestly instead
+# of a silent false success.
+_execution_errors: dict[str, str] = {}
 
 
 def _get_engine(settings: SettingsDep) -> AdaptDecisionEngine:
     global _engine
-    if _engine is None or _engine.mlx_url != settings.mlx_url:
-        _engine = AdaptDecisionEngine(settings.mlx_url)
+    # E-E10: invalidate on mlx_url OR mlx_internal_api_key drift, not just mlx_url.
+    # A key rotation or a hot-reload that also re-keys MLX must rebuild so the
+    # engine authenticates against the new credential. On rebuild, drop the old
+    # engine's embedded HardwareDetector 5-min cache so a swapped MLX URL does
+    # not keep serving the prior MLX's stale hardware profile.
+    if (
+        _engine is None
+        or _engine.mlx_url != settings.mlx_url
+        or _engine.api_key != settings.mlx_internal_api_key
+    ):
+        if _engine is not None:
+            _engine.invalidate_cache()
+        _engine = AdaptDecisionEngine(settings.mlx_url, api_key=settings.mlx_internal_api_key)
+        logger.info(
+            "AdaptDecisionEngine (re)built for mlx_url=%s",
+            settings.mlx_url,
+        )
     return _engine
 
 
@@ -99,6 +118,9 @@ async def execute_adaptation(request: ExecuteRequest, settings: SettingsDep):
                         "Convert step returned %d for %s: %s",
                         convert_resp.status_code, request.model_id, convert_resp.text,
                     )
+                    _execution_errors[execution_id] = (
+                        f"convert failed: MLX returned {convert_resp.status_code}"
+                    )
                 else:
                     logger.info("Convert submitted for %s", request.model_id)
 
@@ -112,6 +134,9 @@ async def execute_adaptation(request: ExecuteRequest, settings: SettingsDep):
                             "Quantize step returned %d for %s: %s",
                             quant_resp.status_code, request.model_id, quant_resp.text,
                         )
+                        _execution_errors[execution_id] = (
+                            f"quantize failed: MLX returned {quant_resp.status_code}"
+                        )
                     else:
                         logger.info("Quantize submitted for %s at %d-bit", request.model_id, request.quant_bits)
 
@@ -121,9 +146,20 @@ async def execute_adaptation(request: ExecuteRequest, settings: SettingsDep):
 
     t = asyncio.create_task(_run_pipeline())
     _running_executions[execution_id] = t
-    t.add_done_callback(lambda _: _running_executions.pop(execution_id, None))
+    # H7: keep the task in _running_executions after completion so
+    # get_execution_status can still report the terminal state (the prior
+    # done_callback popped it, making a finished execution 404 and hiding
+    # whether it succeeded or failed).
 
-    return {"execution_id": execution_id, "status": "running", "model_id": request.model_id}
+    # H7: this pipeline proxies convert/quantize to MLX and creates no
+    # ModelVersion or cache row in the hub — the output (if any) lives in
+    # MLX. Surface that the hub does not register the result.
+    return {
+        "execution_id": execution_id,
+        "status": "running",
+        "model_id": request.model_id,
+        "hub_registered": False,
+    }
 
 
 @router.get("/execute/{execution_id}")
@@ -134,5 +170,11 @@ async def get_execution_status(execution_id: str):
     if task.done():
         if task.exception():
             return {"execution_id": execution_id, "status": "failed", "error": str(task.exception())}
+        # H7: a clean task exit is NOT success if a convert/quantize step
+        # recorded a non-200 — report failed with the recorded reason rather
+        # than a silent "completed".
+        err = _execution_errors.get(execution_id, "")
+        if err:
+            return {"execution_id": execution_id, "status": "failed", "error": err}
         return {"execution_id": execution_id, "status": "completed"}
     return {"execution_id": execution_id, "status": "running"}

@@ -1,6 +1,8 @@
 import hashlib
 import logging
+import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -18,13 +20,21 @@ class LocalStore(StorageBackend):
         if not data_dir:
             data_dir = str(Path.cwd() / "data")
         self.data_dir = Path(data_dir)
-        self.models_dir = self.data_dir / "models"
+        self._models_dir = self.data_dir / "models"
         self.uploads_dir = self.data_dir / "uploads"
-        self.models_dir.mkdir(parents=True, exist_ok=True)
+        self._models_dir.mkdir(parents=True, exist_ok=True)
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
 
+    # E-R3: models_dir is now an abstract property on StorageBackend so the
+    # contract is explicit and MinioStore cannot silently lack it. Expose the
+    # private field set in __init__ via a property to satisfy the ABC without
+    # changing any caller (they all read store.models_dir as an attribute).
+    @property
+    def models_dir(self) -> Path:
+        return self._models_dir
+
     def model_version_dir(self, model_id: str, version: str) -> Path:
-        d = self.models_dir / model_id / version
+        d = self._models_dir / model_id / version
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -45,23 +55,33 @@ class LocalStore(StorageBackend):
     async def assemble_chunks(
         self, upload_id: str, target_dir: Path, filename: str, total_chunks: int,
     ) -> tuple[Path, str, int]:
+        # E-D3: assemble to a side temp file, fsync, then atomic os.replace into
+        # place. A crash mid-assemble leaves the old target untouched instead of a
+        # truncated/corrupt file at the final path. Chunk tmp is cleaned in finally
+        # so a failed/aborted upload does not leak .part files forever.
         tmp_dir = self.upload_tmp_dir(upload_id)
         target_path = target_dir / filename
+        staging_path = target_dir / f".{filename}.{uuid.uuid4().hex}.tmp"
         hasher = hashlib.sha256()
         total_size = 0
-
-        with open(target_path, "wb") as out:
-            for i in range(total_chunks):
-                chunk_path = tmp_dir / f"{i:06d}.part"
-                if not chunk_path.exists():
-                    raise FileNotFoundError(f"Missing chunk {i} for upload {upload_id}")
-                data = chunk_path.read_bytes()
-                out.write(data)
-                hasher.update(data)
-                total_size += len(data)
-
+        try:
+            with open(staging_path, "wb") as out:
+                for i in range(total_chunks):
+                    chunk_path = tmp_dir / f"{i:06d}.part"
+                    if not chunk_path.exists():
+                        raise FileNotFoundError(f"Missing chunk {i} for upload {upload_id}")
+                    data = chunk_path.read_bytes()
+                    out.write(data)
+                    hasher.update(data)
+                    total_size += len(data)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(staging_path, target_path)
+        finally:
+            if staging_path.exists():
+                staging_path.unlink(missing_ok=True)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
         file_hash = hasher.hexdigest()
-        shutil.rmtree(tmp_dir, ignore_errors=True)
         logger.info(
             "Assembled upload: id=%s file=%s size=%d hash=%s",
             upload_id, filename, total_size, file_hash[:16],
@@ -69,8 +89,18 @@ class LocalStore(StorageBackend):
         return target_path, file_hash, total_size
 
     async def write_file(self, target_dir: Path, filename: str, data: bytes) -> tuple[Path, str, int]:
+        # E-D3: atomic write via staging file + os.replace.
         target_path = target_dir / filename
-        target_path.write_bytes(data)
+        staging_path = target_dir / f".{filename}.{uuid.uuid4().hex}.tmp"
+        try:
+            with open(staging_path, "wb") as out:
+                out.write(data)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(staging_path, target_path)
+        finally:
+            if staging_path.exists():
+                staging_path.unlink(missing_ok=True)
         file_hash = hashlib.sha256(data).hexdigest()
         logger.info("Wrote file: %s size=%d", filename, len(data))
         return target_path, file_hash, len(data)
@@ -107,17 +137,10 @@ class LocalStore(StorageBackend):
 
     @staticmethod
     def verify_hash(file_path: Path, expected_hash: str) -> bool:
-        h = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        result = h.hexdigest() == expected_hash.lower()
-        if not result:
-            logger.warning(
-                "Hash mismatch: file=%s expected=%s actual=%s",
-                file_path, expected_hash[:16], h.hexdigest()[:16],
-            )
-        return result
+        # E-E8: delegate to the shared utils helper (which logs mismatches).
+        from ..utils.hashing import verify_sha256
+
+        return verify_sha256(file_path, expected_hash)
 
     def get_storage_stats(self) -> dict[str, Any]:
         total_size = 0

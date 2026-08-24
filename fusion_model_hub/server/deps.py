@@ -35,6 +35,8 @@ def init_deps(settings: Settings, engine) -> None:
         _store = LocalStore(data_dir=settings.data_dir)
     from ..cache.manager import CacheManager
     _cache = CacheManager(cache_root=settings.cache_dir)
+    from ..db import crud as _crud
+    _crud.set_api_key_pepper(settings.api_key_pepper)
 
 
 def get_settings() -> Settings:

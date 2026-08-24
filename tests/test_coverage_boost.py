@@ -374,9 +374,17 @@ class TestMetrics:
         assert len(resp.body) > 0
 
     @pytest.mark.asyncio
-    async def test_metrics_endpoint(self, client):
+    async def test_metrics_endpoint(self, client, settings):
+        # E-S11: /metrics is off by default; opt in via settings.expose_metrics.
+        settings.expose_metrics = True
         resp = await client.get("/metrics")
         assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_metrics_endpoint_disabled_by_default(self, client):
+        # E-S11: telemetry must not leak unless explicitly opted in.
+        resp = await client.get("/metrics")
+        assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_metrics_middleware_skips_docs(self, client):

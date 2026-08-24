@@ -10,22 +10,47 @@ from ...db.models import (
     ModelStatus,
     ModelType,
 )
-from ..deps import SessionDep, StoreDep
+from ..deps import CacheDep, SessionDep, StoreDep
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["models"])
 
+HF_MIRROR = "https://hf-mirror.com"
+
 
 def _check_model_owner(model, request: Request):
+    # E-S9: the prior check compared model.owner (a forgeable free-text field any
+    # caller sets at create) against the API-key *name* (not its tenant/id) — so
+    # two unrelated keys with the same name passed, and a renamed owner blocked
+    # the real owner. Enforce tenant isolation instead: a non-admin caller may
+    # only modify models in their own tenant; admin passes through. When auth is
+    # off (local dev) the check is permissive, matching list_models semantics.
     from ..auth import _is_auth_enabled
     if not _is_auth_enabled():
         return
-    caller = getattr(request.state, "api_key_name", "") if hasattr(request.state, "api_key_name") else ""
-    if not caller:
+    role = getattr(request.state, "user_role", "")
+    if role == "admin":
         return
-    owner = getattr(model, "owner", "")
-    if owner and owner != caller:
-        raise HTTPException(status_code=403, detail="Only the model owner can modify this resource")
+    caller_tenant = getattr(request.state, "tenant_id", "") or ""
+    model_tenant = getattr(model, "tenant_id", "") or ""
+    if caller_tenant and model_tenant and caller_tenant != model_tenant:
+        raise HTTPException(status_code=403, detail="Model belongs to a different tenant")
+
+
+def _check_model_read(model, request: Request):
+    # E-S9: GET /models/{id} previously had no tenant guard — a key scoped to
+    # tenant A could read tenant B's model by id. Mirrors _check_model_owner but
+    # for reads: cross-tenant reads 404 (not 403, to avoid leaking existence).
+    from ..auth import _is_auth_enabled
+    if not _is_auth_enabled():
+        return
+    role = getattr(request.state, "user_role", "")
+    if role == "admin":
+        return
+    caller_tenant = getattr(request.state, "tenant_id", "") or ""
+    model_tenant = getattr(model, "tenant_id", "") or ""
+    if caller_tenant and model_tenant and caller_tenant != model_tenant:
+        raise HTTPException(status_code=404, detail="Model not found")
 
 
 class ModelCreate(BaseModel):
@@ -401,12 +426,22 @@ async def sync_registry(body: SyncRequest, session: SessionDep):
 
 
 @router.post("/models/batch/delete")
-async def batch_delete(body: BatchDeleteRequest, session: SessionDep, store: StoreDep):
+async def batch_delete(
+    body: BatchDeleteRequest, session: SessionDep, store: StoreDep, cache: CacheDep,
+):
     logger.info("Batch delete: %d models", len(body.model_ids))
     deleted = []
     for mid in body.model_ids:
         m = await crud.get_model(session, mid)
         if m:
+            # E-R2: store.delete_model_files only rmtree's the models_dir/model_id
+            # tree; the 3-level cache lives in a separate cache_dir tree and is
+            # never touched, so orphan cache files + dangling index.json entries
+            # accumulated unbounded. Drop the cache entries for the model too.
+            try:
+                cache.remove_model(mid)
+            except Exception:
+                logger.exception("Cache remove_model failed for %s", mid)
             store.delete_model_files(mid)
             await crud.delete_model(session, mid)
             deleted.append(mid)
@@ -486,7 +521,7 @@ async def import_from_hf(body: HfImportRequest, session: SessionDep):
     logger.info("Imported HF model: repo=%s -> id=%s type=%s", hf_repo, m.id, model_type.value)
 
     if body.download:
-        from ..repo.downloader import ModelDownloader
+        from ...repo.downloader import ModelDownloader
         download_url = f"{HF_MIRROR}/{hf_repo}"
         downloader = ModelDownloader()
         result = await downloader.download(download_url, name)
@@ -505,9 +540,6 @@ async def import_from_hf(body: HfImportRequest, session: SessionDep):
     return _model_to_dict(m)
 
 
-HF_MIRROR = "https://hf-mirror.com"
-
-
 async def _fetch_hf_model_info(repo_id: str) -> dict:
     url = f"{HF_MIRROR}/api/models/{repo_id}"
     try:
@@ -523,10 +555,11 @@ async def _fetch_hf_model_info(repo_id: str) -> dict:
 # -- Dynamic path routes AFTER all static paths --
 
 @router.get("/models/{model_id}")
-async def get_model(model_id: str, session: SessionDep):
+async def get_model(model_id: str, session: SessionDep, request: Request):
     m = await crud.get_model(session, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
+    _check_model_read(m, request)
     data = _model_to_dict(m)
     data["versions"] = [
         {
@@ -565,7 +598,11 @@ class ModelModulesUpdate(BaseModel):
 
 
 @router.put("/models/{model_id}/modules")
-async def update_model_modules(model_id: str, body: ModelModulesUpdate, session: SessionDep):
+async def update_model_modules(model_id: str, body: ModelModulesUpdate, session: SessionDep, request: Request):
+    m = await crud.get_model(session, model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    _check_model_owner(m, request)
     m = await crud.update_model(session, model_id, model_modules=body.modules)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -578,6 +615,7 @@ async def publish_model(model_id: str, session: SessionDep, request: Request):
     m = await crud.get_model(session, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
+    _check_model_owner(m, request)
     if hasattr(request.state, "user_role") and request.state.user_role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can publish models")
     m = await crud.update_model(session, model_id, model_status=ModelStatus.PUBLISHED)
@@ -590,6 +628,7 @@ async def deprecate_model(model_id: str, session: SessionDep, request: Request):
     m = await crud.get_model(session, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
+    _check_model_owner(m, request)
     if hasattr(request.state, "user_role") and request.state.user_role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can deprecate models")
     m = await crud.update_model(session, model_id, model_status=ModelStatus.DEPRECATED)
@@ -598,11 +637,19 @@ async def deprecate_model(model_id: str, session: SessionDep, request: Request):
 
 
 @router.delete("/models/{model_id}")
-async def delete_model(model_id: str, session: SessionDep, store: StoreDep, request: Request):
+async def delete_model(
+    model_id: str, session: SessionDep, store: StoreDep, request: Request, cache: CacheDep,
+):
     m = await crud.get_model(session, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     _check_model_owner(m, request)
+    # E-R2: the cache tree is separate from store.delete_model_files; purge it
+    # too or the model's quantized/converted cache files outlive the DB row.
+    try:
+        cache.remove_model(model_id)
+    except Exception:
+        logger.exception("Cache remove_model failed for %s", model_id)
     store.delete_model_files(model_id)
     tenant_id = m.tenant_id
     await crud.delete_model(session, model_id)

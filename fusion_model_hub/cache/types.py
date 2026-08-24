@@ -19,6 +19,7 @@ class CacheEntry:
     sha256: str = ""
     quant_bits: int = 0
     mlx_version: str = ""
+    source_version_id: str = ""
     created_at: float = 0.0
     last_accessed: float = 0.0
     ref_count: int = 0

@@ -18,8 +18,21 @@ _engine: RecommendEngine | None = None
 
 def _get_engine(settings: SettingsDep) -> RecommendEngine:
     global _engine
-    if _engine is None or _engine.mlx_url != settings.mlx_url:
-        _engine = RecommendEngine(settings.mlx_url)
+    # E-E10: invalidate on mlx_url OR mlx_internal_api_key drift, not just mlx_url.
+    # On rebuild, drop the old engine's embedded HardwareDetector 5-min cache so a
+    # hot-reload-swapped MLX URL does not keep serving stale hardware.
+    if (
+        _engine is None
+        or _engine.mlx_url != settings.mlx_url
+        or _engine.api_key != settings.mlx_internal_api_key
+    ):
+        if _engine is not None:
+            _engine.invalidate_cache()
+        _engine = RecommendEngine(settings.mlx_url, api_key=settings.mlx_internal_api_key)
+        logger.info(
+            "RecommendEngine (re)built for mlx_url=%s",
+            settings.mlx_url,
+        )
     return _engine
 
 

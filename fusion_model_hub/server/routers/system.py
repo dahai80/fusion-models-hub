@@ -5,7 +5,7 @@ import time
 from collections import defaultdict
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ...db import crud
@@ -89,6 +89,15 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
         "total_size_gb": used_gb,
     }
 
+    # R10: surface that the per-key QPS limiter is node-local/in-memory, not a
+    # cluster-wide enforced budget, so ops does not infer a multi-node guarantee.
+    from ..rate_limit import is_rate_limit_persistent
+    rate_limit_info = {
+        "enabled": getattr(settings, "auth_enabled", True),
+        "persistent": is_rate_limit_persistent(),
+        "scope": "node-local",
+    }
+
     return {
         "status": overall,
         "version": hub_version,
@@ -101,6 +110,7 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
             "info": mlx_info,
         },
         "storage": disk_stats,
+        "rate_limit": rate_limit_info,
         "data_dir": settings.data_dir,
     }
 
@@ -135,13 +145,16 @@ async def audit_logs(
 
 
 @router.get("/system/export")
-async def export_data(session: SessionDep, models: str = ""):
+async def export_data(session: SessionDep, request: Request, models: str = ""):
+    caller_tenant = getattr(request.state, "tenant_id", "") or ""
     model_ids = [x.strip() for x in models.split(",") if x.strip()] if models else []
-    all_models, _ = await crud.list_models(session, page=1, page_size=10000)
+    all_models, _ = await crud.list_models(
+        session, page=1, page_size=10000, tenant_id=caller_tenant,
+    )
     if model_ids:
         all_models = [m for m in all_models if m.id in model_ids]
-    tenants = await crud.list_tenants(session)
-    webhooks = await crud.list_webhooks(session)
+    tenants = await crud.list_tenants(session, tenant_id=caller_tenant)
+    webhooks = await crud.list_webhooks(session, tenant_id=caller_tenant)
     export = {
         "version": "1.0",
         "models": [
@@ -164,15 +177,27 @@ async def export_data(session: SessionDep, models: str = ""):
             for w in webhooks
         ],
     }
-    logger.info("Exported data: %d models, %d tenants, %d webhooks", len(all_models), len(tenants), len(webhooks))
+    logger.info(
+        "Exported data: tenant=%s models=%d tenants=%d webhooks=%d",
+        caller_tenant or "root", len(all_models), len(tenants), len(webhooks),
+    )
     return JSONResponse(content=export)
 
 
 @router.post("/system/import")
-async def import_data(session: SessionDep, data: dict):
+async def import_data(session: SessionDep, request: Request, data: dict):
+    caller_tenant = getattr(request.state, "tenant_id", "") or ""
+    caller_role = getattr(request.state, "user_role", "") or ""
+    from ..auth import _is_auth_enabled
+    if _is_auth_enabled() and caller_role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can import system data")
+    # Imported resources are bound to the caller's tenant (root="" may seed any);
+    # body-supplied tenant_id is never trusted to prevent cross-tenant injection.
     count = 0
     tenants_data = data.get("tenants", [])
     for t in tenants_data:
+        if caller_tenant:
+            continue  # non-root admins may not create tenants
         existing = await crud.get_tenant_by_name(session, t.get("name", ""))
         if not existing:
             await crud.create_tenant(session, name=t["name"], display_name=t.get("display_name", ""))
@@ -188,7 +213,7 @@ async def import_data(session: SessionDep, data: dict):
             except ValueError:
                 mt = ModelType.LLM
             new_m = await crud.create_model(
-                session, name=m["name"], tenant_id=m.get("tenant_id", ""),
+                session, name=m["name"], tenant_id=caller_tenant,
                 description=m.get("description", ""), model_type=mt,
                 architecture=m.get("architecture", ""), params_size=m.get("params_size", ""),
                 license=m.get("license", ""), author=m.get("author", ""),
@@ -202,13 +227,15 @@ async def import_data(session: SessionDep, data: dict):
 
     webhooks_data = data.get("webhooks", [])
     for w in webhooks_data:
+        from ..ssrf import validate_external_url
+        validate_external_url(w["url"])
         await crud.create_webhook(
             session, name=w["name"], url=w["url"],
-            events=w.get("events", ""), tenant_id=w.get("tenant_id", ""),
+            events=w.get("events", ""), tenant_id=caller_tenant,
         )
         count += 1
 
-    logger.info("Imported data: %d items created", count)
+    logger.info("Imported data: tenant=%s role=%s items=%d", caller_tenant or "root", caller_role, count)
     return {"imported": count}
 
 

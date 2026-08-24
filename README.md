@@ -637,6 +637,39 @@ client.get_layered_quantize_job("job-id")
 client.list_layered_quantize_jobs()
 ```
 
+The client uses a single persistent `httpx.Client` internally (connection reuse), so call `close()` or use it as a context manager when done to avoid leaking sockets in long-running processes:
+
+```python
+with FusionModelHubClient(base_url="http://localhost:11444", api_key="key") as client:
+    client.list_models()
+```
+
+### TLS Configuration
+
+When pointing the SDK at a remote Hub over HTTPS, pass the standard `httpx` TLS controls (`verify`, `cert`, `trust_env`) as keyword-only arguments. They are threaded directly into the underlying client:
+
+```python
+from fusion_model_hub.sdk.client import FusionModelHubClient
+
+# Custom CA bundle (self-signed or private CA) — prefer this over disabling verification
+client = FusionModelHubClient(
+    base_url="https://hub.internal:11444",
+    api_key="key",
+    verify="/path/to/ca-bundle.pem",
+)
+
+# Mutual TLS (client cert)
+client = FusionModelHubClient(
+    base_url="https://hub.internal:11444",
+    cert=("/path/client.crt", "/path/client.key"),
+)
+
+# Respect HTTP_PROXY / SSL_CERT_FILE from the environment (default: True)
+client = FusionModelHubClient(base_url="https://hub.internal:11444", trust_env=True)
+```
+
+Avoid `verify=False` in production — it disables certificate validation and is vulnerable to MITM. For a self-signed dev cert, add the CA to your trust store and point `verify` at it instead. The `AsyncFusionModelHubClient` accepts the same `verify` / `cert` / `trust_env` arguments.
+
 ### Async SDK Client
 
 ```python
@@ -963,6 +996,28 @@ pytest --cov=fusion_model_hub --cov-report=term-missing
 # Start Fusion-MLX (for integration tests)
 ~/claude-home/fusion-mlx/start.sh start
 ```
+
+## Audit Fix Changelog (v1.0.14 → 1.0.15)
+
+Full audit report: `audit/fusion-model-hub-audit-report-0824.md` (65 findings: P0 fatal, P1 high, P2 medium). All P0–P2 closed on branch `fix/audit-p0-p2`.
+
+**P0 — Fatal (14 closed):** corrupt-cache quarantine + atomic index (`cache/manager.py`), atomic version upload assemble + SHA256 (`storage/local_store.py`), chunked quantize memory cap + async cancel (`server/tasks.py`), SSRF hardening (`routers/sync.py`, `routers/downloads.py`), base-model validation + LoRA merge wiring (`db/models.py`, `routers/quantize.py`), auth-enabled-by-default + RBAC + per-key ACLs (`server/auth.py`), rate limiting (`server/rate_limit.py`), webhook HMAC signing + retry (`routers/webhooks.py`), multi-tenant isolation (`db/models.py`), field whitelists (`db/crud.py`), version state machine, download resume.
+
+**P1 — Architecture & Runtime:** `__init__` DB init moved into async lifespan; MLX version compatibility gate; engine singletons invalidated on `mlx_url`/`api_key` drift; `_reconcile_orphaned_tasks` on startup; backup scheduler; Prometheus metrics; resource guards (max upload size, cache GC by age + LRU + orphan reconciler, concurrent-quantize cap).
+
+**P1 — Security & Data Integrity:** secret rotation (`config.py` `mlx_internal_api_key` env → settings.json fallback), encryption-at-rest key handling, watermark binding, approval workflow levels, audit-log tenant scoping, Git-LFS lock ownership, deployment gray-release.
+
+**P2 — Tech Debt (this branch):**
+
+| Fix | Change |
+|-----|--------|
+| E-R6 | `CacheManager.gc()` filesystem reconciler — removes disk orphans left by crash / corrupt-index quarantine; 2 regression tests |
+| E-E8 | Canonical `utils/hashing.py` — unifies 5 file-SHA256 re-implementations (cache, downloader, inference, sync, local_store) at 64KB chunk |
+| E-E10 | `HardwareDetector` carries `api_key` + sends Bearer; adapt/recommend engines propagate + `invalidate_cache()`; 3 router singletons invalidate on `mlx_url` OR `api_key` drift + clear detector 5-min cache on rebuild; multi-worker caveat documented in `server/__main__.py` |
+| E-E14 | SDK `verify`/`cert`/`trust_env` passthrough into persistent `httpx.Client`/`AsyncClient` (fixes per-request pool churn); TLS config docs; 4 regression tests |
+| E-E9/E-E11/E-E12/E-E13/E-S14/E-S15 | coverage, schema, observability, and security hardening applied earlier in the branch |
+
+Test count: 780 → 845 (65 regression tests added across `tests/test_cache.py`, `tests/test_core.py`, `tests/test_sdk.py`, `tests/test_routers_deep.py`, `tests/test_routers_extended.py`).
 
 ## Model Download Mirror
 

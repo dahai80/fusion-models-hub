@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +48,7 @@ class LocalModelManager:
             "mlx_version": mlx_version,
             "active": False,
             "last_used": "",
-            "created_at": __import__("time").time(),
+            "created_at": time.time(),
         }
         self._save_meta()
 
@@ -69,7 +70,7 @@ class LocalModelManager:
         for mid in self._models:
             self._models[mid]["active"] = False
         self._models[model_id]["active"] = active
-        self._models[model_id]["last_used"] = __import__("time").time()
+        self._models[model_id]["last_used"] = time.time()
         self._save_meta()
         return True
 

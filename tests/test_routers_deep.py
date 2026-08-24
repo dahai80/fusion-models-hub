@@ -1276,7 +1276,7 @@ class TestWebhookCRUDDeep:
 class TestWebhookDispatch:
     @pytest.mark.asyncio
     async def test_webhook_dispatch_on_model_create(self, client):
-        with patch("fusion_model_hub.server.routers.webhooks._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
+        with patch("fusion_model_hub.server.events._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
             await client.post(
                 "/api/v1/webhooks",
                 json={"name": "dispatch-wh", "url": "https://example.com/hook", "events": "model.created", "secret": "s3cret"},
@@ -1287,7 +1287,7 @@ class TestWebhookDispatch:
 
     @pytest.mark.asyncio
     async def test_webhook_dispatch_on_model_delete(self, client):
-        with patch("fusion_model_hub.server.routers.webhooks._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
+        with patch("fusion_model_hub.server.events._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
             await client.post(
                 "/api/v1/webhooks",
                 json={"name": "del-wh", "url": "https://example.com/hook", "events": "model.deleted"},
@@ -1299,7 +1299,7 @@ class TestWebhookDispatch:
 
     @pytest.mark.asyncio
     async def test_webhook_dispatch_on_promote(self, client):
-        with patch("fusion_model_hub.server.routers.webhooks._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
+        with patch("fusion_model_hub.server.events._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
             await client.post(
                 "/api/v1/webhooks",
                 json={"name": "promote-wh", "url": "https://example.com/hook", "events": "version.published"},
@@ -1313,7 +1313,7 @@ class TestWebhookDispatch:
 
     @pytest.mark.asyncio
     async def test_webhook_dispatch_on_deprecate(self, client):
-        with patch("fusion_model_hub.server.routers.webhooks._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
+        with patch("fusion_model_hub.server.events._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
             await client.post(
                 "/api/v1/webhooks",
                 json={"name": "deprecate-wh", "url": "https://example.com/hook", "events": "version.deprecated"},
@@ -1343,8 +1343,9 @@ class TestWebhookSignPayload:
 class TestWebhookSendWithRetry:
     @pytest.mark.asyncio
     async def test_send_webhook_success(self, client):
-        from fusion_model_hub.server.routers.webhooks import _send_webhook_with_retry
-        with patch("fusion_model_hub.server.routers.webhooks.httpx.AsyncClient") as MockClient:
+        # H11: dispatch moved to server/events.py; patch the owning module.
+        from fusion_model_hub.server.events import _send_webhook_with_retry
+        with patch("fusion_model_hub.server.events.httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
             mock_resp = MagicMock()
             mock_resp.status_code = 200
@@ -1362,8 +1363,8 @@ class TestWebhookSendWithRetry:
 
     @pytest.mark.asyncio
     async def test_send_webhook_server_error_retry(self, client):
-        from fusion_model_hub.server.routers.webhooks import _send_webhook_with_retry
-        with patch("fusion_model_hub.server.routers.webhooks.httpx.AsyncClient") as MockClient:
+        from fusion_model_hub.server.events import _send_webhook_with_retry
+        with patch("fusion_model_hub.server.events.httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
             mock_resp = MagicMock()
             mock_resp.status_code = 500
@@ -1371,8 +1372,8 @@ class TestWebhookSendWithRetry:
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
-            with patch("fusion_model_hub.server.routers.webhooks._WEBHOOK_BACKOFF_BASE", 0.01):
-                with patch("fusion_model_hub.server.routers.webhooks._WEBHOOK_MAX_RETRIES", 2):
+            with patch("fusion_model_hub.server.events._WEBHOOK_BACKOFF_BASE", 0.01):
+                with patch("fusion_model_hub.server.events._WEBHOOK_MAX_RETRIES", 2):
                     await _send_webhook_with_retry(
                         "https://example.com/hook",
                         b"test",
@@ -1383,15 +1384,15 @@ class TestWebhookSendWithRetry:
 
     @pytest.mark.asyncio
     async def test_send_webhook_connection_error(self, client):
-        from fusion_model_hub.server.routers.webhooks import _send_webhook_with_retry
-        with patch("fusion_model_hub.server.routers.webhooks.httpx.AsyncClient") as MockClient:
+        from fusion_model_hub.server.events import _send_webhook_with_retry
+        with patch("fusion_model_hub.server.events.httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
             mock_instance.post = AsyncMock(side_effect=Exception("connection error"))
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
-            with patch("fusion_model_hub.server.routers.webhooks._WEBHOOK_BACKOFF_BASE", 0.01):
-                with patch("fusion_model_hub.server.routers.webhooks._WEBHOOK_MAX_RETRIES", 2):
+            with patch("fusion_model_hub.server.events._WEBHOOK_BACKOFF_BASE", 0.01):
+                with patch("fusion_model_hub.server.events._WEBHOOK_MAX_RETRIES", 2):
                     await _send_webhook_with_retry(
                         "https://example.com/hook",
                         b"test",
@@ -1410,7 +1411,7 @@ class TestDispatchWebhookEvent:
             json={"name": "inactive-wh", "url": "https://example.com/hook", "events": "model.created"},
         )
         await client.delete(f"/api/v1/webhooks/{wh.json()['id']}")
-        with patch("fusion_model_hub.server.routers.webhooks._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
+        with patch("fusion_model_hub.server.events._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
             await dispatch_webhook_event("model.created", {"id": "test"})
             assert not mock_send.called
 
@@ -1421,6 +1422,6 @@ class TestDispatchWebhookEvent:
             "/api/v1/webhooks",
             json={"name": "mismatch-wh", "url": "https://example.com/hook", "events": "model.deleted"},
         )
-        with patch("fusion_model_hub.server.routers.webhooks._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
+        with patch("fusion_model_hub.server.events._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
             await dispatch_webhook_event("model.created", {"id": "test"})
             await asyncio.sleep(0.1)
