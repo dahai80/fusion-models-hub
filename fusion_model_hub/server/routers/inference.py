@@ -1,9 +1,11 @@
+import asyncio
 import hashlib
 import json
 import logging
 import random
 import time
 
+import anyio
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -26,6 +28,7 @@ _LOADED_TTL = 3600
 _loaded_models: dict[str, dict] = {}
 _model_stats: dict[str, dict] = {}
 _VALID_MODULES = {"chat", "code", "design", "rag", "agent"}
+_loaded_lock = asyncio.Lock()
 
 
 def _compute_file_hash(file_path: str) -> str:
@@ -56,7 +59,7 @@ async def _check_module_access(model_id: str, request) -> None:
     except HTTPException:
         raise
     except Exception:
-        logger.debug("Module access check failed", exc_info=True)
+        logger.warning("Module access check failed for model=%s", model_id, exc_info=True)
 
 
 async def _resolve_model_name_for_inference(model_id: str) -> tuple[str, str | None]:
@@ -73,7 +76,7 @@ async def _resolve_model_name_for_inference(model_id: str) -> tuple[str, str | N
                             model_name = m.hf_repo or m.name if m else model_id
                             return model_name, d.gray_version_id
     except Exception:
-        logger.debug("Gray route resolution failed, using default", exc_info=True)
+        logger.warning("Gray route resolution failed for model=%s, using default", model_id, exc_info=True)
     return "", None
 
 
@@ -87,7 +90,7 @@ async def _get_model_idle_ttl(model_id: str) -> int:
                     return m.ttl_seconds
                 return m.idle_timeout_minutes * 60
     except Exception:
-        logger.debug("Failed to get model idle timeout", exc_info=True)
+        logger.warning("Failed to get model idle timeout for model=%s", model_id, exc_info=True)
     return _LOADED_TTL
 
 
@@ -98,35 +101,39 @@ async def _is_model_pinned(model_id: str) -> bool:
             m = await crud.get_model(session, model_id)
             return bool(m and m.pinned)
     except Exception:
-        logger.debug("Failed to check model pinned status", exc_info=True)
+        logger.warning("Failed to check model pinned status for model=%s", model_id, exc_info=True)
         return False
 
 
 async def _cleanup_loaded_models() -> None:
-    now = time.time()
-    expired = []
-    for k, v in list(_loaded_models.items()):
-        pinned = await _is_model_pinned(k)
-        if pinned:
-            continue
-        model_ttl = await _get_model_idle_ttl(k)
-        if now - v.get("loaded_at", 0) > model_ttl:
-            expired.append((k, v))
-    for model_id, info in expired:
-        model_name = info.get("model_name", "")
-        if model_name:
-            try:
-                from ..deps import get_settings
-                settings = get_settings()
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    await client.post(
-                        f"{settings.mlx_url}/v1/models/{model_name}/unload",
-                        headers=_mlx_headers(settings),
-                    )
-            except Exception as e:
-                logger.warning("MLX unload during TTL eviction failed for %s: %s", model_id, e)
-        _loaded_models.pop(model_id, None)
-        logger.info("TTL evicted model: id=%s name=%s", model_id, model_name)
+    async with _loaded_lock:
+        now = time.time()
+        expired = []
+        for k, v in list(_loaded_models.items()):
+            pinned = await _is_model_pinned(k)
+            if pinned:
+                continue
+            model_ttl = await _get_model_idle_ttl(k)
+            if now - v.get("loaded_at", 0) > model_ttl:
+                expired.append((k, v))
+        for model_id, info in expired:
+            current = _loaded_models.get(model_id)
+            if not current or current is not info:
+                continue
+            model_name = info.get("model_name", "")
+            if model_name:
+                try:
+                    from ..deps import get_settings
+                    settings = get_settings()
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        await client.post(
+                            f"{settings.mlx_url}/v1/models/{model_name}/unload",
+                            headers=_mlx_headers(settings),
+                        )
+                except Exception as e:
+                    logger.warning("MLX unload during TTL eviction failed for %s: %s", model_id, e)
+            _loaded_models.pop(model_id, None)
+            logger.info("TTL evicted model: id=%s name=%s", model_id, model_name)
 
 
 def _update_model_stats(model_id: str, latency_ms: float, tokens: int = 0, source_module: str = "") -> None:
@@ -168,7 +175,7 @@ async def _write_inference_audit(model_id: str, action_type: str, latency_ms: fl
                 detail=detail,
             )
     except Exception:
-        logger.debug("Failed to write inference audit log", exc_info=True)
+        logger.warning("Failed to write inference audit log for model=%s", model_id, exc_info=True)
 
 
 class ServeRequest(BaseModel):
@@ -207,11 +214,11 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
         if not os.path.exists(v.file_path):
             raise HTTPException(status_code=403, detail="File integrity check failed. Model files may be corrupted.")
         if not v.file_hash:
-            computed = _compute_file_hash(v.file_path)
+            computed = await anyio.to_thread.run_sync(_compute_file_hash, v.file_path)
             await crud.update_version(session, version_id, file_hash=computed)
             logger.info("Computed and stored file_hash for version %s", version_id)
         else:
-            computed = _compute_file_hash(v.file_path)
+            computed = await anyio.to_thread.run_sync(_compute_file_hash, v.file_path)
             if computed != v.file_hash.lower():
                 logger.error(
                     "File hash mismatch for version %s: "
@@ -238,12 +245,13 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"MLX load failed: {e.response.text}")
 
-    _loaded_models[model_id] = {
-        "version_id": version_id,
-        "model_name": model_name,
-        "status": "loaded",
-        "loaded_at": time.time(),
-    }
+    async with _loaded_lock:
+        _loaded_models[model_id] = {
+            "version_id": version_id,
+            "model_name": model_name,
+            "status": "loaded",
+            "loaded_at": time.time(),
+        }
     await _cleanup_loaded_models()
     logger.info("Model served: id=%s version=%s mlx_model=%s", model_id, version_id, model_name)
     return {
@@ -297,12 +305,13 @@ async def hot_reload_model(model_id: str, body: HotReloadRequest, session: Sessi
     except Exception as e:
         logger.warning("Hot-reload preload error for %s: %s", model_name, e)
         raise HTTPException(status_code=502, detail=f"MLX preload failed: {e}")
-    _loaded_models[model_id] = {
-        "version_id": body.version_id,
-        "model_name": model_name,
-        "status": "loaded",
-        "loaded_at": time.time(),
-    }
+    async with _loaded_lock:
+        _loaded_models[model_id] = {
+            "version_id": body.version_id,
+            "model_name": model_name,
+            "status": "loaded",
+            "loaded_at": time.time(),
+        }
     logger.info(
         "Hot-reload done: id=%s old_ver=%s new_ver=%s mlx_model=%s",
         model_id, old_version_id, body.version_id, model_name,
@@ -332,10 +341,11 @@ async def hot_reload_model(model_id: str, body: HotReloadRequest, session: Sessi
 
 @router.delete("/models/{model_id}/serve")
 async def unload_model(model_id: str, settings: SettingsDep):
-    if model_id not in _loaded_models:
-        raise HTTPException(status_code=404, detail="Model not loaded")
+    async with _loaded_lock:
+        if model_id not in _loaded_models:
+            raise HTTPException(status_code=404, detail="Model not loaded")
+        model_name = _loaded_models[model_id]["model_name"]
 
-    model_name = _loaded_models[model_id]["model_name"]
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             await client.post(
@@ -345,7 +355,8 @@ async def unload_model(model_id: str, settings: SettingsDep):
     except Exception as e:
         logger.warning("MLX unload failed: %s", e)
 
-    _loaded_models.pop(model_id, None)
+    async with _loaded_lock:
+        _loaded_models.pop(model_id, None)
     logger.info("Model unloaded: id=%s", model_id)
     return {"model_id": model_id, "status": "unloaded"}
 
@@ -395,7 +406,7 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
                     if gm:
                         model_name = gm.hf_repo or gm.name
         except Exception:
-            logger.debug("Gray version model lookup failed", exc_info=True)
+            logger.warning("Gray version model lookup failed for model=%s", model_id, exc_info=True)
 
     payload = {**body, "model": model_name}
     start_time = time.time()
@@ -441,7 +452,7 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
                     if gm:
                         model_name = gm.hf_repo or gm.name
         except Exception:
-            logger.debug("Gray version model lookup failed", exc_info=True)
+            logger.warning("Gray version model lookup failed for model=%s", model_id, exc_info=True)
 
     payload = {**body, "model": model_name}
     start_time = time.time()

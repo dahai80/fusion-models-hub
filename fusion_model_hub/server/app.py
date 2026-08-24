@@ -51,7 +51,7 @@ async def _reconcile_orphaned_tasks() -> None:
     from ..db.crud import list_quantize_tasks, update_quantize_task
     from ..db.models import TaskStatus
     from .deps import get_session_factory
-    from .tasks import submit_quantize
+    from .tasks import resume_quantize
 
     sf = get_session_factory()
     failed = 0
@@ -67,17 +67,17 @@ async def _reconcile_orphaned_tasks() -> None:
         pending_tasks, _ = await list_quantize_tasks(session, status=TaskStatus.PENDING.value, page_size=200)
     for t in pending_tasks:
         try:
-            await submit_quantize(
+            await resume_quantize(
+                task_id=t.id,
                 source_version_id=t.source_version_id,
                 target_format=t.target_format,
                 quant_bits=t.quant_bits,
-                calibration_dataset=t.calibration_dataset,
             )
             restarted += 1
         except Exception:
             logger.exception("Failed to restart pending task: id=%s", t.id)
     if failed or restarted:
-        logger.warning("Startup task recovery: %d orphaned failed, %d pending restarted", failed, restarted)
+        logger.warning("Startup task recovery: %d orphaned failed, %d pending resumed", failed, restarted)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

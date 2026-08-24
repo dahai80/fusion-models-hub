@@ -48,6 +48,23 @@ async def submit_quantize(
     return task_id
 
 
+async def resume_quantize(
+    task_id: str,
+    source_version_id: str,
+    target_format: str,
+    quant_bits: int,
+) -> str:
+    settings = get_settings()
+    atask = asyncio.create_task(
+        _run_quantize(task_id, source_version_id, target_format, quant_bits, settings),
+        name=f"quantize-{task_id}",
+    )
+    _running_tasks[task_id] = atask
+    atask.add_done_callback(lambda t: _running_tasks.pop(task_id, None))
+    logger.info("Resumed orphaned quantize task: id=%s", task_id)
+    return task_id
+
+
 async def _run_quantize(
     task_id: str,
     source_version_id: str,
@@ -126,6 +143,25 @@ async def _run_quantize(
         output_hash = result.get("file_hash", "")
         output_size = result.get("file_size", 0)
 
+        result_status = result.get("status", "")
+        if (result_status and result_status != "completed") or not output_path:
+            async with session_factory() as session:
+                await update_quantize_task(
+                    session, task_id,
+                    status=TaskStatus.FAILED,
+                    error_message=(
+                        f"Quantize produced no valid output: "
+                        f"status={result_status!r} output_path={output_path!r}"
+                    ),
+                    completed_at=datetime.now(UTC),
+                )
+            logger.error(
+                "Quantize produced no valid output: id=%s status=%r path=%r",
+                task_id, result_status, output_path,
+            )
+            return
+
+        new_ver = None
         async with session_factory() as session:
             new_ver = await create_version(
                 session,
@@ -211,7 +247,7 @@ async def _run_quantize(
             from .routers.webhooks import dispatch_webhook_event
             await dispatch_webhook_event("quantize.failed", {"id": task_id, "error": str(e)})
         except Exception:
-            pass
+            logger.warning("quantize.failed webhook dispatch failed: id=%s", task_id, exc_info=True)
         try:
             async with session_factory() as session:
                 await update_quantize_task(

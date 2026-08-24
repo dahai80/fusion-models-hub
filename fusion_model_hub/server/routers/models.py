@@ -351,24 +351,9 @@ async def compare_models(ids: str, session: SessionDep):
     return {"models": results}
 
 
-def _is_internal_hostname(hostname: str) -> bool:
-    h = hostname.lower()
-    blocked = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"}
-    if h in blocked:
-        return True
-    if h.startswith(("10.", "192.168.")):
-        return True
-    octets = h.split(".")
-    return len(octets) == 4 and octets[0] == "172" and octets[1].isdigit() and 16 <= int(octets[1]) <= 31
-
-
 def _validate_url(url_str: str) -> None:
-    from urllib.parse import urlparse
-    parsed = urlparse(url_str)
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(status_code=400, detail="URL must use http or https scheme")
-    if _is_internal_hostname(parsed.hostname or ""):
-        raise HTTPException(status_code=400, detail="URL cannot point to internal network")
+    from ..ssrf import validate_external_url
+    validate_external_url(url_str)
 
 
 @router.post("/models/sync")
@@ -440,13 +425,18 @@ async def batch_tag(body: BatchTagRequest, session: SessionDep):
     return {"tagged": updated, "count": len(updated)}
 
 
+class HfImportRequest(BaseModel):
+    hf_repo: str = Field("", max_length=200)
+    name: str = Field("", max_length=128)
+    download: bool = False
+
+
 @router.post("/models/import/hf", status_code=201)
-async def import_from_hf(body: dict, session: SessionDep):
-    hf_repo = body.get("hf_repo", "")
+async def import_from_hf(body: HfImportRequest, session: SessionDep):
+    hf_repo = body.hf_repo.strip()
     if not hf_repo:
         raise HTTPException(status_code=400, detail="hf_repo is required")
-    download = body.get("download", False)
-    name = body.get("name") or hf_repo.split("/")[-1].lower()
+    name = body.name.strip() or hf_repo.split("/")[-1].lower()
     existing = await crud.get_model_by_name(session, name)
     if existing:
         raise HTTPException(status_code=409, detail=f"Model already exists: {name}")
@@ -495,8 +485,7 @@ async def import_from_hf(body: dict, session: SessionDep):
     )
     logger.info("Imported HF model: repo=%s -> id=%s type=%s", hf_repo, m.id, model_type.value)
 
-    if download:
-
+    if body.download:
         from ..repo.downloader import ModelDownloader
         download_url = f"{HF_MIRROR}/{hf_repo}"
         downloader = ModelDownloader()
@@ -505,10 +494,9 @@ async def import_from_hf(body: dict, session: SessionDep):
             version = await crud.create_version(
                 session,
                 model_id=m.id,
-                version_string="hf-default",
+                version="hf-default",
                 file_path=result["path"],
                 file_size=result.get("size_bytes", 0),
-                quantization="",
             )
             logger.info("Downloaded HF model files: repo=%s version_id=%s path=%s", hf_repo, version.id, result["path"])
         else:
@@ -557,16 +545,15 @@ async def get_model(model_id: str, session: SessionDep):
 
 @router.put("/models/{model_id}")
 async def update_model(model_id: str, body: ModelUpdate, session: SessionDep, request: Request):
+    m = await crud.get_model(session, model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    _check_model_owner(m, request)
     fields = body.model_dump(exclude_unset=True, exclude={"tags"})
     if fields:
         m = await crud.update_model(session, model_id, **fields)
         if not m:
             raise HTTPException(status_code=404, detail="Model not found")
-    else:
-        m = await crud.get_model(session, model_id)
-        if not m:
-            raise HTTPException(status_code=404, detail="Model not found")
-    _check_model_owner(m, request)
     if body.tags is not None:
         await crud.set_tags(session, model_id, body.tags)
         await session.refresh(m)

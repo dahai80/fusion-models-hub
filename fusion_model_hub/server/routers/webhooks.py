@@ -33,35 +33,51 @@ class WebhookOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _caller_tenant(request: Request) -> str:
+    return getattr(request.state, "tenant_id", "") or ""
+
+
 @router.post("", status_code=201, response_model=WebhookOut)
-async def create_webhook(body: WebhookCreate, session: SessionDep):
+async def create_webhook(body: WebhookCreate, session: SessionDep, request: Request):
+    from ..ssrf import validate_external_url
+    validate_external_url(body.url)
+    tenant_id = _caller_tenant(request)
     w = await crud.create_webhook(
-        session, name=body.name, url=body.url, secret=body.secret, events=body.events,
+        session, name=body.name, url=body.url, secret=body.secret,
+        events=body.events, tenant_id=tenant_id,
     )
+    logger.info("Created webhook: id=%s tenant=%s", w.id, tenant_id)
     return w
 
 
 @router.get("")
 async def list_webhooks(session: SessionDep, request: Request):
-    tenant_id = getattr(request.state, "tenant_id", "") or ""
+    tenant_id = _caller_tenant(request)
     items = await crud.list_webhooks(session, tenant_id=tenant_id)
     logger.info("Listed webhooks: %d (tenant=%s)", len(items), tenant_id)
     return {"webhooks": items, "total": len(items)}
 
 
 @router.get("/{webhook_id}", response_model=WebhookOut)
-async def get_webhook(webhook_id: str, session: SessionDep):
+async def get_webhook(webhook_id: str, session: SessionDep, request: Request):
     w = await crud.get_webhook(session, webhook_id)
     if not w:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    tenant_id = _caller_tenant(request)
+    if tenant_id and w.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Webhook not found")
     return w
 
 
 @router.delete("/{webhook_id}")
-async def delete_webhook(webhook_id: str, session: SessionDep):
-    ok = await crud.delete_webhook(session, webhook_id)
-    if not ok:
+async def delete_webhook(webhook_id: str, session: SessionDep, request: Request):
+    w = await crud.get_webhook(session, webhook_id)
+    if not w:
         raise HTTPException(status_code=404, detail="Webhook not found")
+    tenant_id = _caller_tenant(request)
+    if tenant_id and w.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    await crud.delete_webhook(session, webhook_id)
     return {"detail": "deleted"}
 
 
@@ -111,8 +127,10 @@ async def dispatch_webhook_event(event: str, data: dict, tenant_id: str = "") ->
         for w in webhooks:
             if not w.is_active:
                 continue
-            if w.events and event not in w.events:
-                continue
+            if w.events:
+                subscribed = {e.strip() for e in w.events.split(",") if e.strip()}
+                if event not in subscribed:
+                    continue
             signature = _sign_payload(payload_bytes, w.secret) if w.secret else ""
             headers = {
                 "Content-Type": "application/json",
