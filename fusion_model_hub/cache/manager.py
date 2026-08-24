@@ -112,8 +112,9 @@ class CacheManager:
         data["last_accessed"] = time.time()
         data["ref_count"] = data.get("ref_count", 0) + 1
         self._index[key] = data
-        self._save_index()
-
+        # F-11: access-time/ref_count bump is in-memory only; avoid rewriting the
+        # full index.json on every cache hit. Persisted on structural changes
+        # (put/remove/gc/validate) and on next _save_index() call.
         return CacheEntry(**data)
 
     def has(self, model_id: str, level: CacheLevel, quant_bits: int = 0) -> bool:

@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
@@ -12,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 WRITE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 DELETE_METHODS = {"DELETE"}
+# Precise path match (no startswith) — /auth/keys/{id} sub-paths must auth.
+# POST /auth/keys is public ONLY via bootstrap guard (route checks zero active keys).
 PUBLIC_PATHS = {
     "/api/v1/system/health",
     "/docs",
@@ -19,7 +22,25 @@ PUBLIC_PATHS = {
     "/api/v1/auth/keys",
 }
 
+# In-process timestamp cache: throttle last_used_at DB writes to once per N sec per
+# key, so verify stays a pure read (F-08). Falls back to write when entry stale.
+_LAST_USED_THROTTLE_SECONDS = 30
+_last_used_cache: dict[str, float] = {}
+
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def _is_public_path(path: str) -> bool:
+    # Exact match or explicit sub-path of a public entry only when the public
+    # entry is a directory-style prefix (trailing-slash safe). /auth/keys itself
+    # is public for bootstrap POST but its /{id} sub-paths are NOT — so match
+    # /auth/keys exactly, never its children.
+    if path in PUBLIC_PATHS:
+        return True
+    for public in PUBLIC_PATHS:
+        if public.endswith("/") and path.startswith(public):
+            return True
+    return False
 
 
 async def get_current_api_key(request: Request, api_key: str = Depends(api_key_header)) -> ApiKey | None:
@@ -89,9 +110,8 @@ async def auth_middleware(request: Request, call_next):
     if "/audit" in request.url.path and request.method == "DELETE":
         return JSONResponse(status_code=403, content={"detail": "Audit logs cannot be deleted"})
 
-    for public in PUBLIC_PATHS:
-        if request.url.path.startswith(public):
-            return await call_next(request)
+    if _is_public_path(request.url.path):
+        return await call_next(request)
 
     api_key_str = request.headers.get("X-API-Key", "")
     if not api_key_str:
@@ -105,18 +125,34 @@ async def auth_middleware(request: Request, call_next):
         if not ak:
             return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
 
+        # Role ACL applies to all methods (F-04.5): viewer blocked from writes;
+        # developer blocked from delete; admin full. GET passes for all roles.
         if request.method in WRITE_METHODS:
             role_denied = _check_role_permission(ak.role, request.method)
             if role_denied:
                 return role_denied
 
-            model_denied = _check_model_access(ak, request)
-            if model_denied:
-                return model_denied
+        # Model/module ACL enforced on every method, not only writes (F-04.5):
+        # a restricted key must not GET an out-of-ACL model.
+        model_denied = _check_model_access(ak, request)
+        if model_denied:
+            return model_denied
 
-            module_denied = _check_module_access(ak, request)
-            if module_denied:
-                return module_denied
+        module_denied = _check_module_access(ak, request)
+        if module_denied:
+            return module_denied
+
+        # Throttled last_used_at refresh (F-08): verify_api_key is a pure read;
+        # we touch the DB at most once per _LAST_USED_THROTTLE_SECONDS per key.
+        now = time.time()
+        last = _last_used_cache.get(ak.id, 0.0)
+        if now - last >= _LAST_USED_THROTTLE_SECONDS:
+            _last_used_cache[ak.id] = now
+            try:
+                from ..db.crud import touch_api_key_last_used
+                await touch_api_key_last_used(session, ak.id)
+            except Exception:
+                logger.debug("last_used_at refresh failed for key %s", ak.id, exc_info=True)
 
         from .rate_limit import check_rate_limit
         if not check_rate_limit(ak.key_prefix, ak.qps_limit):

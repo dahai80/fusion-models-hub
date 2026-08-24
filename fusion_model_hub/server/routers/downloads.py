@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from urllib.parse import urlparse
 
@@ -160,22 +161,36 @@ async def _run_download(task_id: str, source_url: str, settings):
                         if "/" in content_range:
                             total = int(content_range.split("/")[-1])
 
+                    download_dir = os.path.join(settings.data_dir, "downloads")
+                    os.makedirs(download_dir, exist_ok=True)
+                    part_path = os.path.join(download_dir, f"{task_id}.part")
+                    final_path = os.path.join(download_dir, f"{task_id}.bin")
+                    write_mode = "ab" if downloaded > 0 else "wb"
+
                     chunk_size = 1024 * 1024
                     last_update = time.time()
 
-                    async for chunk in resp.aiter_bytes(chunk_size):
-                        downloaded += len(chunk)
-                        now = time.time()
-                        if now - last_update >= 1.0:
-                            progress = (downloaded / total * 100) if total > 0 else 0
-                            async with sf() as session:
-                                await crud.update_download_task(
-                                    session, task_id,
-                                    downloaded_bytes=downloaded,
-                                    total_bytes=total,
-                                    progress_percent=round(progress, 1),
-                                )
-                            last_update = now
+                    with open(part_path, write_mode) as fh:
+                        async for chunk in resp.aiter_bytes(chunk_size):
+                            fh.write(chunk)
+                            downloaded += len(chunk)
+                            now = time.time()
+                            if now - last_update >= 1.0:
+                                progress = (downloaded / total * 100) if total > 0 else 0
+                                async with sf() as session:
+                                    await crud.update_download_task(
+                                        session, task_id,
+                                        downloaded_bytes=downloaded,
+                                        total_bytes=total,
+                                        progress_percent=round(progress, 1),
+                                    )
+                                last_update = now
+
+                    if total > 0 and downloaded < total:
+                        raise Exception(
+                            f"Incomplete download: {downloaded}/{total} bytes"
+                        )
+                    os.replace(part_path, final_path)
 
             async with sf() as session:
                 await crud.update_download_task(
@@ -184,8 +199,9 @@ async def _run_download(task_id: str, source_url: str, settings):
                     downloaded_bytes=downloaded,
                     total_bytes=total,
                     progress_percent=100.0,
+                    file_path=final_path,
                 )
-            logger.info("Download completed: id=%s bytes=%d", task_id, downloaded)
+            logger.info("Download completed: id=%s bytes=%d path=%s", task_id, downloaded, final_path)
             return
 
         except asyncio.CancelledError:

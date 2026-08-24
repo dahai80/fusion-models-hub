@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...db import crud
+from ..auth import _is_auth_enabled
 from ..deps import SessionDep
 
 logger = logging.getLogger(__name__)
@@ -21,9 +22,36 @@ class ApiKeyCreate(BaseModel):
     allowed_modules: str = ""
 
 
+def _caller_tenant(request: Request) -> str:
+    return getattr(request.state, "tenant_id", "") or ""
+
+
+def _caller_role(request: Request) -> str:
+    return getattr(request.state, "user_role", "") or ""
+
+
+async def _require_admin_or_bootstrap(session, request: Request) -> None:
+    # F-01: POST /auth/keys is public ONLY for the very first key (bootstrap).
+    # Once any active key exists, creating more requires an admin caller.
+    # auth_enabled=False (local mode) bypasses — matches existing local semantics.
+    if not _is_auth_enabled():
+        return
+    active_count = await crud.count_active_api_keys(session)
+    if active_count == 0:
+        logger.info("Bootstrap: creating first admin key (no active keys present)")
+        return
+    role = _caller_role(request)
+    if role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin can create API keys once bootstrap key exists",
+        )
+
+
 @router.post("/auth/keys", status_code=201)
 async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request):
-    tenant_id = body.tenant_id or getattr(request.state, "tenant_id", "") or ""
+    await _require_admin_or_bootstrap(session, request)
+    tenant_id = body.tenant_id or _caller_tenant(request) or ""
     ak, full_key = await crud.create_api_key(
         session, name=body.name, tenant_id=tenant_id, permissions=body.permissions, role=body.role,
         qps_limit=body.qps_limit, allowed_models=body.allowed_models, allowed_modules=body.allowed_modules,
@@ -45,8 +73,11 @@ async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request):
 
 
 @router.get("/auth/keys")
-async def list_keys(session: SessionDep):
-    keys = await crud.list_api_keys(session)
+async def list_keys(session: SessionDep, request: Request):
+    # F-04: scope to caller tenant. Empty tenant (local/unset) returns all,
+    # preserving auth-disabled local-mode semantics.
+    tenant_id = _caller_tenant(request)
+    keys = await crud.list_api_keys(session, tenant_id=tenant_id)
     return {
         "items": [
             {
@@ -70,6 +101,7 @@ async def list_keys(session: SessionDep):
 
 @router.delete("/auth/keys/{key_id}")
 async def delete_key(key_id: str, session: SessionDep):
+    # F-01: sub-path never public; auth middleware enforces caller identity.
     deleted = await crud.delete_api_key(session, key_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="API key not found")
@@ -85,9 +117,12 @@ async def deactivate_key(key_id: str, session: SessionDep):
 
 
 @router.get("/auth/keys/{key_id}/usage")
-async def key_usage(key_id: str, session: SessionDep):
+async def key_usage(key_id: str, session: SessionDep, request: Request):
     ak = await crud.get_api_key(session, key_id)
     if not ak:
+        raise HTTPException(status_code=404, detail="API key not found")
+    tenant_id = _caller_tenant(request)
+    if tenant_id and ak.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="API key not found")
 
     from .inference import _model_stats

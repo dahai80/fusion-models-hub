@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import anyio
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,16 +72,17 @@ class ModelDownloader:
                     mode = "ab" if resume_offset > 0 else "wb"
                     with open(temp_path, mode) as f:
                         async for chunk in resp.aiter_bytes():
-                            f.write(chunk)
+                            await anyio.to_thread.run_sync(f.write, chunk)
                             downloaded += len(chunk)
                             if on_progress:
                                 on_progress(downloaded, total)
 
             temp_path.rename(file_path)
 
+            computed_hash = await anyio.to_thread.run_sync(self._compute_hash, file_path)
             hash_ok = True
             if expected_hash:
-                hash_ok = self._verify_hash(file_path, expected_hash)
+                hash_ok = computed_hash == expected_hash.lower()
                 if not hash_ok:
                     logger.error("Hash mismatch for %s — deleting corrupted file", model_id)
                     file_path.unlink(missing_ok=True)
@@ -96,6 +99,7 @@ class ModelDownloader:
                 "status": "completed",
                 "path": str(file_path),
                 "size_bytes": file_path.stat().st_size,
+                "hash": computed_hash,
                 "hash_verified": hash_ok,
                 "resumed": resume_offset > 0,
             }
@@ -109,14 +113,19 @@ class ModelDownloader:
         return self._verify_hash(Path(file_path), expected_hash)
 
     @staticmethod
-    def _verify_hash(file_path: Path, expected_hash: str) -> bool:
+    def _compute_hash(file_path: Path) -> str:
+        """Compute SHA256 hex digest of a file."""
+        h = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    @classmethod
+    def _verify_hash(cls, file_path: Path, expected_hash: str) -> bool:
         """Verify SHA256 hash of a file."""
         try:
-            h = hashlib.sha256()
-            with open(file_path, "rb") as f:
-                for chunk in iter(lambda: f.read(65536), b""):
-                    h.update(chunk)
-            return h.hexdigest() == expected_hash.lower()
+            return cls._compute_hash(file_path) == expected_hash.lower()
         except Exception as e:
             logger.error("Hash verification failed: %s", e)
             return False

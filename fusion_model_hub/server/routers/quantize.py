@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...db import crud
@@ -12,6 +12,10 @@ from ..tasks import get_task_status, list_running_tasks, submit_quantize
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["quantize"])
+
+
+def _caller_tenant(request: Request) -> str:
+    return getattr(request.state, "tenant_id", "") or ""
 
 
 class QuantizeRequest(BaseModel):
@@ -44,11 +48,12 @@ async def running_quantize_tasks():
 
 
 @router.get("/quantize")
-async def list_quantize_tasks(status: str = "", page: int = 1, page_size: int = 20):
+async def list_quantize_tasks(status: str = "", page: int = 1, page_size: int = 20, request: Request = None):
     session_factory = get_session_factory()
+    tenant_id = _caller_tenant(request) if request else ""
     async with session_factory() as session:
         tasks, total = await crud.list_quantize_tasks(
-            session, status=status, page=page, page_size=page_size,
+            session, status=status, page=page, page_size=page_size, tenant_id=tenant_id,
         )
         items = [
             {
@@ -70,19 +75,30 @@ async def list_quantize_tasks(status: str = "", page: int = 1, page_size: int = 
 
 
 @router.get("/quantize/{task_id}")
-async def get_quantize_status(task_id: str):
+async def get_quantize_status(task_id: str, request: Request = None):
     status = await get_task_status(task_id)
     if not status:
         raise HTTPException(status_code=404, detail="Task not found")
+    # F-04: cross-tenant guard. Empty caller tenant (local mode) is permissive.
+    tenant_id = _caller_tenant(request) if request else ""
+    if tenant_id:
+        sf = get_session_factory()
+        async with sf() as session:
+            if await crud.quantize_task_tenant(session, task_id) != tenant_id:
+                raise HTTPException(status_code=404, detail="Task not found")
     return status
 
 
 @router.get("/quantize/{task_id}/compare")
-async def compare_quantize_results(task_id: str):
+async def compare_quantize_results(task_id: str, request: Request = None):
     sf = get_session_factory()
     async with sf() as session:
         task = await crud.get_quantize_task(session, task_id)
         if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        # F-04: cross-tenant guard.
+        tenant_id = _caller_tenant(request) if request else ""
+        if tenant_id and await crud.quantize_task_tenant(session, task_id) != tenant_id:
             raise HTTPException(status_code=404, detail="Task not found")
         source_ver = await crud.get_version(session, task.source_version_id)
         if not source_ver:

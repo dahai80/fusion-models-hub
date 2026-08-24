@@ -356,6 +356,7 @@ async def list_quantize_tasks(
     status: str = "",
     page: int = 1,
     page_size: int = 20,
+    tenant_id: str = "",
 ) -> tuple[list[QuantizeTask], int]:
     page_size = min(page_size, MAX_PAGE_SIZE)
     query = select(QuantizeTask)
@@ -363,11 +364,31 @@ async def list_quantize_tasks(
     if status:
         query = query.where(QuantizeTask.status == status)
         count_query = count_query.where(QuantizeTask.status == status)
+    if tenant_id:
+        # F-04: scope quantize tasks to caller tenant via source version -> model.
+        query = query.join(ModelVersion, QuantizeTask.source_version_id == ModelVersion.id).join(
+            Model, ModelVersion.model_id == Model.id
+        ).where(Model.tenant_id == tenant_id)
+        count_query = count_query.join(ModelVersion, QuantizeTask.source_version_id == ModelVersion.id).join(
+            Model, ModelVersion.model_id == Model.id
+        ).where(Model.tenant_id == tenant_id)
     total = (await session.execute(count_query)).scalar() or 0
     offset = (page - 1) * page_size
     query = query.order_by(QuantizeTask.created_at.desc()).offset(offset).limit(page_size)
     result = await session.execute(query)
     return list(result.scalars().all()), total
+
+
+async def quantize_task_tenant(session: AsyncSession, task_id: str) -> str:
+    # F-04: resolve a quantize task's owning tenant (via source version -> model).
+    task = await get_quantize_task(session, task_id)
+    if not task:
+        return ""
+    ver = await get_version(session, task.source_version_id)
+    if not ver:
+        return ""
+    m = await get_model(session, ver.model_id)
+    return m.tenant_id if m else ""
 
 
 _TASK_UPDATABLE = {"status", "output_version_id", "error_message", "started_at", "completed_at", "calibration_dataset"}
@@ -439,20 +460,42 @@ async def get_api_key(session: AsyncSession, key_id: str) -> ApiKey | None:
     return result.scalar_one_or_none()
 
 
-async def list_api_keys(session: AsyncSession) -> list[ApiKey]:
-    result = await session.execute(select(ApiKey).order_by(ApiKey.created_at.desc()))
+async def list_api_keys(session: AsyncSession, *, tenant_id: str = "") -> list[ApiKey]:
+    stmt = select(ApiKey)
+    if tenant_id:
+        stmt = stmt.where(ApiKey.tenant_id == tenant_id)
+    stmt = stmt.order_by(ApiKey.created_at.desc())
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
-async def verify_api_key(session: AsyncSession, raw_key: str) -> ApiKey | None:
-    key_hash = _hash_key(raw_key)
+async def count_active_api_keys(session: AsyncSession) -> int:
+    from sqlalchemy import func
     result = await session.execute(
-        select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.is_active.is_(True)).with_for_update()
+        select(func.count(ApiKey.id)).where(ApiKey.is_active.is_(True))
     )
+    return int(result.scalar() or 0)
+
+
+async def touch_api_key_last_used(session: AsyncSession, key_id: str) -> None:
+    # F-08: throttled background refresh of last_used_at, decoupled from verify.
+    result = await session.execute(select(ApiKey).where(ApiKey.id == key_id))
     ak = result.scalar_one_or_none()
     if ak:
         ak.last_used_at = datetime.now(UTC)
         await session.commit()
+
+
+async def verify_api_key(session: AsyncSession, raw_key: str) -> ApiKey | None:
+    # F-08: pure read — no with_for_update, no last_used_at commit per request.
+    # last_used_at refreshed via touch_api_key_last_used from the middleware on a
+    # throttle; SQLite write lock no longer serializes every authenticated call.
+    key_hash = _hash_key(raw_key)
+    result = await session.execute(
+        select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.is_active.is_(True))
+    )
+    ak = result.scalar_one_or_none()
+    if ak:
         logger.info("API key verified: id=%s name=%s", ak.id, ak.name)
     return ak
 

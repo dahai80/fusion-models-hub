@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
 import json
 import logging
+import os
 import uuid
 from typing import Any
 
@@ -11,7 +13,7 @@ from ...db import crud
 from ...db.crud import EvaluationThresholdError, InvalidTransition
 from ...db.models import ModelFormat, Quantization, VersionStatus
 from ...repo.downloader import ModelDownloader
-from ..deps import SessionDep, StoreDep
+from ..deps import SessionDep, SettingsDep, StoreDep
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["versions"])
@@ -65,6 +67,33 @@ def _version_to_dict(v) -> dict[str, Any]:
     }
 
 
+MAX_TOTAL_CHUNKS = 10000
+CHUNK_READ_SIZE = 5 * 1024 * 1024
+
+
+def _caller_tenant(request: Request) -> str:
+    return getattr(request.state, "tenant_id", "") or ""
+
+
+async def _enforce_version_tenant(session, v, request: Request) -> None:
+    # F-04: cross-tenant read/download/state-change guard. Empty caller tenant
+    # (auth-disabled local mode) is permissive — matches list_models semantics.
+    tenant_id = _caller_tenant(request)
+    if not tenant_id or v is None:
+        return
+    m = await crud.get_model(session, v.model_id)
+    if not m or m.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+
+def _chunk_upload_token(model_id: str, version: str) -> str:
+    # Deterministic per (model_id, version) so a multi-chunk upload session
+    # resolves to one upload dir across requests, yet is opaque to callers
+    # (prevents path-guessing collisions between concurrent uploads).
+    raw = f"{model_id}:{version}".encode()
+    return hashlib.sha256(raw).hexdigest()[:12]
+
+
 @router.post("/models/{model_id}/versions", status_code=201)
 async def upload_version(
     model_id: str,
@@ -75,6 +104,7 @@ async def upload_version(
     file: UploadFile | None = None,
     session: SessionDep = None,
     store: StoreDep = None,
+    settings: SettingsDep = None,
 ):
     m = await crud.get_model(session, model_id)
     if not m:
@@ -88,12 +118,32 @@ async def upload_version(
     file_size = 0
 
     if file:
-        data = await file.read()
-        path, hash_val, size = await store.write_file(target_dir, file.filename or "model.bin", data)
-        file_path = str(path)
-        file_hash = hash_val
-        file_size = size
-        logger.info("Uploaded file for model=%s version=%s size=%d", model_id, version, size)
+        # F-03: stream the upload and enforce max_upload_size_mb instead of
+        # reading the whole body into memory (OOM on oversized uploads).
+        max_bytes = settings.max_upload_size_mb * 1024 * 1024
+        hasher = hashlib.sha256()
+        written = 0
+        safe_name = os.path.basename(file.filename or "model.bin") or "model.bin"
+        target_path = target_dir / safe_name
+        with open(target_path, "wb") as out:
+            while True:
+                block = await file.read(CHUNK_READ_SIZE)
+                if not block:
+                    break
+                written += len(block)
+                if written > max_bytes:
+                    out.close()
+                    try:
+                        target_path.unlink()
+                    except OSError:
+                        pass
+                    raise HTTPException(status_code=413, detail="Upload exceeds max_upload_size_mb")
+                out.write(block)
+                hasher.update(block)
+        file_hash = hasher.hexdigest()
+        file_size = written
+        file_path = str(target_path)
+        logger.info("Uploaded file for model=%s version=%s size=%d", model_id, version, file_size)
 
     v = await crud.create_version(
         session,
@@ -112,6 +162,7 @@ async def chunk_upload_version(
     model_id: str,
     session: SessionDep,
     store: StoreDep,
+    settings: SettingsDep,
     version: str = Form(""),
     format: ModelFormat = Form(ModelFormat.MLX),
     quantization: Quantization = Form(Quantization.Q4),
@@ -125,7 +176,18 @@ async def chunk_upload_version(
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
 
-    upload_id = f"{model_id}_{version}"
+    # F-03: cap total_chunks, validate chunk_index range and continuity.
+    if total_chunks <= 0 or total_chunks > MAX_TOTAL_CHUNKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"total_chunks must be in 1..{MAX_TOTAL_CHUNKS}",
+        )
+    if chunk_index < 0 or chunk_index >= total_chunks:
+        raise HTTPException(status_code=400, detail="chunk_index out of range")
+
+    # upload_id random token appended so concurrent uploads of the same
+    # (model_id, version) don't clobber each other's chunk slots.
+    upload_id = f"{model_id}_{version}_{_chunk_upload_token(model_id, version)}"
     if not chunk:
         raise HTTPException(status_code=400, detail="chunk file is required")
 
@@ -140,6 +202,12 @@ async def chunk_upload_version(
         path, hash_val, size = await store.assemble_chunks(upload_id, target_dir, filename, total_chunks)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # F-03: enforce final assembled size against the global cap.
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    if size > max_bytes:
+        logger.warning("Assembled upload exceeds cap: upload=%s size=%d", upload_id, size)
+        raise HTTPException(status_code=413, detail="Assembled upload exceeds max_upload_size_mb")
 
     v = await crud.create_version(
         session,
@@ -178,15 +246,20 @@ async def list_versions(
 
 
 @router.get("/versions/{version_id}")
-async def get_version(version_id: str, session: SessionDep):
+async def get_version(version_id: str, session: SessionDep, request: Request):
     v = await crud.get_version(session, version_id)
     if not v:
         raise HTTPException(status_code=404, detail="Version not found")
+    await _enforce_version_tenant(session, v, request)
     return _version_to_dict(v)
 
 
 @router.put("/versions/{version_id}/status")
-async def update_version_status(version_id: str, body: StatusChange, session: SessionDep):
+async def update_version_status(version_id: str, body: StatusChange, session: SessionDep, request: Request):
+    existing = await crud.get_version(session, version_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Version not found")
+    await _enforce_version_tenant(session, existing, request)
     try:
         v = await crud.update_version_status(
             session, version_id, body.target_status,
@@ -202,10 +275,11 @@ async def update_version_status(version_id: str, body: StatusChange, session: Se
 
 
 @router.get("/versions/{version_id}/download")
-async def download_version(version_id: str, session: SessionDep, store: StoreDep):
+async def download_version(version_id: str, session: SessionDep, store: StoreDep, request: Request):
     v = await crud.get_version(session, version_id)
     if not v:
         raise HTTPException(status_code=404, detail="Version not found")
+    await _enforce_version_tenant(session, v, request)
     if not v.file_path:
         raise HTTPException(status_code=404, detail="No file associated with this version")
 
@@ -359,19 +433,8 @@ class UrlDownloadRequest(BaseModel):
 
 
 def _validate_download_url(url_str: str) -> None:
-    from urllib.parse import urlparse
-    parsed = urlparse(url_str)
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(status_code=400, detail="URL must use http or https scheme")
-    hostname = parsed.hostname or ""
-    blocked = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"}
-    if hostname.lower() in blocked:
-        raise HTTPException(status_code=400, detail="URL cannot point to internal network")
-    if hostname.startswith(("10.", "192.168.")):
-        raise HTTPException(status_code=400, detail="URL cannot point to internal network")
-    octets = hostname.split(".")
-    if len(octets) == 4 and octets[0] == "172" and octets[1].isdigit() and 16 <= int(octets[1]) <= 31:
-        raise HTTPException(status_code=400, detail="URL cannot point to internal network")
+    from ..ssrf import validate_external_url
+    validate_external_url(url_str)
 
 
 @router.post("/models/{model_id}/versions/download-url", status_code=202)
@@ -406,7 +469,7 @@ async def download_version_from_url(
                     format=body.format,
                     quantization=body.quantization,
                     file_path=result.get("path", ""),
-                    file_hash=body.expected_hash,
+                    file_hash=result.get("hash", body.expected_hash),
                     file_size=result.get("size_bytes", 0),
                     release_notes=body.release_notes,
                 )
@@ -534,16 +597,31 @@ async def import_model_tar(
 
             model_dir = store.models_dir / m.id
             model_dir.mkdir(parents=True, exist_ok=True)
+            model_dir_resolved = model_dir.resolve()
 
             for member in tar.getmembers():
                 if member.name == "metadata.json":
                     continue
+                # F-02 TarSlip: reject any member whose resolved path escapes the
+                # model dir (absolute paths, .. traversal, symlinks). filter='data'
+                # is the 3.12+ hardening; we also resolve-check as defense-in-depth.
+                if member.issym() or member.islnk():
+                    logger.warning("Skipping unsafe tar link member: %s", member.name)
+                    continue
+                target = (model_dir / member.name)
+                try:
+                    resolved = target.resolve(strict=False)
+                except (OSError, ValueError):
+                    logger.warning("Skipping unresolvable tar member: %s", member.name)
+                    continue
+                if not str(resolved).startswith(str(model_dir_resolved) + os.sep) and resolved != model_dir_resolved:
+                    logger.warning("Skipping tar member escaping model dir: %s", member.name)
+                    continue
                 if member.isdir():
-                    (model_dir / member.name).mkdir(parents=True, exist_ok=True)
+                    target.mkdir(parents=True, exist_ok=True)
                 elif member.isfile():
                     f = tar.extractfile(member)
                     if f:
-                        target = model_dir / member.name
                         target.parent.mkdir(parents=True, exist_ok=True)
                         target.write_bytes(f.read())
 

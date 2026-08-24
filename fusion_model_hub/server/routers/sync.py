@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 
+import anyio
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -12,6 +13,15 @@ from ..deps import SessionDep, SettingsDep, StoreDep
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+
+
+def _disk_hash_and_size(file_path: str) -> tuple[str, int]:
+    stat = os.stat(file_path)
+    sha = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while chunk := f.read(8192):
+            sha.update(chunk)
+    return sha.hexdigest(), stat.st_size
 
 
 @router.get("/versions/{version_id}/manifest")
@@ -30,13 +40,9 @@ async def get_version_manifest(version_id: str, session: SessionDep, store: Stor
         "status": v.status.value,
     }
     if v.file_path and os.path.exists(v.file_path):
-        stat = os.stat(v.file_path)
-        with open(v.file_path, "rb") as f:
-            sha = hashlib.sha256()
-            while chunk := f.read(8192):
-                sha.update(chunk)
-        manifest["disk_hash"] = sha.hexdigest()
-        manifest["disk_size"] = stat.st_size
+        disk_hash, disk_size = await anyio.to_thread.run_sync(_disk_hash_and_size, v.file_path)
+        manifest["disk_hash"] = disk_hash
+        manifest["disk_size"] = disk_size
     elif hasattr(store, "get_file"):
         fpath = store.get_file(v.file_path)
         if fpath and os.path.exists(str(fpath)):
@@ -59,19 +65,8 @@ class SyncPullRequest(BaseModel):
 
 
 def _validate_sync_url(url_str: str) -> None:
-    from urllib.parse import urlparse
-    parsed = urlparse(url_str)
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(status_code=400, detail="URL must use http or https scheme")
-    hostname = parsed.hostname or ""
-    blocked = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"}
-    if hostname.lower() in blocked:
-        raise HTTPException(status_code=400, detail="URL cannot point to internal network")
-    if hostname.startswith(("10.", "192.168.")):
-        raise HTTPException(status_code=400, detail="URL cannot point to internal network")
-    octets = hostname.split(".")
-    if len(octets) == 4 and octets[0] == "172" and octets[1].isdigit() and 16 <= int(octets[1]) <= 31:
-        raise HTTPException(status_code=400, detail="URL cannot point to internal network")
+    from ..ssrf import validate_external_url
+    validate_external_url(url_str)
 
 
 @router.post("/push")
