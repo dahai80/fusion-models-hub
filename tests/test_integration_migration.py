@@ -86,9 +86,6 @@ def _scratch_db(name: str):
 
 def test_migration_matches_orm_schema() -> None:
     """alembic upgrade head schema == Base.metadata.create_all schema on PG."""
-    from sqlalchemy.dialects import postgresql
-    from sqlalchemy.schema import CreateTable
-
     with _scratch_db(_migration_schema_db()) as mig_db, _scratch_db(_orm_schema_db()) as orm_db:
         # 1. migration path: alembic upgrade head against a fresh PG db
         env = os.environ.copy()
