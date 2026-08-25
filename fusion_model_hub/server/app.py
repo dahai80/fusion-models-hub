@@ -158,6 +158,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         logger.info("Fusion Model Hub started: data_dir=%s auth=%s", settings.data_dir, settings.auth_enabled)
         yield
         backup.stop_backup_scheduler()
+        # H8: close the shared httpx transports pooled for the MLX hot path.
+        try:
+            from .http_client import close_all_transports
+            await close_all_transports()
+        except Exception:
+            logger.warning("Failed to close pooled httpx transports", exc_info=True)
 
     app = FastAPI(
         title="Fusion Model Hub",

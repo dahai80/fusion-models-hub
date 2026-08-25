@@ -935,3 +935,75 @@ class TestDeploymentNodePlacement:
         posts = [u for m, u in captured if m == "POST" and u.endswith("/unload")]
         assert posts, "no unload call captured"
         assert any("10.0.0.7:11434" in u for u in posts), posts
+
+
+class TestH8HttpxPooling:
+    # H8: the inference router aliases ``http_client`` as ``httpx`` and reads
+    # ``httpx.AsyncClient`` (== PoolClient). Two async-with wrappers built with
+    # the same base_url must share one AsyncHTTPTransport (connection reuse);
+    # aclose must be a no-op so the pool survives; close_all_transports clears
+    # it. Per-call timeout must stay independent. Test patches on
+    # ``inference.httpx.AsyncClient`` must still intercept (mock supplies its
+    # own __aenter__/__aexit__/post).
+
+    async def test_transport_reused_across_calls(self):
+        from fusion_model_hub.server import http_client
+        await http_client.close_all_transports()
+        async with http_client.AsyncClient(base_url="http://127.0.0.1:11434", timeout=60.0) as c1:
+            pass
+        async with http_client.AsyncClient(base_url="http://127.0.0.1:11434", timeout=30.0) as c2:
+            assert c2._transport is c1._transport, "transport not reused across async-with"
+        # per-call timeout stays independent on each wrapper
+        assert c1.timeout.read == 60.0 and c2.timeout.read == 30.0
+        await http_client.close_all_transports()
+
+    async def test_omitted_base_url_does_not_crash(self):
+        # Real call sites build full URLs inline (no base_url): the constructor
+        # must not forward base_url=None to httpx (URL(None) -> TypeError).
+        from fusion_model_hub.server import http_client
+        await http_client.close_all_transports()
+        async with http_client.AsyncClient(timeout=60.0) as c:
+            assert c._transport is http_client._TRANSPORT_POOL["default"]
+        # all omitted-base_url call sites share the same "default" pool entry
+        async with http_client.AsyncClient(timeout=15.0) as c2:
+            assert c2._transport is c._transport
+        await http_client.close_all_transports()
+
+    async def test_aclose_does_not_drop_pool(self):
+        from fusion_model_hub.server import http_client
+        await http_client.close_all_transports()
+        async with http_client.AsyncClient(base_url="http://127.0.0.1:11434", timeout=5.0) as c1:
+            pass
+        # after exit the client reports closed but the pool entry persists
+        assert "http://127.0.0.1:11434" in http_client._TRANSPORT_POOL
+        await http_client.close_all_transports()
+        assert http_client._TRANSPORT_POOL == {}
+
+    async def test_inference_alias_targets_pool_client(self):
+        from fusion_model_hub.server import http_client
+        from fusion_model_hub.server.routers import inference
+        assert inference.httpx is http_client
+        assert inference.httpx.AsyncClient is http_client.PoolClient
+        # exception types resolve through the alias
+        import httpx as real_httpx
+        assert inference.httpx.ConnectError is real_httpx.ConnectError
+        assert inference.httpx.HTTPStatusError is real_httpx.HTTPStatusError
+
+    @pytest.mark.asyncio
+    async def test_test_patch_still_intercepts(self):
+        # mirrors the existing router test pattern: patch inference.httpx.AsyncClient
+        # with a mock carrying __aenter__/__aexit__/post — must reach the call site.
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from fusion_model_hub.server.routers import inference
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        with patch("fusion_model_hub.server.routers.inference.httpx.AsyncClient", return_value=mock_client):
+            async with inference.httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post("http://127.0.0.1:11434/v1/models/m/load")
+        assert r.status_code == 200
+        mock_client.post.assert_awaited()

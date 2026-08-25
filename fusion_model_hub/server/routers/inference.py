@@ -5,12 +5,12 @@ import random
 import time
 
 import anyio
-import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ...db import crud
 from ...db.models import ModelStatus
+from .. import http_client as httpx
 from ..deps import SessionDep, SettingsDep, get_session_factory
 from ..errors import safe_http_error
 from .models import _check_model_owner, _check_model_read
