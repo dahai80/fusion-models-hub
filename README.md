@@ -947,6 +947,18 @@ Environment variables:
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
 
+### Production secrets
+
+Three long-lived secrets gate production deployments. Set all three via env (never commit them; keep the env file `0600`):
+
+| Variable | Purpose | If unset |
+|----------|---------|----------|
+| `FMH_API_KEY_PEPPER` | Salt for PBKDF2 API-key hashing | derived per-install pepper (dev only; logs a WARNING — do not ship) |
+| `FUSION_MLX_API_KEY` | Bearer for Hub→MLX calls; must equal MLX's `auth.api_key` | falls back to `~/.fusion-mlx/settings.json`; unset → MLX 401s |
+| `FMH_AUTH_BOOTSTRAP_TOKEN` | Gate on first API-key creation (open bootstrap otherwise) | open bootstrap (IP-rate-limited only) — not safe on a networked Hub |
+
+**Rotating these secrets:** see [`docs/secret-rotation-runbook.md`](docs/secret-rotation-runbook.md) for per-secret procedures, blast radius, rollback, multi-node notes, and a self-test drill. Key invariants: rotating `FMH_API_KEY_PEPPER` invalidates every existing API key (re-issue after); `FUSION_MLX_API_KEY` must match Fusion-MLX's own key (rotate both sides together).
+
 ## CLI
 
 The `fmh` command provides a typer-based CLI:
