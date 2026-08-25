@@ -1009,7 +1009,19 @@ pytest --cov=fusion_model_hub --cov-report=term-missing
 ~/claude-home/fusion-mlx/start.sh start
 ```
 
-## Audit Fix Changelog (v1.0.14 → 1.0.15)
+## Patch Changelog (v1.0.15 → v1.0.16)
+
+Three fixes landed from the multi-node scale-test + audit follow-up, merged via PRs #32, #33, #34.
+
+| Fix | PR | Change |
+|-----|----|--------|
+| H8 pooled httpx for MLX hot path | #32 | `server/http_client.py`: one `AsyncHTTPTransport` per base_url kept alive process-wide; `inference.py` + `cluster.py` opt in via `from .. import http_client as httpx`. PoolClient `aclose` is a no-op so connections reuse across serve/chat/unload. Scale test measured 5.6× throughput / 6× lower p50 on the cluster-routing path (S1: 16.69 → 93.45 rps, 881 → 148 ms). Container multi-node scale load test added under `tests/integration/multinode/`. |
+| Download cooperative cancel | #33 | `routers/downloads.py`: `DELETE /downloads/{id}` now reaches the live worker via `task.cancel()` so a cancelled multi-GB download stops streaming immediately instead of running to completion; `CancelledError` handler drops the half-written `.part` file and re-marks the task (idempotent). `_running_downloads` holds strong refs keyed by task_id. |
+| Cluster round-robin routing | #34 | `routers/cluster.py` `route_inference`: rotate the start node per call via a monotonic counter so load spreads evenly across active nodes. Before, the loop always started at `list_cluster_nodes()[0]` (`created_at DESC` = newest node first), so the newest node absorbed all traffic and earlier primaries served 0 (scale test: real-mlx 0/150). Failover preserved within each call. |
+
+Test count: 860 → 864.
+
+## Audit Fix Changelog (v1.0.14 → v1.0.15)
 
 Full audit report: `audit/fusion-model-hub-audit-report-0824.md` (65 findings: P0 fatal, P1 high, P2 medium). All P0–P2 closed on branch `fix/audit-p0-p2`.
 
