@@ -57,8 +57,12 @@ jobs:
     # PG + MinIO integration: real PostgreSQL (asyncpg) + real MinIO (S3 chunked
     # upload/assemble), AND the Alembic migration gate (alembic upgrade head on a
     # fresh PG vs Base.metadata.create_all — the ORM-single-source-of-truth check).
-    # Both share the same PG service container. Services are pre-started by GHA
-    # service containers, so the tests skip self-managed compose (FMH_INT_NO_COMPOSE=1).
+    # PG runs as a GHA service container (its default CMD boots the server).
+    # MinIO is started manually in a step: GHA `services:` cannot pass a `command`
+    # arg, and `minio/minio:latest` prints help and exits with no args, so the
+    # service container never became healthy. `docker run ... minio server /data`
+    # gives full control over the command. Tests skip self-managed compose
+    # (FMH_INT_NO_COMPOSE=1) since both services are already up.
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -74,18 +78,6 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "mc ready local"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 30
     env:
       FMH_INT_NO_COMPOSE: "1"
       FMH_INT_PG_HOST: 127.0.0.1
@@ -96,8 +88,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Start MinIO (server /data)
+        run: |
+          docker run -d --name fmh-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+      - name: Wait for MinIO ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9000/minio/health/ready >/dev/null; then
+              echo "MinIO ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO not ready"; docker logs fmh-minio; exit 1
       - name: Install dependencies
         run: pip install -e ".[test,integration]"
+      - name: Install psql client (migration gate uses the psql CLI)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
       - name: Run PG/MinIO integration tests
         run: |
           python -m pytest tests/test_integration_pg_minio.py -o addopts="" -q
