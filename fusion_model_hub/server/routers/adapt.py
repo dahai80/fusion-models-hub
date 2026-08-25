@@ -139,6 +139,18 @@ async def execute_adaptation(request: ExecuteRequest, settings: SettingsDep):
                         )
                     else:
                         logger.info("Quantize submitted for %s at %d-bit", request.model_id, request.quant_bits)
+                else:
+                    # E-E2: quant_bits==16 means no quantization requested — this
+                    # /adapt/execute pipeline is a debug passthrough (H7: no
+                    # version/cache row, hub_registered=False), so a 16-bit run
+                    # legitimately has nothing to quantize. Log it explicitly so
+                    # the silent skip is visible in the audit trail rather than
+                    # looking like a dropped step.
+                    logger.info(
+                        "Skipping quantize for %s: quant_bits=16 (no quantization requested, "
+                        "debug passthrough converts only)",
+                        request.model_id,
+                    )
 
             logger.info("Adapt execution completed: id=%s model=%s", execution_id, request.model_id)
         except Exception:

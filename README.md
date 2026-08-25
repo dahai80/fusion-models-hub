@@ -1007,6 +1007,17 @@ Full audit report: `audit/fusion-model-hub-audit-report-0824.md` (65 findings: P
 
 **P1 — Security & Data Integrity:** secret rotation (`config.py` `mlx_internal_api_key` env → settings.json fallback), encryption-at-rest key handling, watermark binding, approval workflow levels, audit-log tenant scoping, Git-LFS lock ownership, deployment gray-release.
 
+**P1 — Error Handling (E-E2~E-E7, high-severity):**
+
+| Fix | Change |
+|-----|--------|
+| E-E2 | `/adapt/execute` `quant_bits==16` no longer silently skips quantize — explicit `else` log so the debug-passthrough conversion-only path is observable |
+| E-E3 | `POST /recommend` feeds `RecommendEngine` real `params_size`/`task_types`/`download_count` (was hardcoded `0`/`llm`/`0`, so `min_params_b>0` rejected every candidate); `_parse_params_b` helper; deleted duplicate `GET /models/recommend` |
+| E-E4 | Centralized webhook/event dispatch (`server/events.py`) |
+| E-E5 | New `server/errors.py:safe_http_error(status, public_detail, *, exc, context)` — logs raw internal error + `trace_id`, returns fixed `detail` + `trace_id`; replaced 16 `str(e)`/`resp.text`/`e.response.text` leak sites across `inference.py`, `quantize.py`, `recommend.py` |
+| E-E6 | Bootstrap (first-key) hardening on the public `POST /auth/keys`: per-IP rate limit (10/min) + optional `FMH_AUTH_BOOTSTRAP_TOKEN` (constant-time `hmac.compare_digest` on `X-Bootstrap-Token`) so a racing first-to-arrive cannot win root |
+| E-E7 | `/auth/keys/{id}/usage` aggregates ONLY this key's inference volume via a new `per_key` dimension in `_model_stats` (was a global sum → cross-tenant/same-tenant business-intel leak) |
+
 **P2 — Tech Debt (this branch):**
 
 | Fix | Change |
@@ -1017,7 +1028,7 @@ Full audit report: `audit/fusion-model-hub-audit-report-0824.md` (65 findings: P
 | E-E14 | SDK `verify`/`cert`/`trust_env` passthrough into persistent `httpx.Client`/`AsyncClient` (fixes per-request pool churn); TLS config docs; 4 regression tests |
 | E-E9/E-E11/E-E12/E-E13/E-S14/E-S15 | coverage, schema, observability, and security hardening applied earlier in the branch |
 
-Test count: 780 → 845 (65 regression tests added across `tests/test_cache.py`, `tests/test_core.py`, `tests/test_sdk.py`, `tests/test_routers_deep.py`, `tests/test_routers_extended.py`).
+Test count: 780 → 850 (70 regression tests added across `tests/test_cache.py`, `tests/test_core.py`, `tests/test_sdk.py`, `tests/test_routers_deep.py`, `tests/test_routers_extended.py`, `tests/test_new_features.py`).
 
 ## Model Download Mirror
 

@@ -794,12 +794,15 @@ class TestModelSearchDeep:
 
 
 class TestModelRecommendDeep:
+    # E-E3: the duplicate GET /models/recommend endpoint was removed; the
+    # canonical path is POST /recommend, which feeds the RecommendEngine real
+    # params_size/task_types/download_count columns (was hardcoded zeros).
     @pytest.mark.asyncio
     async def test_recommend_with_task_type(self, client):
         await client.post("/api/v1/models", json={
             "name": "rec-task-deep", "task_types": "text-generation",
         })
-        resp = await client.get("/api/v1/models/recommend", params={"task_type": "text-generation"})
+        resp = await client.post("/api/v1/recommend", json={"task": "text-generation"})
         assert resp.status_code == 200
         assert "recommendations" in resp.json()
 
@@ -808,16 +811,21 @@ class TestModelRecommendDeep:
         await client.post("/api/v1/models", json={
             "name": "rec-params-deep", "params_size": "7B",
         })
-        resp = await client.get("/api/v1/models/recommend", params={"max_params": "10B"})
+        resp = await client.post("/api/v1/recommend", json={"max_params_b": 10})
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_recommend_with_model_type(self, client):
+    async def test_recommend_with_min_params_filter(self, client):
+        # E-E3 regression: with real params_size wired, min_params_b>0 must keep
+        # candidates (previously params_b was hardcoded 0 so any min_params_b>0
+        # filtered everything out).
         await client.post("/api/v1/models", json={
-            "name": "rec-type-deep", "model_type": "llm",
+            "name": "rec-min-deep", "params_size": "7B",
         })
-        resp = await client.get("/api/v1/models/recommend", params={"model_type": "llm"})
+        resp = await client.post("/api/v1/recommend", json={"min_params_b": 5, "max_params_b": 10})
         assert resp.status_code == 200
+        names = [r["name"] for r in resp.json()["recommendations"]]
+        assert "rec-min-deep" in names
 
 
 class TestModelCompareDeep:

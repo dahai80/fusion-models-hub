@@ -36,6 +36,12 @@ class Settings:
     cache_dir: str = ""
     api_key_pepper: str = ""
     expose_metrics: bool = False
+    # E-E6: optional shared secret that the very first (bootstrap) API key
+    # creation must present. POST /auth/keys is public while zero active keys
+    # exist, so without this anyone who can reach the Hub can race to create
+    # the root admin key. If unset, bootstrap is still open but IP rate-limited
+    # (see routers/auth.py) — set the env in any shared/networked deployment.
+    auth_bootstrap_token: str = ""
 
     def __post_init__(self):
         if not self.cache_dir:
@@ -159,3 +165,5 @@ class Settings:
         # When off, the /metrics route 404s even with auth disabled.
         if os.environ.get("FMH_EXPOSE_METRICS", "").lower() in ("true", "1", "yes"):
             self.expose_metrics = True
+        if not self.auth_bootstrap_token:
+            self.auth_bootstrap_token = os.environ.get("FMH_AUTH_BOOTSTRAP_TOKEN", "")

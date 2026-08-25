@@ -195,55 +195,6 @@ async def list_models(
     }
 
 
-@router.get("/models/recommend")
-async def recommend_models(
-    session: SessionDep,
-    task_type: str = "",
-    model_type: str = "",
-    max_params: str = "",
-    limit: int = 5,
-):
-    models, _ = await crud.list_models(session, page=1, page_size=1000)
-    candidates = models
-    if task_type:
-        candidates = [m for m in candidates if task_type in (m.task_types or "")]
-    if model_type:
-        candidates = [m for m in candidates if m.model_type.value == model_type]
-    if max_params:
-        def _parse_params(s: str) -> float:
-            try:
-                s = s.lower().strip()
-                if s.endswith("b"):
-                    return float(s[:-1])
-                if s.endswith("m"):
-                    return float(s[:-1]) / 1000
-                return float(s)
-            except (ValueError, TypeError):
-                return 9999
-        max_val = _parse_params(max_params)
-        candidates = [m for m in candidates if _parse_params(m.params_size) <= max_val]
-    scored = []
-    for m in candidates:
-        score = 0.0
-        score += m.download_count * 0.1
-        best_bench = max((v.benchmark_score for v in m.versions), default=0)
-        score += best_bench
-        scored.append((m, score))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    top = scored[:min(limit, len(scored))]
-    return {
-        "recommendations": [
-            {**_model_to_dict(m), "recommendation_score": round(s, 2)}
-            for m, s in top
-        ],
-        "criteria": {
-            "task_type": task_type,
-            "model_type": model_type,
-            "max_params": max_params,
-        },
-    }
-
-
 @router.get("/models/search")
 async def search_models(
     session: SessionDep,

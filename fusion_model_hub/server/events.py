@@ -55,23 +55,42 @@ async def _send_webhook_with_retry(
 async def dispatch_webhook_event(event: str, data: dict, tenant_id: str = "") -> None:
     from .deps import get_session_factory
     sf = get_session_factory()
+    # E-E4: the outer try/except must NOT wrap the per-webhook for-loop. A prior
+    # version put the whole loop inside one try, so a single webhook raising an
+    # exception that escaped _send_webhook_with_retry (e.g. an httpx constructor
+    # SSL error, or an asyncio.CancelledError out of the retry backoff sleep)
+    # was caught here and the function returned — every subscriber AFTER the
+    # failing one was silently skipped, including a canary "deploy" webhook
+    # triggered by the same event. Build the payload + list first (those can
+    # still fail and abort the whole dispatch), then dispatch each webhook in
+    # its own try so one bad URL never blocks the rest.
     try:
         async with sf() as session:
             webhooks = await crud.list_webhooks(session, tenant_id=tenant_id)
         payload_bytes = json.dumps({"event": event, "data": data}).encode()
-        for w in webhooks:
-            if not w.is_active:
-                continue
-            if w.events:
-                subscribed = {e.strip() for e in w.events.split(",") if e.strip()}
-                if event not in subscribed:
-                    continue
-            signature = _sign_payload(payload_bytes, w.secret) if w.secret else ""
-            headers = {
-                "Content-Type": "application/json",
-                "X-Webhook-Event": event,
-                "X-Webhook-Signature": signature,
-            }
-            await _send_webhook_with_retry(w.url, payload_bytes, headers, w.id, event)
     except Exception:
-        logger.exception("dispatch_webhook_event error for event=%s", event)
+        logger.exception("dispatch_webhook_event could not load webhooks for event=%s", event)
+        return
+
+    for w in webhooks:
+        if not w.is_active:
+            continue
+        if w.events:
+            subscribed = {e.strip() for e in w.events.split(",") if e.strip()}
+            if event not in subscribed:
+                continue
+        signature = _sign_payload(payload_bytes, w.secret) if w.secret else ""
+        headers = {
+            "Content-Type": "application/json",
+            "X-Webhook-Event": event,
+            "X-Webhook-Signature": signature,
+        }
+        try:
+            await _send_webhook_with_retry(w.url, payload_bytes, headers, w.id, event)
+        except Exception:
+            # E-E4: isolate per-webhook failures. Log and continue to the next
+            # subscriber so one broken URL cannot suppress delivery to the rest.
+            logger.exception(
+                "dispatch_webhook_event: subscriber id=%s url=%s raised, skipping (event=%s)",
+                w.id, w.url, event,
+            )

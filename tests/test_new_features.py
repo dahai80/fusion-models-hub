@@ -362,3 +362,207 @@ class TestAuthRateLimit:
         assert check_rate_limit("rl-test", 2) is True
         assert check_rate_limit("rl-test", 2) is False
         reset_rate_limits()
+
+
+async def _authed_client(settings_overrides: dict | None = None, auth_on: bool = True):
+    # E-E6/E-E7 regression helper: build a client against a fresh in-memory DB
+    # so bootstrap/usage tests run in isolation. auth_on toggles auth at build
+    # time (the caller may flip it later via set_auth_enabled). Returns
+    # (client, settings). Caller is responsible for set_auth_enabled(False)
+    # cleanup in a finally block.
+    from fusion_model_hub.server.auth import set_auth_enabled
+    from fusion_model_hub.server.deps import init_deps
+    set_auth_enabled(auth_on)
+    overrides = settings_overrides or {}
+    s = Settings(
+        host="127.0.0.1", port=11444,
+        data_dir="/tmp/fmh_test_audit",
+        db_url="sqlite+aiosqlite:///:memory:",
+        log_level="WARNING",
+        **overrides,
+    )
+    engine = get_engine(s.db_url)
+    await init_db(engine)
+    init_deps(s, engine)
+    app = create_app(s)
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    c = AsyncClient(transport=transport, base_url="http://test")
+    await c.__aenter__()
+    return c, s
+
+
+class TestBootstrapGuardE6:
+    # E-E6: POST /auth/keys is public only while zero active keys exist.
+    # Harden bootstrap with an optional shared token (X-Bootstrap-Token) and a
+    # per-IP rate limit so the first-to-arrive race cannot grant root to anyone
+    # who can reach the Hub.
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_token_required_when_set(self):
+        reset_rate_limits()
+        try:
+            c, _ = await _authed_client({"auth_bootstrap_token": "secret-bootstrap-123"})
+            # No token -> 403, no key created.
+            resp = await c.post("/api/v1/auth/keys", json={"name": "root", "role": "admin"})
+            assert resp.status_code == 403
+            assert resp.json()["detail"] == "Bootstrap token required to create the first key"
+            # Wrong token -> 403.
+            resp = await c.post(
+                "/api/v1/auth/keys",
+                json={"name": "root", "role": "admin"},
+                headers={"X-Bootstrap-Token": "wrong"},
+            )
+            assert resp.status_code == 403
+            # Correct token -> 201, first admin key created.
+            resp = await c.post(
+                "/api/v1/auth/keys",
+                json={"name": "root", "role": "admin"},
+                headers={"X-Bootstrap-Token": "secret-bootstrap-123"},
+            )
+            assert resp.status_code == 201
+            await c.aclose()
+        finally:
+            from fusion_model_hub.server.auth import set_auth_enabled
+            set_auth_enabled(False)
+            reset_rate_limits()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_without_token_still_works_when_unset(self):
+        # Backward compat: no FMH_AUTH_BOOTSTRAP_TOKEN -> bootstrap stays open
+        # (IP rate-limited only). Local single-user installs rely on this.
+        reset_rate_limits()
+        try:
+            c, _ = await _authed_client({})
+            resp = await c.post("/api/v1/auth/keys", json={"name": "root", "role": "admin"})
+            assert resp.status_code == 201
+            await c.aclose()
+        finally:
+            from fusion_model_hub.server.auth import set_auth_enabled
+            set_auth_enabled(False)
+            reset_rate_limits()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_ip_rate_limit(self):
+        # 10/min bootstrap budget from one IP. POST /auth/keys is public only
+        # while zero active keys exist, so only the FIRST POST travels the
+        # bootstrap path; later POSTs hit the admin-auth path (a separate
+        # concern). To prove the bootstrap cap fires on the endpoint, pin the
+        # client-IP lookup to a known value, drain THAT bucket, then POST — it
+        # must 429 and create no key.
+        reset_rate_limits()
+        try:
+            c, _ = await _authed_client({"auth_bootstrap_token": "t"})
+            from fusion_model_hub.server.routers import auth as auth_router
+            with patch.object(auth_router, "_client_ip", return_value="10.0.0.9"):
+                # Drain the 10/min bucket for the pinned IP.
+                for _ in range(10):
+                    assert auth_router.check_rate_limit("bootstrap:10.0.0.9", 10)
+                assert auth_router.check_rate_limit("bootstrap:10.0.0.9", 10) is False
+                # The endpoint sees the same denied bucket -> 429, no key created.
+                r = await c.post(
+                    "/api/v1/auth/keys",
+                    json={"name": "x", "role": "admin"},
+                    headers={"X-Bootstrap-Token": "t"},
+                )
+                assert r.status_code == 429
+                assert r.json()["detail"] == "Bootstrap rate limit exceeded, retry shortly"
+            await c.aclose()
+        finally:
+            from fusion_model_hub.server.auth import set_auth_enabled
+            set_auth_enabled(False)
+            reset_rate_limits()
+
+
+class TestPerKeyUsageE7:
+    # E-E7: /auth/keys/{id}/usage must return ONLY this key's inference volume,
+    # not the global _model_stats aggregate. Two keys each do inference; usage
+    # for key A must not include key B's counts.
+
+    @pytest.mark.asyncio
+    async def test_usage_isolated_per_key(self):
+        # E-E7 regression: per-key usage isolation. POST /auth/keys is public
+        # only for the first key; creating a 2nd/3rd as an admin caller is
+        # gated by the PUBLIC_PATHS bypass (middleware sets no user_role on
+        # public paths), so create all keys with auth OFF, then turn auth ON
+        # for the usage GETs (which are NOT public — sub-path needs a key).
+        from fusion_model_hub.server.auth import set_auth_enabled
+        from fusion_model_hub.server.routers.inference import (
+            _model_stats,
+            _update_model_stats,
+        )
+        reset_rate_limits()
+        try:
+            c, _ = await _authed_client({"auth_bootstrap_token": "boot"}, auth_on=False)
+            # Auth is OFF here — all three keys created directly.
+            root = (await c.post("/api/v1/auth/keys", json={"name": "root", "role": "admin"})).json()
+            root_key = root["key"]
+            ka = (await c.post("/api/v1/auth/keys", json={"name": "keyA", "role": "developer"})).json()
+            kb = (await c.post("/api/v1/auth/keys", json={"name": "keyB", "role": "developer"})).json()
+            # Seed _model_stats per-key via the internal updater with the two
+            # different key_ids — avoids needing a live MLX for inference.
+            _model_stats.clear()
+            for _ in range(5):
+                _update_model_stats("model-1", 10.0, tokens=100, key_id=ka["id"])
+            for _ in range(3):
+                _update_model_stats("model-2", 20.0, tokens=50, key_id=kb["id"])
+            # Now require auth for the usage GETs.
+            set_auth_enabled(True)
+            # Usage for keyA sees only its 5 requests on model-1.
+            ua = await c.get(f"/api/v1/auth/keys/{ka['id']}/usage", headers={"X-API-Key": root_key})
+            assert ua.status_code == 200
+            ua_data = ua.json()
+            assert ua_data["total_requests"] == 5
+            assert set(ua_data["by_model"].keys()) == {"model-1"}
+            assert ua_data["by_model"]["model-1"]["total_tokens"] == 500
+            # Usage for keyB sees only its 3 requests on model-2.
+            ub = await c.get(f"/api/v1/auth/keys/{kb['id']}/usage", headers={"X-API-Key": root_key})
+            assert ub.status_code == 200
+            ub_data = ub.json()
+            assert ub_data["total_requests"] == 3
+            assert set(ub_data["by_model"].keys()) == {"model-2"}
+            assert ub_data["by_model"]["model-2"]["total_tokens"] == 150
+            _model_stats.clear()
+            await c.aclose()
+        finally:
+            set_auth_enabled(False)
+            reset_rate_limits()
+
+
+class TestSanitizedErrorDetailE5:
+    # E-E5: error responses must not leak internal str(e)/resp.text (DB errors,
+    # MLX response bodies, filesystem paths). Sanitized to a fixed message +
+    # trace_id. Verify the shape on a quantize endpoint that previously raised
+    # detail=str(e) when the async submit fails.
+
+    @pytest.mark.asyncio
+    async def test_quantize_submit_failure_sanitized(self):
+        # E-E5 regression: when the quantize route's submit call raises, the
+        # response must be a fixed message + trace_id, NOT the raw str(e) (which
+        # could carry DB errors / MLX response bodies / filesystem paths).
+        # Force the failure deterministically by patching submit_quantize to
+        # raise an exception whose message contains a sensitive marker; assert
+        # the marker never reaches the client.
+        from fusion_model_hub.server.auth import set_auth_enabled
+        reset_rate_limits()
+        try:
+            c, _ = await _authed_client({}, auth_on=False)
+            sensitive = "SECRET-internal-path=/etc/fmh/db.sqlite"
+            with patch(
+                "fusion_model_hub.server.routers.quantize.submit_quantize",
+                new=AsyncMock(side_effect=RuntimeError(sensitive)),
+            ):
+                resp = await c.post(
+                    "/api/v1/quantize",
+                    json={"source_version_id": "v1", "quant_bits": 4},
+                )
+            assert resp.status_code == 500
+            detail = resp.json()["detail"]
+            assert "trace_id=" in detail
+            assert "Failed to submit quantize task" in detail
+            # The raw internal exception text must NOT leak.
+            assert sensitive not in detail
+            assert "SECRET-internal-path" not in detail
+            await c.aclose()
+        finally:
+            set_auth_enabled(False)
+            reset_rate_limits()

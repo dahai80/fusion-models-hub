@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from ...db import crud
 from ...db.models import ModelStatus
 from ..deps import SessionDep, SettingsDep, get_session_factory
+from ..errors import safe_http_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
@@ -152,7 +153,10 @@ async def _cleanup_loaded_models() -> None:
         _last_cleanup_ts = time.time()
 
 
-def _update_model_stats(model_id: str, latency_ms: float, tokens: int = 0, source_module: str = "") -> None:
+def _update_model_stats(
+    model_id: str, latency_ms: float, tokens: int = 0,
+    source_module: str = "", key_id: str = "",
+) -> None:
     if model_id not in _model_stats:
         # R6: bound the tracked set so a long run with many transient models
         # cannot grow _model_stats without limit. Evict the oldest-tracked
@@ -167,6 +171,11 @@ def _update_model_stats(model_id: str, latency_ms: float, tokens: int = 0, sourc
             "first_request_at": time.time(),
             "last_request_at": None,
             "source_module": "",
+            # E-E7: per-key breakdown so /auth/keys/{id}/usage returns ONLY this
+            # key's inference volume, not the global aggregate. The top-level
+            # counters stay (TTL eviction, /v1/metrics/json still see totals);
+            # per_key is the scoping dimension the usage endpoint filters on.
+            "per_key": {},
         }
     stats = _model_stats[model_id]
     stats["request_count"] += 1
@@ -175,6 +184,15 @@ def _update_model_stats(model_id: str, latency_ms: float, tokens: int = 0, sourc
     stats["last_request_at"] = time.time()
     if source_module:
         stats["source_module"] = source_module
+    # E-E7: accumulate per-key counters. Anonymous (no api_key_id, e.g. auth
+    # disabled) buckets under "" so local mode still reports a single bucket
+    # rather than dropping the volume.
+    pk = stats["per_key"].setdefault(key_id or "", {
+        "request_count": 0, "total_tokens": 0, "total_latency": 0.0,
+    })
+    pk["request_count"] += 1
+    pk["total_tokens"] += tokens
+    pk["total_latency"] += latency_ms
 
 
 async def _write_inference_audit(model_id: str, action_type: str, latency_ms: float, request: Request) -> None:
@@ -279,7 +297,10 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=f"MLX load failed: {e.response.text}")
+        raise safe_http_error(
+            e.response.status_code, "Fusion-MLX model load failed",
+            exc=e, context="load",
+        )
 
     async with _loaded_lock:
         _loaded_models[model_id] = {
@@ -340,7 +361,7 @@ async def hot_reload_model(model_id: str, body: HotReloadRequest, session: Sessi
         raise
     except Exception as e:
         logger.warning("Hot-reload preload error for %s: %s", model_name, e)
-        raise HTTPException(status_code=502, detail=f"MLX preload failed: {e}")
+        raise safe_http_error(502, "Fusion-MLX preload failed", exc=e, context="hot-reload-preload")
     async with _loaded_lock:
         _loaded_models[model_id] = {
             "version_id": body.version_id,
@@ -461,13 +482,20 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
         usage = result.get("usage", {})
         if usage:
             tokens = usage.get("total_tokens", 0)
-        _update_model_stats(model_id, latency_ms, tokens, request.headers.get("X-Fusion-Module", "").lower())
+        _update_model_stats(
+            model_id, latency_ms, tokens,
+            request.headers.get("X-Fusion-Module", "").lower(),
+            key_id=getattr(request.state, "api_key_id", ""),
+        )
         await _write_inference_audit(model_id, "chat", latency_ms, request)
         return result
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+        raise safe_http_error(
+            e.response.status_code, "Fusion-MLX chat request failed",
+            exc=e, context="chat-completions",
+        )
 
 
 @router.post("/inference/{model_id}/completions")
@@ -503,13 +531,20 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
         usage = result.get("usage", {})
         if usage:
             tokens = usage.get("total_tokens", 0)
-        _update_model_stats(model_id, latency_ms, tokens, request.headers.get("X-Fusion-Module", "").lower())
+        _update_model_stats(
+            model_id, latency_ms, tokens,
+            request.headers.get("X-Fusion-Module", "").lower(),
+            key_id=getattr(request.state, "api_key_id", ""),
+        )
         await _write_inference_audit(model_id, "completions", latency_ms, request)
         return result
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+        raise safe_http_error(
+            e.response.status_code, "Fusion-MLX completions request failed",
+            exc=e, context="completions",
+        )
 
 
 @router.post("/inference/{model_id}/embeddings")
@@ -532,10 +567,17 @@ async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: 
         usage = result.get("usage", {})
         if usage:
             tokens = usage.get("total_tokens", 0)
-        _update_model_stats(model_id, latency_ms, tokens, request.headers.get("X-Fusion-Module", "").lower())
+        _update_model_stats(
+            model_id, latency_ms, tokens,
+            request.headers.get("X-Fusion-Module", "").lower(),
+            key_id=getattr(request.state, "api_key_id", ""),
+        )
         await _write_inference_audit(model_id, "embeddings", latency_ms, request)
         return result
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+        raise safe_http_error(
+            e.response.status_code, "Fusion-MLX embeddings request failed",
+            exc=e, context="embeddings",
+        )
