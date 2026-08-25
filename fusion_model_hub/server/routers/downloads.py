@@ -17,8 +17,11 @@ router = APIRouter(tags=["downloads"])
 
 # Hold strong refs to background download tasks so CPython does not GC them
 # mid-flight (asyncio.create_task only keeps a weak ref). Mirrors the quantize
-# runner's _running_tasks pattern. Cleared via done-callback.
-_running_downloads: set[asyncio.Task] = set()
+# runner's _running_tasks pattern. Keyed by task_id so cancel_download can reach
+# the live worker and cooperative-stop it via task.cancel() (issue #29 — before,
+# DELETE /downloads/{id} only flipped the DB status and the worker kept writing
+# to disk until completion). Cleared via done-callback.
+_running_downloads: dict[str, asyncio.Task] = {}
 
 
 class DownloadCreate(BaseModel):
@@ -49,8 +52,12 @@ async def create_download(body: DownloadCreate, session: SessionDep, settings: S
     )
 
     _download_task = asyncio.create_task(_run_download(task.id, body.source_url, settings))
-    _running_downloads.add(_download_task)
-    _download_task.add_done_callback(_running_downloads.discard)
+    _running_downloads[task.id] = _download_task
+
+    def _on_done(_t: asyncio.Task, _tid: str = task.id):
+        _running_downloads.pop(_tid, None)
+
+    _download_task.add_done_callback(_on_done)
 
     logger.info("Download task created: id=%s model=%s url=%s", task.id, body.model_id, body.source_url)
     return {
@@ -131,7 +138,17 @@ async def cancel_download(task_id: str, session: SessionDep):
     if t.status in ("completed", "cancelled"):
         raise HTTPException(status_code=400, detail=f"Cannot cancel task in {t.status} state")
     await crud.update_download_task(session, task_id, status="cancelled")
-    logger.info("Download task cancelled: id=%s", task_id)
+    # Issue #29: cancel_download only flipped the DB status before — the worker
+    # kept streaming to disk until completion. Now reach the live task and raise
+    # CancelledError inside _run_download, whose handler stops the stream, drops
+    # the .part file, and re-marks the task (idempotent). If the worker already
+    # finished (not in the registry), the DB mark above is the whole story.
+    live_task = _running_downloads.get(task_id)
+    if live_task is not None and not live_task.done():
+        live_task.cancel()
+        logger.info("Download task cancelled + worker signalled: id=%s", task_id)
+    else:
+        logger.info("Download task cancelled (no live worker): id=%s", task_id)
     return {"task_id": task_id, "status": "cancelled"}
 
 
@@ -144,6 +161,7 @@ async def _run_download(task_id: str, source_url: str, settings):
             max_retries = t.max_retries
 
     for attempt in range(max_retries + 1):
+        part_path = None  # issue #29: tracked so CancelledError can drop the .part
         try:
             async with sf() as session:
                 await crud.update_download_task(
@@ -273,9 +291,18 @@ async def _run_download(task_id: str, source_url: str, settings):
             return
 
         except asyncio.CancelledError:
+            # Issue #29: cancel_download signalled us. Drop the half-written
+            # .part file so a cancelled multi-GB download does not linger on
+            # disk, then mark the task (idempotent vs the DELETE handler's mark).
+            if part_path:
+                with contextlib.suppress(OSError):
+                    os.remove(part_path)
             async with sf() as session:
-                await crud.update_download_task(session, task_id, status="cancelled")
-            logger.info("Download cancelled: id=%s", task_id)
+                await crud.update_download_task(
+                    session, task_id, status="cancelled",
+                    error_message="cancelled by user",
+                )
+            logger.info("Download cancelled + .part removed: id=%s", task_id)
             return
 
         except Exception as e:

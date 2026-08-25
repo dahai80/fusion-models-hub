@@ -425,6 +425,120 @@ class TestDownloadIntegrity:
         assert body["file_hash"] == real_hash
 
 
+class TestDownloadCooperativeCancel:
+    # Issue #29: DELETE /downloads/{id} must cooperative-stop the worker — not
+    # just flip DB status while the worker keeps writing to disk. The live task
+    # is cancelled, the .part file is removed, and the task ends "cancelled".
+    @pytest.mark.asyncio
+    async def test_cancel_stops_worker_and_removes_part(self, client, monkeypatch):
+        import os
+        create = await client.post("/api/v1/models", json={"name": "cancel-dl-m"})
+        mid = create.json()["id"]
+
+        cancel_gate = asyncio.Event()
+
+        class _FakeResp:
+            status_code = 200
+            headers = {"content-length": "10485760"}
+            def aiter_bytes(self, _n):
+                async def gen():
+                    for _ in range(10):
+                        await asyncio.sleep(0.05)
+                        yield b"x" * (1024 * 1024)
+                    cancel_gate.set()
+                return gen()
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+
+        class _FakeClient:
+            def __init__(self, *a, **k):
+                pass
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+            def stream(self, *a, **k):
+                return _FakeResp()
+
+        import fusion_model_hub.server.routers.downloads as dmod
+        monkeypatch.setattr(dmod.httpx, "AsyncClient", _FakeClient)
+
+        resp = await client.post(
+            "/api/v1/downloads",
+            json={"model_id": mid, "source_url": "https://example.com/big.bin"},
+        )
+        assert resp.status_code == 201
+        task_id = resp.json()["task_id"]
+        await asyncio.sleep(0.15)
+
+        # worker must be live + registered so cancel can reach it
+        assert task_id in dmod._running_downloads, "worker not registered before cancel"
+        assert not dmod._running_downloads[task_id].done()
+
+        cancel = await client.delete(f"/api/v1/downloads/{task_id}")
+        assert cancel.status_code == 200
+        assert cancel.json()["status"] == "cancelled"
+
+        # let the CancelledError propagate through the worker
+        await asyncio.sleep(0.4)
+
+        status = await client.get(f"/api/v1/downloads/{task_id}")
+        assert status.json()["status"] == "cancelled"
+        # worker must NOT have reached the end of the stream (it would otherwise
+        # flip to completed) — confirms cooperative stop, not advisory-only.
+        assert not cancel_gate.is_set(), "worker ran to completion despite cancel"
+        # .part file must be gone (no disk residue from a cancelled download)
+        from fusion_model_hub.server.deps import get_settings
+        st = get_settings()
+        residue = os.path.join(st.data_dir, "downloads", f"{task_id}.part")
+        assert not os.path.exists(residue), "cancelled .part file not cleaned up"
+
+    @pytest.mark.asyncio
+    async def test_cancel_completed_task_rejects(self, client, monkeypatch):
+        # cancelling an already-completed task is a 400, not a silent re-mark.
+        import hashlib
+        create = await client.post("/api/v1/models", json={"name": "cancel-done-m"})
+        mid = create.json()["id"]
+        payload = b"tiny"
+        real_hash = hashlib.sha256(payload).hexdigest()
+
+        class _FakeResp:
+            status_code = 200
+            headers = {"content-length": str(len(payload))}
+            def aiter_bytes(self, _n):
+                async def gen():
+                    yield payload
+                return gen()
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+
+        class _FakeClient:
+            def __init__(self, *a, **k):
+                pass
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+            def stream(self, *a, **k):
+                return _FakeResp()
+
+        import fusion_model_hub.server.routers.downloads as dmod
+        monkeypatch.setattr(dmod.httpx, "AsyncClient", _FakeClient)
+        resp = await client.post(
+            "/api/v1/downloads",
+            json={"model_id": mid, "source_url": "https://example.com/t.bin",
+                  "expected_sha256": real_hash},
+        )
+        task_id = resp.json()["task_id"]
+        await asyncio.sleep(0.5)
+        cancel = await client.delete(f"/api/v1/downloads/{task_id}")
+        assert cancel.status_code == 400
+
+
 # ============================================================================
 # P1 audit fixes: E-S5~S13 (security) + E-D4~D8 (data integrity)
 # ============================================================================
