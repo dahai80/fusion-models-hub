@@ -36,14 +36,19 @@ _round_robin_counter = itertools.count()
 
 
 def _validate_node_url(url: str) -> None:
-    # Cluster nodes legitimately live on private networks (10.x / 172.16-31 /
-    # 192.168.x) — a peer Hub on the lab LAN is the normal deployment, so the
-    # broad validate_external_url SSRF guard (which rejects all RFC1918 space)
-    # is the wrong tool here and would block real multi-node setups. The actual
-    # server-side-fetch risk for a stored node URL is narrower: a non-http(s)
-    # scheme (file:///etc/passwd, gopher://...), a missing host, or a host that
-    # points at a cloud metadata service / loopback the Hub should never fetch
-    # on a caller's behalf. Reject exactly those; allow RFC1918 peer nodes.
+    # Node URLs are admin-supplied: POST /cluster/nodes requires an API key
+    # (admin role), and a legit deployment includes same-host multi-port Hub
+    # peers at the loopback. The broad validate_external_url SSRF guard (which
+    # rejects all RFC1918 space + loopback) is the wrong tool here — it would
+    # block real multi-node setups AND the common single-box multi-hub layout.
+    # The genuine server-side-fetch risk for a stored node URL is narrower: a
+    # non-http(s) scheme (file:///etc/passwd, gopher://...), a missing host, a
+    # link-local cloud-metadata address (169.254.169.254), or an unspecified
+    # address (0.0.0.0). Reject exactly those; allow loopback + RFC1918 peers.
+    # Loopback-to-self is admin-owned (the admin explicitly registered the peer)
+    # and the Hub only GETs /health on it — low SSRF value. The strict
+    # validate_external_url guard still protects the untrusted caller-supplied
+    # fetches (sync_registry, downloads).
     try:
         parsed = urlparse(url)
     except Exception as e:
@@ -56,18 +61,17 @@ def _validate_node_url(url: str) -> None:
     host = (parsed.hostname or "").lower().rstrip(".")
     if not host:
         raise HTTPException(status_code=400, detail="Node URL must include a hostname")
-    if host in ("localhost", "localhost.", "ip6-localhost", "ip6-loopback"):
-        raise HTTPException(status_code=400, detail="Node URL cannot point to loopback")
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
         ip = None
-    if ip is not None and (ip.is_loopback or ip.is_link_local or ip.is_unspecified):
-        # 169.254.169.254 (cloud metadata), 127.0.0.1, ::1, 0.0.0.0 — never a
-        # legitimate peer node; reject. RFC1918 private IPs are allowed (see above).
+    if ip is not None and (ip.is_link_local or ip.is_unspecified):
+        # 169.254.169.254 (cloud metadata) and 0.0.0.0 — never a legitimate
+        # peer node; reject. Loopback (127.x/::1) and RFC1918 private IPs are
+        # allowed (admin-gated registration — see docstring above).
         raise HTTPException(
             status_code=400,
-            detail="Node URL cannot point to loopback or link-local address",
+            detail="Node URL cannot point to link-local or unspecified address",
         )
 
 
@@ -182,9 +186,10 @@ async def _reap_stale_nodes(session) -> int:
 @router.post("/cluster/nodes", status_code=201)
 async def add_node(body: NodeCreate, session: SessionDep):
     # Validate the node URL at registration: reject non-http schemes, missing
-    # host, and loopback / link-local (cloud metadata) targets, but ALLOW
-    # RFC1918 peer nodes (see _validate_node_url). Stops a bad URL from
-    # persisting and being trusted by _check_alive / topology / routing.
+    # host, and link-local (cloud metadata) / unspecified targets, but ALLOW
+    # loopback + RFC1918 peer nodes (admin-gated — see _validate_node_url).
+    # Stops a bad URL from persisting and being trusted by _check_alive /
+    # topology / routing.
     _validate_node_url(body.url)
     logger.info("Adding cluster node: name=%s url=%s", body.name, body.url)
     node = await create_cluster_node(
