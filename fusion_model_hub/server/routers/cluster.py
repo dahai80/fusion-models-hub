@@ -1,5 +1,6 @@
 import asyncio
 import ipaddress
+import itertools
 import logging
 from datetime import UTC, datetime
 from urllib.parse import urlparse
@@ -23,6 +24,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["cluster"])
 
 _HEARTBEAT_STALE_SECONDS = 120
+
+# Issue #31: round-robin load balance across active cluster nodes. Before, the
+# routing loop started at list_cluster_nodes()[0] every call (created_at DESC =
+# newest node first), so the newest node absorbed all traffic and earlier
+# primaries served 0. A monotonic counter rotates the start offset per call so
+# load spreads evenly across healthy nodes, while still falling through to the
+# rest on failure (failover preserved within each call). Single asyncio event
+# loop -> no lock needed; itertools.count is deterministic (Rule 5: no random).
+_round_robin_counter = itertools.count()
 
 
 def _validate_node_url(url: str) -> None:
@@ -483,9 +493,16 @@ async def route_inference(body: RouteInferenceRequest, session: SessionDep, sett
             logger.warning("Route-inference local failed: %s", e)
 
     nodes = await list_cluster_nodes(session)
-    for node in nodes:
-        if _effective_status(node) != "active":
-            continue
+    active = [n for n in nodes if _effective_status(n) == "active"]
+    if active:
+        # Issue #31: round-robin — rotate the start node per call so load
+        # balances across healthy nodes instead of always hitting nodes[0].
+        # offset % len(active) rebases when the active set changes; the slice
+        # rotates the list so iteration still visits every active node (failover
+        # within the call is preserved if the start node fails).
+        offset = next(_round_robin_counter) % len(active)
+        active = active[offset:] + active[:offset]
+    for node in active:
         try:
             # E-S14: re-validate the node URL before every fetch. add_node
             # validated at registration, but a node row can drift (manual DB
