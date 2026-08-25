@@ -31,7 +31,7 @@ def get_engine(db_url: str = ""):
     engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
     if _is_file_sqlite(db_url):
         @event.listens_for(engine.sync_engine, "connect")
-        def _set_sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
+        def _set_sqlite_pragmas(dbapi_conn, _record):
             try:
                 cur = dbapi_conn.cursor()
                 for name, value in _SQLITE_PRAGMAS:

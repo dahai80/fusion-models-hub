@@ -37,10 +37,7 @@ def _is_public_path(path: str) -> bool:
     # /auth/keys exactly, never its children.
     if path in PUBLIC_PATHS:
         return True
-    for public in PUBLIC_PATHS:
-        if public.endswith("/") and path.startswith(public):
-            return True
-    return False
+    return any(public.endswith("/") and path.startswith(public) for public in PUBLIC_PATHS)
 
 
 async def get_current_api_key(request: Request, api_key: str = Depends(api_key_header)) -> ApiKey | None:

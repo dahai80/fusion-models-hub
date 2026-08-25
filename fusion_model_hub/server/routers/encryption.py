@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import base64
 import logging
 import os
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -28,7 +31,7 @@ class DecryptRequest(BaseModel):
     version_id: str
 
 
-def _resolve_fernet() -> "Fernet":
+def _resolve_fernet() -> Any:
     from cryptography.fernet import Fernet
     key = os.environ.get("FMH_ENCRYPTION_KEY", "")
     if not key or key == _DEFAULT_KEY:

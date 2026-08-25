@@ -22,7 +22,7 @@ router = APIRouter(tags=["watermark"])
 # a non-default FMH_WATERMARK_SECRET is configured. Verification uses a
 # constant-time compare (hmac.compare_digest) so signature-mismatch does not
 # leak timing.
-_DEFAULT_SECRET = "fusion-model-hub-default-secret"
+_DEFAULT_SECRET = "fusion-model-hub-default-secret"  # noqa: S105 - sentinel, not a real secret
 
 
 def _resolve_wm_secret() -> str:

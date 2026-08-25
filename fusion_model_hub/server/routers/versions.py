@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -149,10 +150,8 @@ async def upload_version(
                     written += len(block)
                     if written > max_bytes:
                         out.close()
-                        try:
+                        with contextlib.suppress(OSError):
                             target_path.unlink()
-                        except OSError:
-                            pass
                         raise HTTPException(status_code=413, detail="Upload exceeds max_upload_size_mb")
                     out.write(block)
                     hasher.update(block)

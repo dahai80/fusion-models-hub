@@ -2,14 +2,13 @@ import ipaddress
 import logging
 import re
 import socket
-from typing import Union
 from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
-_IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+_IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 # E-S14: prior blocklist missed 0.0.0.0, ip6-localhost / IPv6-mapped IPv4,
 # trailing-dot variants, and integer/hex/octal IP encodings. The string

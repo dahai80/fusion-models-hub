@@ -81,7 +81,7 @@ async def delete_webhook(webhook_id: str, session: SessionDep, request: Request)
 # Re-exported here so existing `from .routers.webhooks import
 # dispatch_webhook_event` call sites (tasks.py, quantize.py) keep working
 # without a sweeping import rewrite.
-from ..events import (  # noqa: F401
+from ..events import (  # noqa: E402, F401
     _send_webhook_with_retry,
     _sign_payload,
     dispatch_webhook_event,

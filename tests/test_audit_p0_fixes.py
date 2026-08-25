@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import shutil
 from pathlib import Path
 
@@ -268,7 +267,7 @@ class TestLoraMergeStartupReconcile:
         from fusion_model_hub.db.database import get_engine, init_db
         from fusion_model_hub.db.models import TaskStatus
         from fusion_model_hub.server.app import _reconcile_orphaned_tasks
-        from fusion_model_hub.server.deps import init_deps, get_session_factory
+        from fusion_model_hub.server.deps import get_session_factory, init_deps
 
         engine = get_engine(settings.db_url)
         await init_db(engine)
@@ -303,7 +302,7 @@ class TestQuantizeClaimFencing:
         from fusion_model_hub.db import crud
         from fusion_model_hub.db.database import get_engine, init_db
         from fusion_model_hub.db.models import TaskStatus
-        from fusion_model_hub.server.deps import init_deps, get_session_factory
+        from fusion_model_hub.server.deps import get_session_factory, init_deps
 
         engine = get_engine(settings.db_url)
         await init_db(engine)
@@ -577,9 +576,10 @@ class TestModelTenantIsolation:
         # auth disabled → both tenant ids empty → permissive (no isolation to test
         # at the HTTP layer without a real authed key). Verify the guard function
         # directly instead.
-        from fusion_model_hub.server.routers.models import _check_model_read
-        from fusion_model_hub.server.auth import set_auth_enabled
         from types import SimpleNamespace
+
+        from fusion_model_hub.server.auth import set_auth_enabled
+        from fusion_model_hub.server.routers.models import _check_model_read
 
         set_auth_enabled(True)
         try:
@@ -599,11 +599,13 @@ class TestVersionTenantGuardNoBypass:
     # E-S10: empty caller tenant must not bypass isolation for a tenanted model.
     @pytest.mark.asyncio
     async def test_empty_caller_tenant_blocked_for_tenanted_model(self, client):
-        from fusion_model_hub.server.routers.versions import _enforce_version_tenant
-        from fusion_model_hub.server.deps import get_session_factory
-        from fusion_model_hub.db import crud
         from types import SimpleNamespace
+
         from fastapi import HTTPException
+
+        from fusion_model_hub.db import crud
+        from fusion_model_hub.server.deps import get_session_factory
+        from fusion_model_hub.server.routers.versions import _enforce_version_tenant
 
         sf = get_session_factory()
         async with sf() as s:
@@ -636,8 +638,6 @@ class TestServePublishedVersionOrdering:
     async def test_serve_picks_latest_published(self, client):
         # unit-level: the selection sorts published by created_at desc. Verify
         # the sort logic by constructing versions with distinct created_at.
-        import time as _time
-        from fusion_model_hub.db.models import VersionStatus
         from types import SimpleNamespace
 
         v_old = SimpleNamespace(id="old", status=SimpleNamespace(value="published"),

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -13,6 +14,11 @@ from ..ssrf import validate_external_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["downloads"])
+
+# Hold strong refs to background download tasks so CPython does not GC them
+# mid-flight (asyncio.create_task only keeps a weak ref). Mirrors the quantize
+# runner's _running_tasks pattern. Cleared via done-callback.
+_running_downloads: set[asyncio.Task] = set()
 
 
 class DownloadCreate(BaseModel):
@@ -42,7 +48,9 @@ async def create_download(body: DownloadCreate, session: SessionDep, settings: S
         expected_sha256=body.expected_sha256,
     )
 
-    _download_task = asyncio.create_task(_run_download(task.id, body.source_url, settings))  # noqa: RUF006
+    _download_task = asyncio.create_task(_run_download(task.id, body.source_url, settings))
+    _running_downloads.add(_download_task)
+    _download_task.add_done_callback(_running_downloads.discard)
 
     logger.info("Download task created: id=%s model=%s url=%s", task.id, body.model_id, body.source_url)
     return {
@@ -155,8 +163,10 @@ async def _run_download(task_id: str, source_url: str, settings):
                 if t:
                     expected_sha256 = (t.expected_sha256 or "").lower()
 
-            async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:  # noqa: SIM117
-                async with client.stream("GET", source_url, headers=headers) as resp:
+            async with (
+                httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client,
+                client.stream("GET", source_url, headers=headers) as resp,
+            ):
                     if resp.status_code not in (200, 206):
                         raise Exception(f"HTTP {resp.status_code}")
 
@@ -210,10 +220,8 @@ async def _run_download(task_id: str, source_url: str, settings):
             # failure (corrupt/MITM'd bytes) — NOT a silent "completed". Integrity
             # failure is deterministic, so fail immediately (no retry loop).
             if expected_sha256 and file_hash.lower() != expected_sha256:
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(final_path)
-                except OSError:
-                    pass
                 msg = (
                     f"Download integrity check failed: sha256={file_hash} "
                     f"expected={expected_sha256}"
@@ -238,7 +246,10 @@ async def _run_download(task_id: str, source_url: str, settings):
                     file_path=final_path,
                     file_hash=file_hash,
                 )
-            logger.info("Download completed: id=%s bytes=%d path=%s sha256=%s", task_id, downloaded, final_path, file_hash)
+            logger.info(
+                "Download completed: id=%s bytes=%d path=%s sha256=%s",
+                task_id, downloaded, final_path, file_hash,
+            )
             return
 
         except asyncio.CancelledError:
