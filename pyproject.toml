@@ -41,6 +41,16 @@ fmh = "fusion_model_hub.cli.main:cli_main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Step4/Step5: integration tests (real PG/MinIO, real multi-node TCP) are NOT
+# part of the default run — they need backing services or bound ports and
+# would slow/break `pytest`. Excluded here; run explicitly by path:
+#   pytest tests/test_integration_pg_minio.py
+#   pytest tests/test_integration_multinode.py
+addopts = [
+    "--ignore=tests/test_integration_pg_minio.py",
+    "--ignore=tests/test_integration_multinode.py",
+    "--ignore=tests/test_integration_mlx.py",
+]
 
 [tool.ruff]
 line-length = 120
