@@ -1,0 +1,16 @@
+# Mock MLX backend container (deterministic stub — see mock_mlx.py).
+# Real MLX is Apple-Silicon only and cannot run in Linux; this stands in for
+# the extra cluster nodes. Not a model: returns canned completions + delay.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com
+
+WORKDIR /app
+RUN pip install --upgrade pip && pip install fastapi uvicorn
+
+COPY tests/integration/multinode/mock_mlx.py /app/mock_mlx.py
+
+CMD ["python", "mock_mlx.py"]

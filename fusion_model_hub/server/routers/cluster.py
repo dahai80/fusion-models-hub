@@ -4,7 +4,6 @@ import logging
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -16,6 +15,7 @@ from ...db.crud import (
     list_cluster_nodes,
 )
 from ...db.models import ClusterNode, DistributedTaskStatus
+from .. import http_client as httpx
 from ..deps import SessionDep, SettingsDep, get_session_factory
 
 logger = logging.getLogger(__name__)
