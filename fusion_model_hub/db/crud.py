@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -247,7 +248,16 @@ async def create_version(
         release_notes=release_notes,
     )
     session.add(v)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as e:
+        # P1-D: the uq_model_version unique constraint fires on a concurrent
+        # duplicate (model_id, version) insert — the DB is the deterministic
+        # winner of the race. Roll back and surface a 409 rather than a 500
+        # or a silent second row.
+        await session.rollback()
+        logger.warning("Version conflict (duplicate %s/%s): %s", model_id, version, e.orig)
+        raise VersionConflictError(f"Version {version!r} already exists for model {model_id}") from e
     await session.refresh(v)
     logger.info("Created version: id=%s model=%s ver=%s", v.id, model_id, version)
     return v
@@ -305,6 +315,10 @@ class InvalidTransition(Exception):
 
 
 class EvaluationThresholdError(Exception):
+    pass
+
+
+class VersionConflictError(Exception):
     pass
 
 

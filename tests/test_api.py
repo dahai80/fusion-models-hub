@@ -225,6 +225,70 @@ class TestVersionCRUD:
         assert resp.json()["status"] == "published"
 
 
+class TestVersionUploadConcurrency:
+    # P1-D: (model_id, version) is unique. A second upload of an existing
+    # version -> 409, and a true concurrent pair -> exactly one 201 + one 409
+    # (the DB unique constraint is the race winner; create_version catches the
+    # IntegrityError and surfaces it instead of a 500 or a duplicate row).
+    @pytest.mark.asyncio
+    async def test_duplicate_version_returns_409(self, client):
+        model_id = (await client.post("/api/v1/models", json={"name": "dup-ver"})).json()["id"]
+        first = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0"}, files={"file": ("", b"")},
+        )
+        assert first.status_code == 201
+        second = await client.post(
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0"}, files={"file": ("", b"")},
+        )
+        assert second.status_code == 409
+        # exactly one row for (model_id, "1.0.0") — the constraint prevented the
+        # duplicate; create_version caught the IntegrityError and surfaced 409.
+        resp = await client.get(f"/api/v1/models/{model_id}/versions")
+        vers = [v for v in resp.json().get("items", []) if v["version"] == "1.0.0"]
+        assert len(vers) == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_same_version_one_wins(self, tmp_path):
+        # The default :memory: client gives each session its own DB, so a true
+        # async-gather race is not representative. Use a file SQLite engine with
+        # WAL + busy_timeout (database.get_engine applies both for file URLs) so
+        # each session gets its own connection: real concurrent writers, and the
+        # uq_model_version constraint makes exactly one win, the other 409s.
+        import asyncio
+
+        from fusion_model_hub.db import crud
+        from fusion_model_hub.db.database import get_engine, init_db
+        from fusion_model_hub.server.config import Settings
+        from fusion_model_hub.server.deps import get_session_factory, init_deps
+
+        db_file = tmp_path / "race.db"
+        db_url = f"sqlite+aiosqlite:///{db_file}"
+        engine = get_engine(db_url)
+        await init_db(engine)
+        settings = Settings(data_dir=str(tmp_path), db_url=db_url)
+        init_deps(settings, engine)
+        factory = get_session_factory()
+
+        async with factory() as s:
+            m = await crud.create_model(s, name="race-ver", architecture="qwen2", params_size="7B")
+            mid = m.id
+
+        async def upload():
+            async with factory() as s:
+                try:
+                    return await crud.create_version(s, model_id=mid, version="2.0.0")
+                except crud.VersionConflictError:
+                    return None
+
+        v1, v2 = await asyncio.gather(upload(), upload())
+        winners = [x for x in (v1, v2) if x is not None]
+        assert len(winners) == 1, f"expected exactly one winner, got {[w.id if w else None for w in (v1, v2)]}"
+        assert winners[0].version == "2.0.0"
+        await engine.dispose()
+
+
 class TestHFImport:
     @pytest.mark.asyncio
     async def test_import_hf(self, client):

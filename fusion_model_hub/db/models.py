@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -126,6 +126,11 @@ class Model(Base):
 
 class ModelVersion(Base):
     __tablename__ = "model_versions"
+    # P1-D: a (model_id, version) pair is the natural identity — two concurrent
+    # uploads of the same version created two rows (TOCTOU in create_version's
+    # check-then-insert). The DB-level unique constraint is the deterministic
+    # final defense; create_version catches the IntegrityError and surfaces 409.
+    __table_args__ = (UniqueConstraint("model_id", "version", name="uq_model_version"),)
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
