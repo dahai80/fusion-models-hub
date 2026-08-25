@@ -472,6 +472,45 @@ class TestBootstrapGuardE6:
             set_auth_enabled(False)
             reset_rate_limits()
 
+    @pytest.mark.asyncio
+    async def test_admin_can_create_second_key_after_bootstrap(self):
+        # #58 root-cause regression: POST /auth/keys is in PUBLIC_PATHS, so the
+        # auth middleware used to early-return and never stamp request.state.
+        # user_role — the route's admin-or-bootstrap guard then saw role="" and
+        # 403'd any admin creating a 2nd key once one already existed. Fix:
+        # "public" means no key REQUIRED, not "ignore a presented key"; an admin
+        # key on POST /auth/keys must authenticate and pass the admin check.
+        reset_rate_limits()
+        try:
+            c, _ = await _authed_client({})
+            # Bootstrap: no key, no token -> first admin key (active count 0).
+            boot = await c.post("/api/v1/auth/keys", json={"name": "root", "role": "admin"})
+            assert boot.status_code == 201, boot.text
+            root_key = boot.json()["key"]
+            # Post-bootstrap: admin key presented -> must authenticate + pass.
+            second = await c.post(
+                "/api/v1/auth/keys",
+                json={"name": "second", "role": "developer"},
+                headers={"X-API-Key": root_key},
+            )
+            assert second.status_code == 201, second.text
+            assert second.json()["name"] == "second"
+            assert second.json()["role"] == "developer"
+            # A non-admin (developer) key must NOT be able to create more keys.
+            dev_key = second.json()["key"]
+            third = await c.post(
+                "/api/v1/auth/keys",
+                json={"name": "third", "role": "viewer"},
+                headers={"X-API-Key": dev_key},
+            )
+            assert third.status_code == 403
+            assert third.json()["detail"] == "Only admin can create API keys once bootstrap key exists"
+            await c.aclose()
+        finally:
+            from fusion_model_hub.server.auth import set_auth_enabled
+            set_auth_enabled(False)
+            reset_rate_limits()
+
 
 class TestPerKeyUsageE7:
     # E-E7: /auth/keys/{id}/usage must return ONLY this key's inference volume,

@@ -143,12 +143,20 @@ async def auth_middleware(request: Request, call_next):
     if "/audit" in request.url.path and request.method == "DELETE":
         return JSONResponse(status_code=403, content={"detail": "Audit logs cannot be deleted"})
 
-    if _is_public_path(request.url.path):
-        return await call_next(request)
+    # F-01/#58: a "public" path means no key is REQUIRED, not that a presented
+    # key is ignored. Before, the early return here skipped authentication
+    # entirely on public paths, so request.state.user_role was never set even
+    # when a valid admin key was sent — POST /auth/keys then 403'd any admin
+    # creating a 2nd key (route reads _caller_role which came back ""). Now:
+    # public only relaxes the no-key rejection; a presented key is still
+    # verified and its role/tenant stamped onto request.state so the route's
+    # admin-or-bootstrap guard works for both bootstrap (anonymous) and
+    # post-bootstrap (admin key) callers.
+    is_public = _is_public_path(request.url.path)
 
     api_key_str = request.headers.get("X-API-Key", "")
     if not api_key_str:
-        if not _is_auth_enabled():
+        if is_public or not _is_auth_enabled():
             return await call_next(request)
         return JSONResponse(status_code=401, content={"detail": "API key required"})
 
