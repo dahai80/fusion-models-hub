@@ -84,7 +84,7 @@ class TestModelRegistry:
     def test_register_defaults(self):
         ModelRegistry.register_defaults()
         assert ModelRegistry.count() >= 5
-        assert ModelRegistry.get("qwen3.5-9b-q4") is not None
+        assert ModelRegistry.get("qwen2.5-7b-instruct-mlx-4bit") is not None
 
     def test_load_from_json(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -286,3 +286,89 @@ class TestFusionMLXBase:
         base = FusionMLXBase(mlx_url="http://localhost:19999")
         caps = await base.get_capabilities()
         assert isinstance(caps, dict)
+
+    @pytest.mark.asyncio
+    async def test_check_compatibility_meets_requirement(self):
+        # H10: a running MLX reporting a satisfying version is compatible.
+        base = FusionMLXBase(mlx_url="http://localhost:11432")
+        with patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"data": [], "version": "0.6.0"}
+            mock_get.return_value = mock_resp
+            result = await base.check_compatibility(">=0.5.0")
+            assert result["compatible"] is True
+
+    @pytest.mark.asyncio
+    async def test_check_compatibility_below_requirement(self):
+        # H10: an older build must NOT pass — prior code returned compatible
+        # True unconditionally once running.
+        base = FusionMLXBase(mlx_url="http://localhost:11432")
+        with patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"data": [], "version": "0.4.0"}
+            mock_get.return_value = mock_resp
+            result = await base.check_compatibility(">=0.5.0")
+            assert result["compatible"] is False
+
+
+class TestEngineInvalidation:
+    # E-E10: adapt/recommend engine singletons must invalidate on mlx_url OR
+    # mlx_internal_api_key drift, and their embedded HardwareDetector 5-min
+    # cache must clear on rebuild so a hot-reload-swapped MLX URL does not keep
+    # serving stale hardware.
+
+    def test_hardware_detector_invalidate_cache_clears(self):
+        from fusion_model_hub.hardware.detector import HardwareDetector
+
+        det = HardwareDetector("http://localhost:11434")
+        det._cache = MagicMock()
+        det._cache_time = 100.0
+        det.invalidate_cache()
+        assert det._cache is None
+        assert det._cache_time == 0
+
+    def test_hardware_detector_carries_api_key(self):
+        from fusion_model_hub.hardware.detector import HardwareDetector
+
+        det = HardwareDetector("http://localhost:11434", api_key="secret")
+        assert det.api_key == "secret"
+        # No key default stays empty so the auth header is omitted (backward compat
+        # with an unauthenticated MLX).
+        det_nokey = HardwareDetector("http://localhost:11434")
+        assert det_nokey.api_key == ""
+
+    def test_adapt_engine_propagates_api_key_to_detector(self):
+        from fusion_model_hub.adapt.decision import AdaptDecisionEngine
+
+        eng = AdaptDecisionEngine("http://localhost:11434", api_key="k1")
+        assert eng.api_key == "k1"
+        assert eng._hw_detector.api_key == "k1"
+        eng._hw_detector._cache = MagicMock()
+        eng.invalidate_cache()
+        assert eng._hw_detector._cache is None
+
+    def test_recommend_engine_propagates_api_key_to_detector(self):
+        from fusion_model_hub.recommend.engine import RecommendEngine
+
+        eng = RecommendEngine("http://localhost:11434", api_key="k2")
+        assert eng.api_key == "k2"
+        assert eng._hw_detector.api_key == "k2"
+        eng._hw_detector._cache = MagicMock()
+        eng.invalidate_cache()
+        assert eng._hw_detector._cache is None
+
+    def test_adapt_engine_headers_include_bearer(self):
+        from fusion_model_hub.adapt.decision import AdaptDecisionEngine
+
+        eng = AdaptDecisionEngine("http://localhost:11434", api_key="tok")
+        assert eng._headers() == {"Authorization": "Bearer tok"}
+        eng_nokey = AdaptDecisionEngine("http://localhost:11434")
+        assert eng_nokey._headers() == {}
+
+    def test_recommend_engine_headers_include_bearer(self):
+        from fusion_model_hub.recommend.engine import RecommendEngine
+
+        eng = RecommendEngine("http://localhost:11434", api_key="tok")
+        assert eng._headers() == {"Authorization": "Bearer tok"}

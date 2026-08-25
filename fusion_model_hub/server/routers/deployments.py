@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from ...db import crud
 from ...db.models import DeploymentStatus
 from ..deps import SessionDep, SettingsDep
+from .cluster import _effective_status, get_cluster_node
 from .inference import _mlx_headers
 
 logger = logging.getLogger(__name__)
@@ -14,12 +15,31 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/deployments", tags=["deployments"])
 
 
-async def _load_model_via_mlx(settings, model_name: str) -> bool:
+async def _resolve_node_url(session, node_id: str, settings) -> str:
+    # H3: map a deployment's node_id back to the MLX URL the model was
+    # placed on. "local"/"" → local MLX; otherwise look up the ClusterNode.
+    # Falls back to the local MLX URL if the node row is gone (deleted node),
+    # logged — better than a hard failure on unload.
+    node_id = (node_id or "local").strip()
+    if not node_id or node_id == "local":
+        return settings.mlx_url
+    node = await get_cluster_node(session, node_id)
+    if not node:
+        logger.warning("Deployment node %s no longer registered; falling back to local MLX", node_id)
+        return settings.mlx_url
+    return node.url
+
+
+async def _load_model_via_mlx(settings, model_name: str, node_url: str | None = None) -> bool:
+    # H3: node_url lets a deployment load its model on a specific cluster
+    # node's MLX instead of always the local one. None/empty falls back to
+    # settings.mlx_url (legacy behavior).
+    base_url = (node_url or settings.mlx_url).rstrip("/")
     headers = _mlx_headers(settings)
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                f"{settings.mlx_url}/v1/models/{model_name}/load", headers=headers,
+                f"{base_url}/v1/models/{model_name}/load", headers=headers,
             )
             if resp.status_code in (200, 409):
                 return True
@@ -29,7 +49,7 @@ async def _load_model_via_mlx(settings, model_name: str) -> bool:
                     model_name,
                 )
                 chat_resp = await client.post(
-                    f"{settings.mlx_url}/v1/chat/completions",
+                    f"{base_url}/v1/chat/completions",
                     json={
                         "model": model_name,
                         "messages": [{"role": "user", "content": "."}],
@@ -47,7 +67,7 @@ async def _load_model_via_mlx(settings, model_name: str) -> bool:
     return False
 
 
-async def _fetch_mlx_inference_metrics(settings, model_name: str) -> dict:
+async def _fetch_mlx_inference_metrics(settings, model_name: str, node_url: str | None = None) -> dict:
     # fusion-mlx exposes inference throughput/error counters via
     # GET /v1/metrics/json (upstream PR dahai80/fusion-mlx#541), mgmt-gated,
     # returning ServerMetrics.to_dict(): total_requests / successful_requests /
@@ -60,11 +80,13 @@ async def _fetch_mlx_inference_metrics(settings, model_name: str) -> dict:
     #   tokensPerSecond     = avg_generation_tps
     # Tolerates 404 (endpoint absent until #541 merges) by returning {} so the
     # caller keeps the keys null — shape stays stable.
+    # H3: node_url queries the node the deployment is actually placed on.
+    base_url = (node_url or settings.mlx_url).rstrip("/")
     headers = _mlx_headers(settings)
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
-                f"{settings.mlx_url}/v1/metrics/json", headers=headers,
+                f"{base_url}/v1/metrics/json", headers=headers,
             )
             if resp.status_code == 404:
                 logger.info(
@@ -117,6 +139,10 @@ class DeploymentCreate(BaseModel):
     name: str = ""
     version_id: str = ""
     replicas: int = Field(1, ge=1, le=100)
+    # H3: explicit placement. "local" (default) → hub's own Fusion-MLX;
+    # a ClusterNode.id → load the model on that node's MLX URL. Empty keeps
+    # the legacy local-only behavior so existing callers stay compatible.
+    node_id: str = Field("local", min_length=0, max_length=16)
     # fusion-studio aliases
     scale: int | None = Field(None, ge=1, le=100)
     strategy: str | None = None
@@ -144,6 +170,7 @@ class DeploymentOut(BaseModel):
     version_id: str
     name: str
     replicas: int
+    node_id: str
     status: str
     gray_enabled: bool
     gray_version_id: str
@@ -164,6 +191,7 @@ def _deployment_to_response(d, model_name: str = "") -> dict:
         "version_id": d.version_id,
         "name": d.name,
         "replicas": d.replicas,
+        "node_id": d.node_id,
         "status": status_val,
         "gray_enabled": d.gray_enabled,
         "gray_version_id": d.gray_version_id,
@@ -186,16 +214,33 @@ async def create_deployment(body: DeploymentCreate, session: SessionDep, request
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     model_name = m.hf_repo or m.name
-    mlx_loaded = await _load_model_via_mlx(settings, model_name)
+
+    # H3: resolve placement. node_id "local"/"" → hub's own MLX (legacy
+    # behavior). Any other id must reference a registered, active ClusterNode;
+    # load the model on THAT node's URL, not the local one. Without this the
+    # deployment always fell on the local MLX regardless of replicas/node.
+    node_id = (body.node_id or "local").strip()
+    node_url = settings.mlx_url
+    if node_id and node_id != "local":
+        node = await get_cluster_node(session, node_id)
+        if not node:
+            raise HTTPException(status_code=404, detail=f"Cluster node {node_id} not found")
+        if _effective_status(node) != "active":
+            raise HTTPException(status_code=409, detail=f"Cluster node {node_id} is not active")
+        node_url = node.url
+        logger.info("Deployment placed on remote node: id=%s url=%s", node_id, node_url)
+
+    mlx_loaded = await _load_model_via_mlx(settings, model_name, node_url)
     dep_name = body.effective_name(model_name)
     d = await crud.create_deployment(
         session, model_id=body.model_id, name=dep_name,
         tenant_id=tenant_id, version_id=body.version_id, replicas=body.effective_replicas,
+        node_id=node_id,
     )
     initial_status = DeploymentStatus.RUNNING if mlx_loaded else DeploymentStatus.PENDING
     await crud.update_deployment(session, d.id, status=initial_status)
     d = await crud.get_deployment(session, d.id)
-    logger.info("Deployment created: id=%s model=%s replicas=%d", d.id, model_name, d.replicas)
+    logger.info("Deployment created: id=%s model=%s replicas=%d node=%s", d.id, model_name, d.replicas, d.node_id)
     return _deployment_to_response(d, model_name)
 
 
@@ -257,10 +302,13 @@ async def delete_deployment(deployment_id: str, session: SessionDep, settings: S
     m = await crud.get_model(session, d.model_id)
     if m:
         model_name = m.hf_repo or m.name
+        # H3: unload on the node the model was actually placed on, not always
+        # the local MLX.
+        node_url = await _resolve_node_url(session, d.node_id, settings)
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 await client.post(
-                    f"{settings.mlx_url}/v1/models/{model_name}/unload",
+                    f"{node_url}/v1/models/{model_name}/unload",
                     headers=_mlx_headers(settings),
                 )
         except Exception as e:
@@ -283,10 +331,12 @@ async def stop_deployment(deployment_id: str, session: SessionDep, settings: Set
     model_name = ""
     if m:
         model_name = m.hf_repo or m.name
+        # H3: unload on the node the model was actually placed on.
+        node_url = await _resolve_node_url(session, d.node_id, settings)
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 await client.post(
-                    f"{settings.mlx_url}/v1/models/{model_name}/unload",
+                    f"{node_url}/v1/models/{model_name}/unload",
                     headers=_mlx_headers(settings),
                 )
         except Exception as e:
@@ -368,13 +418,15 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
         raise HTTPException(status_code=404, detail="Deployment not found")
     m = await crud.get_model(session, d.model_id)
     model_name = m.hf_repo or m.name if m else ""
+    # H3: query the node the deployment is placed on, not always local MLX.
+    node_url = await _resolve_node_url(session, d.node_id, settings)
     mlx_metrics = {}
     inference_fields = {}
     if model_name and d.status == DeploymentStatus.RUNNING:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
-                    f"{settings.mlx_url}/v1/models/status",
+                    f"{node_url}/v1/models/status",
                     headers=_mlx_headers(settings),
                 )
                 if resp.status_code == 200:
@@ -386,7 +438,7 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
         # /v1/models/status gives load state; /v1/metrics/json (PR #541) gives
         # inference throughput/error counters. Derive the 4 studio live fields
         # from the latter. Falls back to null if the endpoint is absent (404).
-        inference_fields = await _fetch_mlx_inference_metrics(settings, model_name)
+        inference_fields = await _fetch_mlx_inference_metrics(settings, model_name, node_url)
     version_metrics = {}
     if d.version_id:
         v = await crud.get_version(session, d.version_id)

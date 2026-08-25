@@ -287,6 +287,11 @@ class Deployment(Base):
     version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), default="")
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     replicas: Mapped[int] = mapped_column(Integer, default=1)
+    # H3: node this deployment is placed on. "local" = the hub's own
+    # Fusion-MLX (settings.mlx_url); any other value is a ClusterNode.id the
+    # model was explicitly deployed to. Without this column every deployment
+    # silently fell on the local MLX and replicas was a vanity integer.
+    node_id: Mapped[str] = mapped_column(String(16), default="local")
     status: Mapped[DeploymentStatus] = mapped_column(Enum(DeploymentStatus), default=DeploymentStatus.PENDING)
     gray_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     gray_version_id: Mapped[str] = mapped_column(String(16), default="")
@@ -490,5 +495,7 @@ class DownloadTask(Base):
     max_retries: Mapped[int] = mapped_column(Integer, default=3)
     error_message: Mapped[str] = mapped_column(Text, default="")
     file_path: Mapped[str] = mapped_column(String(512), default="")
+    expected_sha256: Mapped[str] = mapped_column(String(64), default="")
+    file_hash: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

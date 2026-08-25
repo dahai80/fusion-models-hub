@@ -65,15 +65,55 @@ async def _reconcile_orphaned_tasks() -> None:
             )
             failed += 1
         pending_tasks, _ = await list_quantize_tasks(session, status=TaskStatus.PENDING.value, page_size=200)
+        # E-D2: LoRA merge tasks have no resume path (the MLX merge may have
+        # partially fused weights — resuming risks a half-merged version). Fail
+        # both RUNNING and PENDING lora merges orphaned by restart so they do
+        # not stay stuck RUNNING forever (the prior reconcile pass only handled
+        # QuantizeTask, leaving LoraMergeTask silently orphaned).
+        from ..db.crud import list_lora_merge_tasks, update_lora_merge_task
+        lora_running, _ = await list_lora_merge_tasks(session, status=TaskStatus.RUNNING.value, page_size=200)
+        for t in lora_running:
+            await update_lora_merge_task(
+                session, t.id, status=TaskStatus.FAILED.value,
+                error_message="LoRA merge orphaned by server restart",
+            )
+            failed += 1
+        lora_pending, _ = await list_lora_merge_tasks(session, status=TaskStatus.PENDING.value, page_size=200)
+        for t in lora_pending:
+            await update_lora_merge_task(
+                session, t.id, status=TaskStatus.FAILED.value,
+                error_message="LoRA merge not resumed after restart (no safe resume path)",
+            )
+            failed += 1
+        # R4: DistributedTask (cluster fan-out quantize/load) has no safe local
+        # resume path — the work happens on remote nodes whose coordinator state
+        # is opaque to the hub. A restart leaves any RUNNING/PENDING distributed
+        # task stuck forever (the prior reconcile pass never touched
+        # DistributedTask). Fail both so the operator sees them and resubmits.
+        from sqlalchemy import select
+
+        from ..db.models import DistributedTask, DistributedTaskStatus
+        for st in (DistributedTaskStatus.RUNNING, DistributedTaskStatus.PENDING):
+            rows = (await session.execute(
+                select(DistributedTask).where(DistributedTask.status == st)
+            )).scalars().all()
+            for t in rows:
+                t.status = DistributedTaskStatus.FAILED
+                t.completed_at = None
+                failed += 1
+            if rows:
+                logger.warning("Failed %d orphaned distributed task(s) in %s", len(rows), st.value)
+        await session.commit()
     for t in pending_tasks:
         try:
-            await resume_quantize(
+            resumed = await resume_quantize(
                 task_id=t.id,
                 source_version_id=t.source_version_id,
                 target_format=t.target_format,
                 quant_bits=t.quant_bits,
             )
-            restarted += 1
+            if resumed:
+                restarted += 1
         except Exception:
             logger.exception("Failed to restart pending task: id=%s", t.id)
     if failed or restarted:
@@ -96,6 +136,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         init_deps(settings, engine)
         set_auth_enabled(settings.auth_enabled)
         await _reconcile_orphaned_tasks()
+        # H10: probe Fusion-MLX version compatibility at startup. Best-effort
+        # (MLX may start after the hub) — a mismatch or unreachable MLX is
+        # logged loudly but does not block startup, so the hub still serves
+        # metadata while the operator fixes the base.
+        try:
+            from ..api.base_binding import FusionMLXBase
+            base = FusionMLXBase(mlx_url=settings.mlx_url)
+            compat = await base.check_compatibility(">=0.5.0")
+            if compat.get("compatible"):
+                logger.info("Fusion-MLX compatible: %s", compat)
+            else:
+                logger.warning(
+                    "Fusion-MLX compatibility check: %s — inference/quantize/convert "
+                    "will fail until the base is upgraded or started",
+                    compat,
+                )
+        except Exception:
+            logger.warning("Fusion-MLX compatibility probe failed at startup", exc_info=True)
         backup.start_backup_scheduler()
         logger.info("Fusion Model Hub started: data_dir=%s auth=%s", settings.data_dir, settings.auth_enabled)
         yield
@@ -130,11 +188,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
+        import re as _re
+        import uuid as _uuid
+
         from fastapi import HTTPException as FastAPIHTTPException
         if isinstance(exc, FastAPIHTTPException):
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-        logger.error("Unhandled exception: %s %s -> %s", request.method, request.url.path, exc)
-        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+        # E-E13: exc.__repr__/str(exc) routinely embeds the SQLAlchemy db_url
+        # (with creds) and absolute filesystem paths from the request — logging
+        # that verbatim at ERROR leaks secrets/paths into log aggregators.
+        # Keep only the exception class name + a per-incident trace_id in the
+        # ERROR line; stash the full repr at DEBUG under the same trace_id so
+        # an operator with DEBUG access can still correlate, while production
+        # ERROR logs stay clean. The response carries the trace_id so a user
+        # report can be matched to the log line without exposing internals.
+        trace_id = _uuid.uuid4().hex[:12]
+        exc_repr = repr(exc)
+        redacted = _re.sub(
+            r"(://[^:\s]+:[^\s@]+@|/[^\s]*\.(?:db|sqlite|sqlite3|json))",
+            "[REDACTED]",
+            exc_repr,
+        )
+        logger.error(
+            "Unhandled exception: %s %s -> %s trace_id=%s",
+            request.method, request.url.path, type(exc).__name__, trace_id,
+        )
+        logger.debug("Unhandled exception detail trace_id=%s: %s", trace_id, redacted)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "trace_id": trace_id},
+        )
+
+    # E-D1: illegal model/version status transitions are a client error (409),
+    # not a 500. Map before the generic handler so callers get a clear conflict.
+    from ..db.crud import InvalidTransition
+
+    @app.exception_handler(InvalidTransition)
+    async def invalid_transition_handler(request: Request, exc: InvalidTransition):
+        logger.info("Status transition rejected: %s %s -> %s", request.method, request.url.path, exc)
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(models.router, prefix="/api/v1")
@@ -171,6 +263,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/metrics", tags=["system"])
     async def prometheus_metrics():
+        # E-S11: do not expose internal telemetry unless the operator explicitly
+        # opted in via FMH_EXPOSE_METRICS=true. A bare 404 (not 403) avoids
+        # confirming the endpoint exists when disabled.
+        if not getattr(settings, "expose_metrics", False):
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
         return metrics.metrics_response()
 
     return app

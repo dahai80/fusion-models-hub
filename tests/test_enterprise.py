@@ -102,7 +102,9 @@ class TestSecurityScan:
 
 class TestWatermark:
     @pytest.mark.asyncio
-    async def test_embed_watermark(self, client):
+    async def test_embed_watermark(self, client, monkeypatch):
+        # E-S6: embed refuses the source-public default secret; supply a real one.
+        monkeypatch.setenv("FMH_WATERMARK_SECRET", "enterprise-test-secret-32b")
         model = await _create_model(client)
         resp = await client.post("/api/v1/watermark/embed", json={
             "model_id": model["id"], "watermark_type": "metadata", "payload": {"owner": "test"},
@@ -112,7 +114,9 @@ class TestWatermark:
         assert "id" in data
 
     @pytest.mark.asyncio
-    async def test_verify_watermark(self, client):
+    async def test_verify_watermark(self, client, monkeypatch):
+        # E-S6: verify re-derives the signature from the same per-request secret.
+        monkeypatch.setenv("FMH_WATERMARK_SECRET", "enterprise-test-secret-32b")
         model = await _create_model(client)
         await client.post("/api/v1/watermark/embed", json={
             "model_id": model["id"], "watermark_type": "metadata", "payload": {"owner": "test"},
@@ -477,6 +481,75 @@ class TestAuthMiddleware:
                 "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
             }, headers={"X-API-Key": api_key})
             assert resp.status_code == 201
+        finally:
+            set_auth_enabled(False)
+
+    @pytest.mark.asyncio
+    async def test_model_scoped_key_denies_collection_ops(self, client):
+        # E-S15: a key with non-empty allowed_models must not reach collection
+        # model operations (import/batch-delete/compare/...). They have no
+        # single model_id to scope against, so the prior extractor returned ""
+        # and _check_model_access silently skipped the ACL.
+        from fusion_model_hub.server.auth import set_auth_enabled
+        set_auth_enabled(True)
+        try:
+            key_resp = await client.post(
+                "/api/v1/auth/keys",
+                json={"name": "scoped", "allowed_models": "model-a"},
+            )
+            api_key = key_resp.json()["key"]
+            # import is a collection op → 403, not 201.
+            resp = await client.post(
+                "/api/v1/models/import/hf",
+                json={"hf_repo": "x/y"},
+                headers={"X-API-Key": api_key},
+            )
+            assert resp.status_code == 403
+            # batch/delete is a collection op → 403.
+            resp = await client.post(
+                "/api/v1/models/batch/delete",
+                json={"model_ids": []},
+                headers={"X-API-Key": api_key},
+            )
+            assert resp.status_code == 403
+        finally:
+            set_auth_enabled(False)
+
+    @pytest.mark.asyncio
+    async def test_model_scoped_key_enforces_resource_acl(self, client):
+        # E-S15: a key scoped to model-a must GET model-a (200) but be denied
+        # model-b (403). Confirms the resource-level ACL still works after the
+        # collection-op guard was added.
+        from fusion_model_hub.server.auth import set_auth_enabled
+        # Create the models while auth is OFF (no key needed), then turn auth
+        # on and create the scoped key as the bootstrap admin. Capture ids from
+        # the create responses directly — /models/search does not filter by
+        # name reliably for colliding matches.
+        ma_id = (await client.post("/api/v1/models", json={
+            "name": "model-a", "description": "x",
+            "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
+        })).json()["id"]
+        mb_id = (await client.post("/api/v1/models", json={
+            "name": "model-b", "description": "x",
+            "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
+        })).json()["id"]
+        assert ma_id != mb_id
+        set_auth_enabled(True)
+        try:
+            key_resp = await client.post(
+                "/api/v1/auth/keys",
+                json={"name": "scoped2", "allowed_models": ma_id},
+            )
+            assert key_resp.status_code == 201, key_resp.text
+            api_key = key_resp.json()["key"]
+            scoped_a = await client.get(
+                f"/api/v1/models/{ma_id}", headers={"X-API-Key": api_key},
+            )
+            assert scoped_a.status_code == 200
+            scoped_b = await client.get(
+                f"/api/v1/models/{mb_id}", headers={"X-API-Key": api_key},
+            )
+            assert scoped_b.status_code == 403
         finally:
             set_auth_enabled(False)
 

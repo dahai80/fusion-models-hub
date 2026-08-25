@@ -16,9 +16,22 @@ _BATCH_SIZE = 50
 
 
 class RecommendEngine:
-    def __init__(self, mlx_url: str = "http://localhost:11434"):
+    def __init__(self, mlx_url: str = "http://localhost:11434", api_key: str = ""):
         self.mlx_url = mlx_url.rstrip("/")
-        self._hw_detector = HardwareDetector(mlx_url)
+        # E-E10: carry the Hub->MLX internal key so MLX calls authenticate when
+        # MLX enforces auth; the engine singleton invalidates on api_key drift.
+        self.api_key = api_key
+        self._hw_detector = HardwareDetector(mlx_url, api_key=api_key)
+
+    def _headers(self) -> dict[str, str]:
+        if self.api_key:
+            return {"Authorization": f"Bearer {self.api_key}"}
+        return {}
+
+    def invalidate_cache(self) -> None:
+        # E-E10: drop the embedded HardwareDetector's 5-min cache on rebuild so
+        # a hot-reload-swapped MLX URL does not keep serving stale hardware.
+        self._hw_detector.invalidate_cache()
 
     async def recommend(
         self,
@@ -92,6 +105,7 @@ class RecommendEngine:
                             "task": task or None,
                             "preference": preference,
                         },
+                        headers=self._headers(),
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -125,6 +139,7 @@ class RecommendEngine:
                         "params": spec["params"],
                         "quant_type": spec.get("quant_type", "Q4_K_M"),
                     },
+                    headers=self._headers(),
                 )
                 if resp.status_code == 200:
                     return resp.json()

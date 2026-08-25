@@ -4,10 +4,24 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
+# R10: this limiter is NODE-LOCAL and IN-MEMORY. State lives in this process
+# only: a restart, a second hub instance, or a load-balanced pair each run an
+# independent window. A key that is under limit on node A can still be over
+# the intended aggregate budget because no other node sees A's counts. Do NOT
+# treat qps_limit as an enforced cluster-wide guarantee — it is a per-process
+# best-effort throttle. Promoting it to a shared/redis-backed limiter is a
+# separate task; until then callers must not rely on it for multi-node
+# correctness.
 _window_seconds = 60
 _buckets: dict[str, list[float]] = defaultdict(list)
 _EVICT_THRESHOLD = 4096
 _last_evict_check = 0.0
+
+
+def is_rate_limit_persistent() -> bool:
+    # R10: surfaces the node-local truth to any monitoring/health caller so
+    # the system does not silently advertise a cluster-wide rate guarantee.
+    return False
 
 
 def _maybe_evict_dead_keys(now: float) -> None:

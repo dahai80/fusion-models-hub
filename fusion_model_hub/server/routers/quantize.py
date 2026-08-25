@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from ...db import crud
 from ...db.models import TaskStatus
 from ..deps import SessionDep, SettingsDep, get_session_factory
+from ..errors import safe_http_error
 from ..tasks import get_task_status, list_running_tasks, submit_quantize
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ async def start_quantize(body: QuantizeRequest):
         )
     except Exception as e:
         logger.exception("Failed to submit quantize task")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_http_error(500, "Failed to submit quantize task", exc=e, context="start-quantize")
     return {"task_id": task_id, "status": "submitted"}
 
 
@@ -237,6 +238,17 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
                         output_path = body.get("output_path", "")
                 except httpx.ConnectError as e:
                     raise RuntimeError(f"Fusion-MLX server unavailable: {e}") from e
+                # E-D2: guard against an empty/missing output_path. Before, a 200
+                # with no output_path created a ModelVersion with file_path="" and
+                # marked COMPLETED — downstream serve_model skipped the integrity
+                # check (empty string is falsy) and silently served the BASE model
+                # instead of the merged output. Fail loudly instead.
+                if not output_path:
+                    raise RuntimeError(
+                        "Fusion-MLX /v1/merge-adapter returned 200 but no output_path; "
+                        "upgrade fusion-mlx to a version with a complete merge-adapter "
+                        "response contract (issue fusion-mlx#584)"
+                    )
                 new_ver = await crud.create_version(
                     s,
                     model_id=base_v.model_id,
@@ -321,9 +333,25 @@ async def start_layered_quantize(body: LayeredQuantizeRequest, settings: Setting
             if resp.status_code in (200, 202):
                 data = resp.json()
                 logger.info("Layered quantize submitted via MLX: model=%s job_id=%s", body.model, data.get("job_id"))
-                return {"job_id": data.get("job_id", ""), "status": "submitted"}
+                # H7: this is a pure proxy to Fusion-MLX — no QuantizeTask row,
+                # no ModelVersion, no cache entry is created in the hub. The
+                # output lives only in MLX's job store. Surface that honestly
+                # so the caller does not assume the hub tracks the result.
+                logger.info(
+                    "Layered quantize job %s is MLX-side only (hub_registered=false) — "
+                    "no version/cache row created; full hub wiring needs upstream output contract",
+                    data.get("job_id"),
+                )
+                return {
+                    "job_id": data.get("job_id", ""),
+                    "status": "submitted",
+                    "hub_registered": False,
+                }
             logger.warning("MLX layered quantize returned %d: %s", resp.status_code, resp.text)
-            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            raise safe_http_error(
+                resp.status_code, "Fusion-MLX layered quantize failed",
+                context="layered-quantize",
+            )
     except httpx.ConnectError as e:
         logger.error("MLX not available for layered quantize: %s", e)
         raise HTTPException(status_code=503, detail="Fusion-MLX not available")
@@ -331,7 +359,7 @@ async def start_layered_quantize(body: LayeredQuantizeRequest, settings: Setting
         raise
     except Exception as e:
         logger.exception("Layered quantize failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_http_error(500, "Fusion-MLX layered quantize failed", exc=e, context="layered-quantize")
 
 
 @router.get("/quantize/layered/jobs/{job_id}")
@@ -345,7 +373,10 @@ async def get_layered_quantize_job(job_id: str, settings: SettingsDep):
             if resp.status_code == 404:
                 raise HTTPException(status_code=404, detail="Layered quantize job not found")
             logger.warning("MLX layered job status returned %d", resp.status_code)
-            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            raise safe_http_error(
+                resp.status_code, "Fusion-MLX layered job status failed",
+                context="layered-job-status",
+            )
     except httpx.ConnectError as e:
         logger.error("MLX not available: %s", e)
         raise HTTPException(status_code=503, detail="Fusion-MLX not available")
@@ -353,7 +384,7 @@ async def get_layered_quantize_job(job_id: str, settings: SettingsDep):
         raise
     except Exception as e:
         logger.exception("Layered quantize job status failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_http_error(500, "Fusion-MLX layered job status failed", exc=e, context="layered-job-status")
 
 
 @router.get("/quantize/layered/jobs")
@@ -365,7 +396,10 @@ async def list_layered_quantize_jobs(settings: SettingsDep):
             if resp.status_code == 200:
                 return resp.json()
             logger.warning("MLX layered jobs list returned %d", resp.status_code)
-            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            raise safe_http_error(
+                resp.status_code, "Fusion-MLX layered jobs list failed",
+                context="layered-jobs-list",
+            )
     except httpx.ConnectError as e:
         logger.error("MLX not available: %s", e)
         raise HTTPException(status_code=503, detail="Fusion-MLX not available")
@@ -373,7 +407,7 @@ async def list_layered_quantize_jobs(settings: SettingsDep):
         raise
     except Exception as e:
         logger.exception("Layered quantize jobs list failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_http_error(500, "Fusion-MLX layered jobs list failed", exc=e, context="layered-jobs-list")
 
 
 @router.post("/quantize/evaluate")
@@ -393,7 +427,10 @@ async def evaluate_quantize(body: QuantizeEvaluateRequest, settings: SettingsDep
                 logger.info("Quantize evaluation completed for %s", body.source_version_id)
                 return resp.json()
             logger.warning("MLX quantize evaluate returned %d: %s", resp.status_code, resp.text)
-            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            raise safe_http_error(
+                resp.status_code, "Fusion-MLX quantize evaluate failed",
+                context="quantize-evaluate",
+            )
     except httpx.ConnectError as e:
         logger.error("MLX not available for quantize evaluate: %s", e)
         raise HTTPException(status_code=503, detail="Fusion-MLX not available")
@@ -401,7 +438,7 @@ async def evaluate_quantize(body: QuantizeEvaluateRequest, settings: SettingsDep
         raise
     except Exception as e:
         logger.exception("Quantize evaluation failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_http_error(500, "Fusion-MLX quantize evaluate failed", exc=e, context="quantize-evaluate")
 
 
 class BatchQuantizeItem(BaseModel):

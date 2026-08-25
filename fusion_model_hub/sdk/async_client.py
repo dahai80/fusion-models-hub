@@ -7,12 +7,28 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncFusionModelHubClient:
-    def __init__(self, base_url: str = "http://localhost:11444", api_key: str | None = None, timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11444",
+        api_key: str | None = None,
+        timeout: float = 30.0,
+        *,
+        verify: bool | str = True,
+        cert: str | tuple[str, str] | tuple[str, str, str] | None = None,
+        trust_env: bool = True,
+    ):
+        # E-E14: expose verify/cert/trust_env so a user pointing the SDK at a
+        # remote Hub over https can configure a custom CA bundle or client cert
+        # without reaching into httpx globally. Threaded into the persistent
+        # AsyncClient (which already pooled connections).
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {}
         if api_key:
             self._headers["X-API-Key"] = api_key
         self._timeout = timeout
+        self._verify = verify
+        self._cert = cert
+        self._trust_env = trust_env
         self._client: httpx.AsyncClient | None = None
 
     def _url(self, path: str) -> str:
@@ -20,7 +36,13 @@ class AsyncFusionModelHubClient:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=self._timeout, headers=self._headers)
+            self._client = httpx.AsyncClient(
+                timeout=self._timeout,
+                headers=self._headers,
+                verify=self._verify,
+                cert=self._cert,
+                trust_env=self._trust_env,
+            )
         return self._client
 
     async def _get(self, path: str, params: dict | None = None) -> dict:

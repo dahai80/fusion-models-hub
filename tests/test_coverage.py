@@ -137,6 +137,9 @@ class TestBaseBindingCoverage:
 
     @pytest.mark.asyncio
     async def test_get_capabilities(self):
+        # H10: capabilities are reported honestly. An empty /v1/models body
+        # carries no capability info, so metal_available is unknown (None),
+        # not a fabricated True.
         base = FusionMLXBase()
         with patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get:
             mock_resp = MagicMock()
@@ -144,4 +147,23 @@ class TestBaseBindingCoverage:
             mock_resp.json.return_value = {}
             mock_get.return_value = mock_resp
             caps = await base.get_capabilities()
+            assert caps["metal_available"] is None
+            assert caps["quantization"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_capabilities_from_response(self):
+        # H10: when Fusion-MLX actually reports capabilities, surface them.
+        base = FusionMLXBase()
+        with patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "data": [{"id": "m1"}],
+                "capabilities": {"metal_available": True, "kv_cache": True,
+                                 "quantization": ["4bit", "8bit"], "max_context": 32768},
+            }
+            mock_get.return_value = mock_resp
+            caps = await base.get_capabilities()
             assert caps["metal_available"] is True
+            assert caps["max_context"] == 32768
+            assert caps["models_available"] == 1

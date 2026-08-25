@@ -6,10 +6,16 @@ from pydantic import BaseModel, Field
 
 from ...db import crud
 from ..auth import _is_auth_enabled
-from ..deps import SessionDep
+from ..deps import SessionDep, SettingsDep
+from ..rate_limit import check_rate_limit
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["auth"])
+
+# E-E6: bootstrap (first-key) path is public, so throttle it per source IP to
+# stop a flood of racing root-key creations. 10/min is generous for a legit
+# single bootstrap but blocks a scripted race. Node-local like all rate_limit.
+_BOOTSTRAP_QPS = 10
 
 
 class ApiKeyCreate(BaseModel):
@@ -30,7 +36,16 @@ def _caller_role(request: Request) -> str:
     return getattr(request.state, "user_role", "") or ""
 
 
-async def _require_admin_or_bootstrap(session, request: Request) -> None:
+def _client_ip(request: Request) -> str:
+    # E-E6: behind a proxy X-Forwarded-For carries the real client; fall back to
+    # the direct connection. Used only as a rate-limit bucket key for bootstrap.
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+async def _require_admin_or_bootstrap(session, request: Request, settings) -> None:
     # F-01: POST /auth/keys is public ONLY for the very first key (bootstrap).
     # Once any active key exists, creating more requires an admin caller.
     # auth_enabled=False (local mode) bypasses — matches existing local semantics.
@@ -38,7 +53,23 @@ async def _require_admin_or_bootstrap(session, request: Request) -> None:
         return
     active_count = await crud.count_active_api_keys(session)
     if active_count == 0:
-        logger.info("Bootstrap: creating first admin key (no active keys present)")
+        # E-E6: bootstrap is public, so harden it: (1) IP rate-limit the
+        # endpoint so a race of N concurrent root-key POSTs from one source
+        # cannot stampede, and (2) if the operator set FMH_AUTH_BOOTSTRAP_TOKEN,
+        # require a matching X-Bootstrap-Token header — otherwise any client
+        # that can reach the Hub wins root. Token is a constant-time compare.
+        ip = _client_ip(request)
+        if not check_rate_limit(f"bootstrap:{ip}", _BOOTSTRAP_QPS):
+            logger.warning("Bootstrap rate-limited for ip=%s", ip)
+            raise HTTPException(status_code=429, detail="Bootstrap rate limit exceeded, retry shortly")
+        expected = getattr(settings, "auth_bootstrap_token", "") or ""
+        if expected:
+            supplied = request.headers.get("X-Bootstrap-Token", "")
+            import hmac
+            if not supplied or not hmac.compare_digest(supplied, expected):
+                logger.warning("Bootstrap rejected: missing/invalid X-Bootstrap-Token for ip=%s", ip)
+                raise HTTPException(status_code=403, detail="Bootstrap token required to create the first key")
+        logger.info("Bootstrap: creating first admin key (no active keys present) ip=%s", ip)
         return
     role = _caller_role(request)
     if role != "admin":
@@ -49,8 +80,8 @@ async def _require_admin_or_bootstrap(session, request: Request) -> None:
 
 
 @router.post("/auth/keys", status_code=201)
-async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request):
-    await _require_admin_or_bootstrap(session, request)
+async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request, settings: SettingsDep):
+    await _require_admin_or_bootstrap(session, request, settings)
     tenant_id = body.tenant_id or _caller_tenant(request) or ""
     ak, full_key = await crud.create_api_key(
         session, name=body.name, tenant_id=tenant_id, permissions=body.permissions, role=body.role,
@@ -125,25 +156,36 @@ async def key_usage(key_id: str, session: SessionDep, request: Request):
     if tenant_id and ak.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="API key not found")
 
+    # E-E7: aggregate ONLY this key's inference volume. The prior version summed
+    # every entry in _model_stats (all keys, all tenants) into one total — so
+    # any key with access to /auth/keys/{id}/usage saw every other key's
+    # request counts and tokens, a cross-tenant/same-tenant business-intel
+    # leak. _update_model_stats now records a per_key breakdown keyed by
+    # api_key_id; filter to ak.id and fall back to the "" (anonymous, auth-off
+    # local mode) bucket only when this key itself is anonymous-equivalent.
     from .inference import _model_stats
     total_requests = 0
     by_model: dict[str, dict] = {}
-    for model_id, stats in _model_stats.items():
-        count = stats.get("request_count", 0)
-        if count > 0:
-            total_requests += count
-            by_model[model_id] = {
-                "request_count": count,
-                "total_tokens": stats.get("total_tokens", 0),
-                "avg_latency_ms": round(stats.get("total_latency", 0.0) / count, 2) if count else 0.0,
-            }
-
-    qps_current = 0.0
     last_at = None
-    for stats in _model_stats.values():
+    for model_id, stats in _model_stats.items():
+        per_key = stats.get("per_key", {})
+        key_bucket = per_key.get(ak.id)
+        if not key_bucket:
+            continue
+        count = key_bucket.get("request_count", 0)
+        if count <= 0:
+            continue
+        total_requests += count
+        by_model[model_id] = {
+            "request_count": count,
+            "total_tokens": key_bucket.get("total_tokens", 0),
+            "avg_latency_ms": round(key_bucket.get("total_latency", 0.0) / count, 2) if count else 0.0,
+        }
         la = stats.get("last_request_at")
         if la and (last_at is None or la > last_at):
             last_at = la
+
+    qps_current = 0.0
     if last_at:
         last_dt = datetime.fromtimestamp(last_at, tz=UTC)
         elapsed = (datetime.now(UTC) - last_dt).total_seconds()

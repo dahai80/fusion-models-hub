@@ -65,16 +65,41 @@ def _check_role_permission(role: UserRole, method: str) -> JSONResponse | None:
     return JSONResponse(status_code=403, content={"detail": "Unknown role"})
 
 
+# E-S15: path segments that can legally follow /models when they are a
+# collection-level operation rather than a model_id. The prior skip-set was
+# ("import","sync","batch","compare") — incomplete: /models/import/hf,
+# /models/batch/delete, /models/batch/tag, /models/recommend, /models/search,
+# /models/market/search all extracted the keyword (or skipped it and found no
+# later "models") and returned "" → _check_model_access returned None → a
+# restricted key bypassed its allowed_models ACL on exactly the operations
+# (import, batch delete/tag) that create or remove models outside its scope.
+# Treat every segment in this set as "collection op, no single model_id".
+_MODEL_COLLECTION_KEYWORDS = {
+    "import", "sync", "batch", "compare", "recommend", "search",
+    "market", "tag", "delete", "publish-all",
+}
+
+
 def _extract_model_id_from_path(path: str) -> str:
     parts = path.strip("/").split("/")
     for i, p in enumerate(parts):
         if p == "models" and i + 1 < len(parts):
             candidate = parts[i + 1]
-            if candidate not in (
-                "import", "sync", "batch", "compare",
-            ):
-                return candidate
+            if candidate in _MODEL_COLLECTION_KEYWORDS:
+                # Collection op — no single model_id to scope against. Signal
+                # this distinctly from "not found" so callers can deny a
+                # restricted key rather than silently skip the ACL.
+                return ""
+            return candidate
     return ""
+
+
+def _is_model_collection_op(path: str) -> bool:
+    parts = path.strip("/").split("/")
+    for i, p in enumerate(parts):
+        if p == "models" and i + 1 < len(parts):
+            return parts[i + 1] in _MODEL_COLLECTION_KEYWORDS
+    return False
 
 
 def _check_model_access(ak: ApiKey, request: Request) -> JSONResponse | None:
@@ -83,7 +108,18 @@ def _check_model_access(ak: ApiKey, request: Request) -> JSONResponse | None:
     allowed_set = {x.strip() for x in ak.allowed_models.split(",") if x.strip()}
     if not allowed_set:
         return None
-    model_id = _extract_model_id_from_path(request.url.path)
+    path = request.url.path
+    # E-S15: a restricted key (non-empty allowed_models) must not reach
+    # collection-level model operations — they have no single model_id to
+    # scope against, so the prior code silently skipped the ACL and let a
+    # model-scoped key POST /models/import/hf or /models/batch/delete outside
+    # its scope. Deny explicitly.
+    if _is_model_collection_op(path):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Collection model operations are not permitted for model-scoped API keys"},
+        )
+    model_id = _extract_model_id_from_path(path)
     if not model_id:
         return None
     if model_id not in allowed_set:
@@ -165,6 +201,11 @@ async def auth_middleware(request: Request, call_next):
 
     response = await call_next(request)
 
+    # E-S12: audit-log write failure previously swallowed silently (logger.exception
+    # only). A DB hiccup could drop the audit record of a write that already
+    # succeeded — undetectable. Now emit a structured WARNING naming the action +
+    # resource so a lost audit row is visible in logs (the op still succeeds to
+    # avoid a DB outage blocking all writes).
     try:
         from ..db.crud import create_audit_log
         resource_type = _extract_resource_type(request.url.path)
@@ -184,7 +225,16 @@ async def auth_middleware(request: Request, call_next):
                     detail=f"{request.method} {request.url.path}",
                 )
     except Exception:
-        logger.exception("Failed to write audit log")
+        logger.warning(
+            "AUDIT LOG LOST: action=%s resource=%s/%s key=%s tenant=%s status=%d",
+            f"{request.method.lower()}_{_extract_resource_type(request.url.path)}",
+            _extract_resource_type(request.url.path),
+            _extract_resource_id(request.url.path),
+            getattr(request.state, "api_key_id", ""),
+            getattr(request.state, "tenant_id", ""),
+            response.status_code,
+            exc_info=True,
+        )
 
     return response
 

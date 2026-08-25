@@ -158,6 +158,16 @@ def main():
     serve_parser.add_argument("--log-level", default="INFO", help="Log level")
     serve_parser.add_argument("--tls-certfile", default="", help="TLS certificate file path")
     serve_parser.add_argument("--tls-keyfile", default="", help="TLS private key file path")
+    # E-E10: `serve` runs uvicorn single-worker by default. The adapt/recommend/
+    # hardware engine singletons and the in-process _running_executions /
+    # _running_tasks dicts are per-process — running uvicorn with --workers>1
+    # (e.g. behind gunicorn) gives each worker its own copy, so GET
+    # /adapt/execute/{id} and GET /quantize/running return inconsistent results
+    # depending on which worker handles the request. For correctness of those
+    # stateful endpoints, run a single worker and scale horizontally with more
+    # processes fronted by a state-aware gateway instead. Migrating the task
+    # registry to an external coordinator (Redis/DB) is the durable fix and is
+    # tracked separately; do not silently enable multi-worker here.
 
     export_parser = subparsers.add_parser("export", help="Export data to JSON")
     export_parser.add_argument("--data-dir", default="", help="Data directory")

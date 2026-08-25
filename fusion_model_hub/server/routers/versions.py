@@ -76,13 +76,22 @@ def _caller_tenant(request: Request) -> str:
 
 
 async def _enforce_version_tenant(session, v, request: Request) -> None:
-    # F-04: cross-tenant read/download/state-change guard. Empty caller tenant
-    # (auth-disabled local mode) is permissive — matches list_models semantics.
-    tenant_id = _caller_tenant(request)
-    if not tenant_id or v is None:
+    # F-04: cross-tenant read/download/state-change guard. E-S10: the prior
+    # guard short-circuited on an EMPTY caller tenant — but ApiKey.tenant_id
+    # defaults to "" even when auth is on, so a key with no tenant silently
+    # bypassed isolation and could read any tenant's version. Now: a caller
+    # with no tenant may only touch models that themselves have no tenant
+    # (true local-mode data); a tenanted model requires a matching tenant.
+    if v is None:
         return
+    caller_tenant = _caller_tenant(request)
     m = await crud.get_model(session, v.model_id)
-    if not m or m.tenant_id != tenant_id:
+    if not m:
+        raise HTTPException(status_code=404, detail="Version not found")
+    model_tenant = m.tenant_id or ""
+    if not model_tenant:
+        return  # local-mode model, no isolation to enforce
+    if not caller_tenant or caller_tenant != model_tenant:
         raise HTTPException(status_code=404, detail="Version not found")
 
 
@@ -124,25 +133,38 @@ async def upload_version(
         hasher = hashlib.sha256()
         written = 0
         safe_name = os.path.basename(file.filename or "model.bin") or "model.bin"
-        target_path = target_dir / safe_name
-        with open(target_path, "wb") as out:
-            while True:
-                block = await file.read(CHUNK_READ_SIZE)
-                if not block:
-                    break
-                written += len(block)
-                if written > max_bytes:
-                    out.close()
-                    try:
-                        target_path.unlink()
-                    except OSError:
-                        pass
-                    raise HTTPException(status_code=413, detail="Upload exceeds max_upload_size_mb")
-                out.write(block)
-                hasher.update(block)
-        file_hash = hasher.hexdigest()
-        file_size = written
-        file_path = str(target_path)
+        # E-R3: the raw open() below writes to the process CWD on MinioStore,
+        # where model_version_dir returns a relative Path with no local backing.
+        # Only LocalStore can stream to a real local dir; for object storage
+        # route through store.write_file (one put_object), capped by
+        # max_upload_size_mb like the chunked-assemble path.
+        from ...storage.local_store import LocalStore
+        if isinstance(store, LocalStore):
+            target_path = target_dir / safe_name
+            with open(target_path, "wb") as out:
+                while True:
+                    block = await file.read(CHUNK_READ_SIZE)
+                    if not block:
+                        break
+                    written += len(block)
+                    if written > max_bytes:
+                        out.close()
+                        try:
+                            target_path.unlink()
+                        except OSError:
+                            pass
+                        raise HTTPException(status_code=413, detail="Upload exceeds max_upload_size_mb")
+                    out.write(block)
+                    hasher.update(block)
+            file_hash = hasher.hexdigest()
+            file_size = written
+            file_path = str(target_path)
+        else:
+            data = await file.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                raise HTTPException(status_code=413, detail="Upload exceeds max_upload_size_mb")
+            target_path, file_hash, file_size = await store.write_file(target_dir, safe_name, data)
+            file_path = str(target_path)
         logger.info("Uploaded file for model=%s version=%s size=%d", model_id, version, file_size)
 
     v = await crud.create_version(
@@ -333,13 +355,18 @@ async def rollback_version(version_id: str, session: SessionDep):
     v = await crud.get_version(session, version_id)
     if not v:
         raise HTTPException(status_code=404, detail="Version not found")
+    model_id = v.model_id  # E-D5: capture before reassign — update may return None
     try:
         v = await crud.update_version_status(session, version_id, VersionStatus.PUBLISHED)
     except InvalidTransition as e:
         raise HTTPException(status_code=409, detail=str(e))
+    # E-D5: update_version_status can return None if the row was concurrently
+    # deleted — the prior code dereferenced v.model_id and 500'd.
+    if not v:
+        raise HTTPException(status_code=404, detail="Version not found")
     try:
         from .webhooks import dispatch_webhook_event
-        await dispatch_webhook_event("version.published", {"id": version_id, "model_id": v.model_id})
+        await dispatch_webhook_event("version.published", {"id": version_id, "model_id": model_id})
     except Exception:
         logger.exception("Webhook dispatch failed for version.published")
     return _version_to_dict(v)
@@ -352,17 +379,33 @@ class DeprecateRequest(BaseModel):
 
 @router.post("/versions/{version_id}/deprecate")
 async def deprecate_version(version_id: str, body: DeprecateRequest, session: SessionDep):
+    existing = await crud.get_version(session, version_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Version not found")
+    model_id = existing.model_id  # E-D7: capture before any reassign
     try:
         v = await crud.update_version_status(session, version_id, VersionStatus.DEPRECATED)
     except InvalidTransition as e:
         raise HTTPException(status_code=409, detail=str(e))
+    # E-D5: status update may return None under concurrent delete.
     if not v:
         raise HTTPException(status_code=404, detail="Version not found")
     if body.successor_version_id:
-        v = await crud.update_version(session, version_id, successor_version_id=body.successor_version_id)
+        # E-D7: the successor link is a second write; if it fails (concurrent
+        # delete) the deprecate already committed. Log loudly rather than 500 —
+        # the version IS deprecated, just without a successor pointer. Operator
+        # can set the successor via a separate update.
+        updated = await crud.update_version(session, version_id, successor_version_id=body.successor_version_id)
+        if not updated:
+            logger.error(
+                "Deprecate successor link failed (version gone?): id=%s successor=%s",
+                version_id, body.successor_version_id,
+            )
+        else:
+            v = updated
     try:
         from .webhooks import dispatch_webhook_event
-        await dispatch_webhook_event("version.deprecated", {"id": version_id, "model_id": v.model_id})
+        await dispatch_webhook_event("version.deprecated", {"id": version_id, "model_id": model_id})
     except Exception:
         logger.exception("Webhook dispatch failed for version.deprecated")
     return _version_to_dict(v)
@@ -451,6 +494,19 @@ async def download_version_from_url(
 
     version = body.version or f"url-{uuid.uuid4().hex[:8]}"
 
+    # E-D8: the prior fire-and-forget had no DownloadTask row, so there was no
+    # status to query and failures were only a logger.error line. Create a row
+    # the operator can poll via GET /downloads/{id}; the background task flips
+    # it to completed/failed.
+    dl_task = await crud.create_download_task(
+        session,
+        model_id=model_id,
+        source_url=body.url,
+        version_id="",
+        expected_sha256=body.expected_hash,
+    )
+    dl_task_id = dl_task.id
+
     async def _do_download():
         downloader = ModelDownloader(storage_dir=str(store.model_version_dir(model_id, version)))
         result = await downloader.download(
@@ -458,9 +514,9 @@ async def download_version_from_url(
             model_id=f"{model_id}_{version}",
             expected_hash=body.expected_hash,
         )
+        from ..deps import get_session_factory
+        sf = get_session_factory()
         if result.get("status") == "completed":
-            from ..deps import get_session_factory
-            sf = get_session_factory()
             async with sf() as s:
                 await crud.create_version(
                     s,
@@ -473,18 +529,29 @@ async def download_version_from_url(
                     file_size=result.get("size_bytes", 0),
                     release_notes=body.release_notes,
                 )
-            logger.info("URL download completed: model=%s version=%s", model_id, version)
+                await crud.update_download_task(
+                    s, dl_task_id, status="completed",
+                    file_path=result.get("path", ""),
+                    file_hash=result.get("hash", body.expected_hash),
+                )
+            logger.info("URL download completed: model=%s version=%s task=%s",
+                        model_id, version, dl_task_id)
         else:
+            async with sf() as s:
+                await crud.update_download_task(
+                    s, dl_task_id, status="failed",
+                    error_message=(result.get("error", "download failed") or "")[:500],
+                )
             logger.error(
-                "URL download failed: model=%s version=%s error=%s",
-                model_id, version, result.get("error", ""),
+                "URL download failed: model=%s version=%s task=%s error=%s",
+                model_id, version, dl_task_id, result.get("error", ""),
             )
 
     dl_key = f"{model_id}_{version}"
     _dl_task = asyncio.create_task(_do_download(), name=f"url-dl-{dl_key}")
     _running_url_downloads[dl_key] = _dl_task
     _dl_task.add_done_callback(lambda _: _running_url_downloads.pop(dl_key, None))
-    return {"status": "download_started", "model_id": model_id, "version": version}
+    return {"status": "download_started", "model_id": model_id, "version": version, "download_task_id": dl_task_id}
 
 
 @router.get("/models/{model_id}/export")
@@ -506,7 +573,11 @@ async def export_model_tar(
     if not versions:
         raise HTTPException(status_code=404, detail="No versions found for model")
 
-    model_dir = store.models_dir / model_id
+    try:
+        model_dir = store.models_dir / model_id
+    except NotImplementedError as e:
+        # E-R3: tar export walks a local models dir; object storage has none.
+        raise HTTPException(status_code=501, detail=str(e))
     if not model_dir.exists():
         raise HTTPException(status_code=404, detail="Model files not found on disk")
 
@@ -595,7 +666,13 @@ async def import_model_tar(
                 hf_repo=model_data.get("hf_repo", ""),
             )
 
-            model_dir = store.models_dir / m.id
+            try:
+                model_dir = store.models_dir / m.id
+            except NotImplementedError as e:
+                # E-R3: tar import extracts to a local models dir; object
+                # storage has none. Fail with 501 instead of writing the
+                # process CWD.
+                raise HTTPException(status_code=501, detail=str(e))
             model_dir.mkdir(parents=True, exist_ok=True)
             model_dir_resolved = model_dir.resolve()
 

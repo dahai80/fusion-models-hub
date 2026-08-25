@@ -284,9 +284,11 @@ class TestInferenceHotReload:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("fusion_model_hub.server.routers.inference.httpx.AsyncClient", return_value=mock_ctx):
             await client.post(f"/api/v1/models/{model['id']}/serve", json={})
+            # serve loads the newest published version (new_ver, E-D6 deterministic
+            # ordering), so a cross-version hot-reload must target old_ver.
             resp = await client.post(
                 f"/api/v1/models/{model['id']}/hot-reload",
-                json={"version_id": new_ver["id"]},
+                json={"version_id": old_ver["id"]},
             )
         assert resp.status_code == 502
         assert "preload" in resp.json()["detail"].lower()
@@ -308,16 +310,18 @@ class TestInferenceHotReload:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("fusion_model_hub.server.routers.inference.httpx.AsyncClient", return_value=mock_ctx):
             await client.post(f"/api/v1/models/{model['id']}/serve", json={})
+            # serve loads the newest published version (new_ver, E-D6 deterministic
+            # ordering), so exercise hot-reload as a downgrade to old_ver.
             resp = await client.post(
                 f"/api/v1/models/{model['id']}/hot-reload",
-                json={"version_id": new_ver["id"]},
+                json={"version_id": old_ver["id"]},
             )
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "reloaded"
-        assert data["old_version_id"] == old_ver["id"]
-        assert data["new_version_id"] == new_ver["id"]
-        assert inf_mod._loaded_models[model["id"]]["version_id"] == new_ver["id"]
+        assert data["old_version_id"] == new_ver["id"]
+        assert data["new_version_id"] == old_ver["id"]
+        assert inf_mod._loaded_models[model["id"]]["version_id"] == old_ver["id"]
         inf_mod._loaded_models.clear()
 
 
@@ -636,6 +640,7 @@ class TestInferenceTTLEviction:
     async def test_cleanup_expired_models(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
         inf_mod._loaded_models.clear()
+        inf_mod._last_cleanup_ts = 0.0
 
         inf_mod._loaded_models["expired-id"] = {
             "version_id": "v1",
@@ -668,6 +673,7 @@ class TestInferenceTTLEviction:
     async def test_cleanup_unload_failure_does_not_raise(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
         inf_mod._loaded_models.clear()
+        inf_mod._last_cleanup_ts = 0.0
 
         inf_mod._loaded_models["fail-unload-id"] = {
             "version_id": "v1",
@@ -690,6 +696,7 @@ class TestInferenceTTLEviction:
     async def test_cleanup_no_model_name_still_removes(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
         inf_mod._loaded_models.clear()
+        inf_mod._last_cleanup_ts = 0.0
 
         inf_mod._loaded_models["no-name-id"] = {
             "version_id": "v1",
@@ -705,6 +712,7 @@ class TestInferenceTTLEviction:
     async def test_ttl_eviction_triggered_on_serve(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
         inf_mod._loaded_models.clear()
+        inf_mod._last_cleanup_ts = 0.0
 
         inf_mod._loaded_models["ttl-old-id"] = {
             "version_id": "v1",

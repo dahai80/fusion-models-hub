@@ -48,6 +48,83 @@ class MinioStore(StorageBackend):
     def model_version_dir(self, model_id: str, version: str) -> Path:
         return Path(f"{model_id}/{version}")
 
+    # E-R3: object storage has no walkable local directory. versions.py uses
+    # store.models_dir for tar export/import, which is fundamentally local-fs.
+    # Raising NotImplementedError (surfaced as 501 at the call site) is honest;
+    # silently returning a bogus Path would have versions.py write/read the
+    # process CWD and corrupt file_path. Tar export/import over MinIO is a
+    # separate feature, not a silent gap.
+    @property
+    def models_dir(self) -> Path:
+        raise NotImplementedError(
+            "MinioStore has no local models_dir — tar export/import is not "
+            "supported with FMH_STORAGE_TYPE=minio; use the chunked/URL upload "
+            "paths or export from a local-storage node."
+        )
+
+    async def write_chunk(self, upload_id: str, chunk_index: int, chunk_data: bytes) -> Path:
+        # E-R3: store each chunk as an object under uploads/{upload_id}/ so
+        # chunked upload works on MinIO the same way LocalStore writes .part
+        # files. The assemble step reads them back in order, writes the final
+        # object, and removes the chunk objects.
+        from io import BytesIO
+        client = self._get_client()
+        object_name = f"uploads/{upload_id}/{chunk_index:06d}.part"
+        client.put_object(
+            self.bucket, object_name,
+            BytesIO(chunk_data), len(chunk_data),
+        )
+        logger.info(
+            "Wrote MinIO chunk: upload=%s index=%d size=%d",
+            upload_id, chunk_index, len(chunk_data),
+        )
+        return Path(object_name)
+
+    async def assemble_chunks(
+        self, upload_id: str, target_dir: Path, filename: str, total_chunks: int,
+    ) -> tuple[Path, str, int]:
+        from io import BytesIO
+        client = self._get_client()
+        final_object = f"{target_dir}/{filename}"
+        hasher = hashlib.sha256()
+        total_size = 0
+        # Assemble by reading each chunk object and appending to the final
+        # object. MinIO has no client-side multipart compose that hashes, so we
+        # stream chunk-by-chunk: write the first chunk as the final object, then
+        # append subsequent chunks via put_object with the part-of-stream length.
+        # put_object overwrites, so we accumulate into a BytesIO for correctness
+        # on the typical model-file size (cap is enforced upstream by
+        # max_upload_size_mb). For very large files this is memory-bound; a
+        # true multipart compose is a follow-up, tracked separately.
+        buf = BytesIO()
+        try:
+            for i in range(total_chunks):
+                part_name = f"uploads/{upload_id}/{i:06d}.part"
+                resp = client.get_object(self.bucket, part_name)
+                try:
+                    data = resp.read()
+                finally:
+                    resp.close()
+                    resp.release_conn()
+                buf.write(data)
+                hasher.update(data)
+                total_size += len(data)
+            buf.seek(0)
+            client.put_object(self.bucket, final_object, buf, total_size)
+        finally:
+            # Best-effort chunk cleanup; never leak .part objects on success.
+            for i in range(total_chunks):
+                try:
+                    client.remove_object(self.bucket, f"uploads/{upload_id}/{i:06d}.part")
+                except Exception:
+                    logger.debug("Failed to remove chunk %d for upload %s", i, upload_id)
+        file_hash = hasher.hexdigest()
+        logger.info(
+            "Assembled MinIO upload: id=%s object=%s size=%d hash=%s",
+            upload_id, final_object, total_size, file_hash[:16],
+        )
+        return Path(final_object), file_hash, total_size
+
     async def write_file(self, target_dir: Path, filename: str, data: bytes) -> tuple[Path, str, int]:
         client = self._get_client()
         object_name = f"{target_dir}/{filename}"

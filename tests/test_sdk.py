@@ -779,8 +779,49 @@ class TestRequestURLs:
 
     @patch("fusion_model_hub.sdk.client.httpx.Client")
     def test_headers_passed(self, MockClient):
+        # E-E14: headers now live on the persistent Client (no per-request
+        # headers kwarg = no pool churn), so assert them on the constructor call.
         sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
         mock_c = _setup_mock_client(MockClient, "get", _mock_response({}))
         sdk.get_model("m1")
-        call_args = mock_c.get.call_args
-        assert call_args[1]["headers"]["X-API-Key"] == "test-key"
+        ctor_args = MockClient.call_args
+        assert ctor_args[1]["headers"]["X-API-Key"] == "test-key"
+
+
+class TestTLSConfig:
+    # E-E14: verify/cert/trust_env must thread into the underlying httpx client
+    # so a user pointing the SDK at a remote Hub over https can configure a
+    # custom CA bundle, client cert, or proxy env without touching httpx global
+    # state.
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_verify_passthrough(self, MockClient):
+        mock_c = _setup_mock_client(MockClient, "get", _mock_response({}))
+        sdk = FusionModelHubClient(base_url=BASE_URL, verify=False)
+        sdk.get_model("m1")
+        assert MockClient.call_args[1]["verify"] is False
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_cert_passthrough(self, MockClient):
+        mock_c = _setup_mock_client(MockClient, "get", _mock_response({}))
+        sdk = FusionModelHubClient(base_url=BASE_URL, cert=("/path/c.pem", "/path/k.pem"))
+        sdk.get_model("m1")
+        assert MockClient.call_args[1]["cert"] == ("/path/c.pem", "/path/k.pem")
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_trust_env_passthrough(self, MockClient):
+        mock_c = _setup_mock_client(MockClient, "get", _mock_response({}))
+        sdk = FusionModelHubClient(base_url=BASE_URL, trust_env=False)
+        sdk.get_model("m1")
+        assert MockClient.call_args[1]["trust_env"] is False
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_persistent_client_reuse(self, MockClient):
+        # E-E14: persistent Client must be reused across calls, not rebuilt —
+        # the audit flagged per-request Client construction as pool churn.
+        mock_c = _setup_mock_client(MockClient, "get", _mock_response({}))
+        mock_c.is_closed = False
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        sdk.get_model("m1")
+        sdk.get_model("m2")
+        assert MockClient.call_count == 1

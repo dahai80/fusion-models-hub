@@ -28,9 +28,23 @@ _COST_MAP = {
 
 
 class AdaptDecisionEngine:
-    def __init__(self, mlx_url: str = "http://localhost:11434"):
+    def __init__(self, mlx_url: str = "http://localhost:11434", api_key: str = ""):
         self.mlx_url = mlx_url.rstrip("/")
-        self._hw_detector = HardwareDetector(mlx_url)
+        # E-E10: carry the Hub->MLX internal key so MLX calls authenticate when
+        # MLX enforces auth; the engine singleton invalidates on api_key drift.
+        self.api_key = api_key
+        self._hw_detector = HardwareDetector(mlx_url, api_key=api_key)
+
+    def _headers(self) -> dict[str, str]:
+        if self.api_key:
+            return {"Authorization": f"Bearer {self.api_key}"}
+        return {}
+
+    def invalidate_cache(self) -> None:
+        # E-E10: FR-015 hot-reload swaps the served MLX URL; the embedded
+        # HardwareDetector's 5-min cache must not keep serving the old MLX's
+        # hardware profile. Forward to the detector's own invalidator.
+        self._hw_detector.invalidate_cache()
 
     async def assess(
         self,
@@ -81,7 +95,7 @@ class AdaptDecisionEngine:
                 if source_format:
                     body["source_format"] = source_format
 
-                resp = await client.post(f"{self.mlx_url}/v1/migration-level", json=body)
+                resp = await client.post(f"{self.mlx_url}/v1/migration-level", json=body, headers=self._headers())
                 if resp.status_code != 200:
                     logger.debug("MLX migration-level returned %d", resp.status_code)
                     return None
@@ -112,7 +126,7 @@ class AdaptDecisionEngine:
                 else:
                     payload["model_path"] = model_id
 
-                resp = await client.post(f"{self.mlx_url}/v1/analyze", json=payload)
+                resp = await client.post(f"{self.mlx_url}/v1/analyze", json=payload, headers=self._headers())
                 if resp.status_code == 200:
                     logger.info("MLX analyze succeeded for %s", model_id)
                     return resp.json()

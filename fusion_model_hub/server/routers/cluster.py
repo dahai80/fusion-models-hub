@@ -48,7 +48,13 @@ def _parse_host_port(url: str) -> tuple[str, int]:
 def _effective_status(node: ClusterNode) -> str:
     if node.status != "active" or node.last_heartbeat is None:
         return node.status
-    age = (datetime.now(UTC) - node.last_heartbeat).total_seconds()
+    hb = node.last_heartbeat
+    # SQLite stores datetimes naive; normalize to aware before subtracting
+    # against the aware utcnow or we raise "can't subtract offset-naive and
+    # offset-aware datetimes" on the very first stale check.
+    if hb.tzinfo is None:
+        hb = hb.replace(tzinfo=UTC)
+    age = (datetime.now(UTC) - hb).total_seconds()
     return "inactive" if age > _HEARTBEAT_STALE_SECONDS else node.status
 
 
@@ -107,6 +113,24 @@ def _local_node_dict(settings, alive: bool) -> dict:
     }
 
 
+async def _reap_stale_nodes(session) -> int:
+    # R7: a node whose heartbeat is older than the stale window is dead — the
+    # prior code computed _effective_status() on the fly for display but never
+    # wrote it back, so the row stayed status="active" forever and route_inference
+    # / sync_model kept targeting a corpse. Persist the reaped state so every
+    # downstream query (list, sync, route) sees the truth without recomputing.
+    nodes = await list_cluster_nodes(session)
+    reaped = 0
+    for node in nodes:
+        if node.status == "active" and _effective_status(node) == "inactive":
+            node.status = "inactive"
+            reaped += 1
+    if reaped:
+        await session.commit()
+        logger.warning("Reaped %d stale cluster node(s) to inactive", reaped)
+    return reaped
+
+
 @router.post("/cluster/nodes", status_code=201)
 async def add_node(body: NodeCreate, session: SessionDep):
     logger.info("Adding cluster node: name=%s url=%s", body.name, body.url)
@@ -118,6 +142,7 @@ async def add_node(body: NodeCreate, session: SessionDep):
 
 @router.get("/cluster/nodes")
 async def get_nodes(session: SessionDep, settings: SettingsDep):
+    await _reap_stale_nodes(session)
     nodes = await list_cluster_nodes(session)
     alive = await _check_alive(settings.mlx_url, settings)
     node_dicts = [_local_node_dict(settings, alive), *[_node_to_dict(n) for n in nodes]]
@@ -190,9 +215,11 @@ async def submit_distributed_task(body: DistributedTaskCreate, session: SessionD
                             failed += 1
                             continue
                         try:
+                            from ..ssrf import validate_external_url
+                            validate_external_url(node.url)
                             async with httpx.AsyncClient(timeout=30.0) as client:
                                 resp = await client.post(
-                                    f"{node.url}/api/tasks/submit",
+                                    f"{node.url}/api/v1/cluster/remote-sync",
                                     json={"task_type": "model_sync", "model_id": model_id},
                                 )
                             if resp.status_code in (200, 201, 202):
@@ -204,8 +231,12 @@ async def submit_distributed_task(body: DistributedTaskCreate, session: SessionD
                             failed += 1
                             logger.warning("Node %s sync failed: %s", nid, e)
                 else:
-                    await asyncio.sleep(0.1)
-                    completed = 1
+                    # R11: empty target_nodes used to sleep 0.1s then report
+                    # completed=1 -> a fake COMPLETED with no work done. An empty
+                    # target set means nothing was synced; fail explicitly so the
+                    # status reflects reality instead of a false-success.
+                    logger.warning("Distributed task %s had no target nodes", task_id)
+                    failed = 1
                 final = (
                     DistributedTaskStatus.COMPLETED if failed == 0
                     else DistributedTaskStatus.PARTIAL if completed > 0
@@ -282,9 +313,13 @@ async def sync_model_to_cluster(body: SyncModelRequest, session: SessionDep, set
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     model_name = m.hf_repo or m.name
+    await _reap_stale_nodes(session)
     nodes = await list_cluster_nodes(session)
     if body.target_nodes:
         nodes = [n for n in nodes if n.id in body.target_nodes]
+    # R7: never sync to a dead node — a corpse still marked active would make
+    # the remote-sync POST hang to its timeout and inflate remote_failed.
+    nodes = [n for n in nodes if _effective_status(n) == "active"]
 
     alive = await _check_alive(settings.mlx_url, settings)
     local_ok = False
@@ -320,9 +355,11 @@ async def sync_model_to_cluster(body: SyncModelRequest, session: SessionDep, set
     remote_ok = remote_failed = 0
     for node in nodes:
         try:
+            from ..ssrf import validate_external_url
+            validate_external_url(node.url)
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
-                    f"{node.url}/api/tasks/submit",
+                    f"{node.url}/api/v1/cluster/remote-sync",
                     json={"task_type": "model_sync", "model_id": body.model_id},
                 )
             if resp.status_code in (200, 201, 202):
@@ -417,3 +454,37 @@ async def route_inference(body: RouteInferenceRequest, session: SessionDep, sett
             continue
 
     raise HTTPException(status_code=503, detail="No available node for inference routing")
+
+
+class RemoteSyncRequest(BaseModel):
+    task_type: str = "model_sync"
+    model_id: str
+
+
+@router.post("/cluster/remote-sync")
+async def remote_sync_inbox(body: RemoteSyncRequest, session: SessionDep, settings: SettingsDep):
+    # H1: the real inter-node sync endpoint. Prior code POSTed to a phantom
+    # /api/tasks/submit that no router defined, so every remote node 404'd and
+    # distributed tasks silently degraded. This inbox is what a peer hub calls;
+    # it loads the requested model on its OWN local Fusion-MLX (delegated, per
+    # the project's never-import-mlx rule). Returns 202 on accepted/already-loaded.
+    m = await crud.get_model(session, body.model_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    model_name = m.hf_repo or m.name
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.mlx_url}/v1/models/{model_name}/load",
+                headers=_mlx_headers(settings),
+            )
+            accepted = resp.status_code in (200, 409)
+            logger.info(
+                "Remote-sync inbox: model=%s node_load_status=%d", body.model_id, resp.status_code
+            )
+    except Exception as e:
+        logger.warning("Remote-sync inbox load failed: model=%s err=%s", body.model_id, e)
+        raise HTTPException(status_code=503, detail=f"Local MLX load failed: {e}")
+    if not accepted:
+        raise HTTPException(status_code=502, detail="Local MLX rejected model load")
+    return {"accepted": True, "model_id": body.model_id, "model_name": model_name}

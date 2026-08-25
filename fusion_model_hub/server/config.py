@@ -10,7 +10,12 @@ class Settings:
     db_url: str = ""
     mlx_url: str = "http://127.0.0.1:11434"
     log_level: str = "INFO"
-    cors_origins: list[str] = field(default_factory=lambda: ["*"])
+    # E-E11: default CORS to an empty origin list (deny all cross-origin).
+    # The prior ["*"] let any web origin read API responses. Same-origin and
+    # non-browser clients (curl/fusion-cli/SDK) are unaffected by CORS; only
+    # browser XHR/fetch from another origin is gated. An operator opts in to
+    # specific origins via FMH_CORS_ORIGINS (comma-separated) in __post_init__.
+    cors_origins: list[str] = field(default_factory=list)
     max_upload_size_mb: int = 50000  # 50GB
     auth_enabled: bool = True
     storage_type: str = "local"
@@ -29,6 +34,14 @@ class Settings:
     precision_loss_threshold: float = 10.0
     mlx_internal_api_key: str = ""
     cache_dir: str = ""
+    api_key_pepper: str = ""
+    expose_metrics: bool = False
+    # E-E6: optional shared secret that the very first (bootstrap) API key
+    # creation must present. POST /auth/keys is public while zero active keys
+    # exist, so without this anyone who can reach the Hub can race to create
+    # the root admin key. If unset, bootstrap is still open but IP rate-limited
+    # (see routers/auth.py) — set the env in any shared/networked deployment.
+    auth_bootstrap_token: str = ""
 
     def __post_init__(self):
         if not self.cache_dir:
@@ -66,6 +79,16 @@ class Settings:
             self.auth_enabled = False
         elif auth_env in ("true", "1", "yes"):
             self.auth_enabled = True
+        # E-E11: wire the documented FMH_CORS_ORIGINS env (comma-separated).
+        # Previously the env was documented in README/CLAUDE.md but never read,
+        # so the only way to change CORS was to construct Settings() in code —
+        # impossible for the server entry point. Env takes precedence over the
+        # empty default; a literal "*" re-enables the legacy permissive mode.
+        cors_env = os.environ.get("FMH_CORS_ORIGINS", "")
+        if cors_env:
+            self.cors_origins = [
+                o.strip() for o in cors_env.split(",") if o.strip()
+            ]
         if not self.mlx_internal_api_key:
             import logging
             logger = logging.getLogger(__name__)
@@ -93,6 +116,19 @@ class Settings:
                 with open(mlx_settings) as f:
                     key = json.load(f).get("auth", {}).get("api_key", "")
                 if key:
+                    # E-S13: warn if the settings file is world/group-readable —
+                    # it holds the MLX auth key. We do not refuse to load (the
+                    # install would break) but surface the lax perms loudly.
+                    try:
+                        mode = os.stat(mlx_settings).st_mode & 0o777
+                        if mode & 0o077:
+                            logger.warning(
+                                "MLX settings file %s is group/other accessible "
+                                "(mode %o); tighten to 0600 to protect the auth key",
+                                mlx_settings, mode,
+                            )
+                    except OSError:
+                        pass
                     self.mlx_internal_api_key = key
                     logger.info("MLX API key loaded from %s", mlx_settings)
             except FileNotFoundError:
@@ -105,3 +141,29 @@ class Settings:
                 "FUSION_MLX_API_KEY not set — "
                 "Hub→MLX requests will have no Bearer token"
             )
+        if not self.api_key_pepper:
+            import hashlib
+            import logging
+            pepper_logger = logging.getLogger(__name__)
+            env_pepper = os.environ.get("FMH_API_KEY_PEPPER", "")
+            if env_pepper:
+                self.api_key_pepper = env_pepper
+                pepper_logger.info("API key pepper loaded from env FMH_API_KEY_PEPPER")
+            else:
+                # E-S4: derive a per-install pepper so API-key hashes are never
+                # bare SHA-256 even on a fresh install. The DB alone is useless
+                # for offline cracking without this secret. Rotating env
+                # FMH_API_KEY_PEPPER invalidates all keys (rotate keys after).
+                mac = hashlib.sha256(f"fmh-pepper|{self.data_dir}".encode()).digest()
+                self.api_key_pepper = mac.hex()
+                pepper_logger.warning(
+                    "FMH_API_KEY_PEPPER not set — derived install-local pepper "
+                    "(acceptable for single-node dev; set the env for production)"
+                )
+        # E-S11: /metrics leaks internal request/latency telemetry. Default to
+        # OFF — an operator must explicitly opt in via FMH_EXPOSE_METRICS=true.
+        # When off, the /metrics route 404s even with auth disabled.
+        if os.environ.get("FMH_EXPOSE_METRICS", "").lower() in ("true", "1", "yes"):
+            self.expose_metrics = True
+        if not self.auth_bootstrap_token:
+            self.auth_bootstrap_token = os.environ.get("FMH_AUTH_BOOTSTRAP_TOKEN", "")

@@ -41,8 +41,12 @@ def _parse_chip_generation(gpu_name: str) -> ChipGeneration:
 
 
 class HardwareDetector:
-    def __init__(self, mlx_url: str = "http://localhost:11434"):
+    def __init__(self, mlx_url: str = "http://localhost:11434", api_key: str = ""):
         self.mlx_url = mlx_url.rstrip("/")
+        # E-E10: carry the Hub->MLX internal key so /v1/hardware is not rejected
+        # when MLX enforces auth. The detector also invalidates on api_key drift
+        # via the engine singletons (see adapt/recommend routers).
+        self.api_key = api_key
         self._cache: HardwareProfile | None = None
         self._cache_time: float = 0
 
@@ -65,8 +69,11 @@ class HardwareDetector:
             return self._fallback_profile()
 
     async def _fetch_from_mlx(self) -> HardwareProfile:
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{self.mlx_url}/v1/hardware")
+            resp = await client.get(f"{self.mlx_url}/v1/hardware", headers=headers)
             resp.raise_for_status()
             data = resp.json()
 
