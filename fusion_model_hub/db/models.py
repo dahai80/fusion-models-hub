@@ -75,11 +75,11 @@ class Model(Base):
     __tablename__ = "models"
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
-    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), default="")
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     model_type: Mapped[ModelType] = mapped_column(Enum(ModelType), default=ModelType.LLM)
-    base_model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), default="")
+    base_model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=True)
     architecture: Mapped[str] = mapped_column(String(64), default="")
     params_size: Mapped[str] = mapped_column(String(16), default="")
     license: Mapped[str] = mapped_column(String(64), default="")
@@ -94,23 +94,33 @@ class Model(Base):
     ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     model_status: Mapped[ModelStatus] = mapped_column(Enum(ModelStatus), default=ModelStatus.DRAFT)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     versions: Mapped[list["ModelVersion"]] = relationship(
-        back_populates="model", cascade="all, delete-orphan", lazy="selectin",
+        back_populates="model",
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
     tags: Mapped[list["ModelTag"]] = relationship(
-        back_populates="model", cascade="all, delete-orphan", lazy="selectin",
+        back_populates="model",
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
     ratings: Mapped[list["ModelRating"]] = relationship(
-        back_populates="model", cascade="all, delete-orphan", lazy="selectin",
+        back_populates="model",
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
     favorites: Mapped[list["ModelFavorite"]] = relationship(
-        back_populates="model", cascade="all, delete-orphan", lazy="selectin",
+        back_populates="model",
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
     branches: Mapped[list["ModelBranch"]] = relationship(
-        back_populates="model", cascade="all, delete-orphan", lazy="selectin",
+        back_populates="model",
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
 
 
@@ -136,7 +146,7 @@ class ModelVersion(Base):
     encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
     license_type: Mapped[str] = mapped_column(String(64), default="")
     data_compliance: Mapped[str] = mapped_column(Text, default="{}")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     model: Mapped["Model"] = relationship(back_populates="versions")
 
@@ -170,9 +180,9 @@ class QuantizeTask(Base):
     status: Mapped[TaskStatus] = mapped_column(Enum(TaskStatus), default=TaskStatus.PENDING)
     output_version_id: Mapped[str] = mapped_column(String(16), default="")
     error_message: Mapped[str] = mapped_column(Text, default="")
-    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class UserRole(str, enum.Enum):
@@ -188,26 +198,26 @@ class Tenant(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(128), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class Role(Base):
     __tablename__ = "roles"
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
-    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), default="")
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     permissions: Mapped[str] = mapped_column(String(512), default="read")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class ApiKey(Base):
     __tablename__ = "api_keys"
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
-    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), default="")
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     key_prefix: Mapped[str] = mapped_column(String(8), default="")
@@ -217,21 +227,21 @@ class ApiKey(Base):
     qps_limit: Mapped[int] = mapped_column(Integer, default=0)
     allowed_models: Mapped[str] = mapped_column(String(512), default="")
     allowed_modules: Mapped[str] = mapped_column(String(256), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
-    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), default="")
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(32), nullable=False)
     resource_id: Mapped[str] = mapped_column(String(16), default="")
     api_key_id: Mapped[str] = mapped_column(String(16), default="")
     detail: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class ClusterNode(Base):
@@ -242,8 +252,8 @@ class ClusterNode(Base):
     url: Mapped[str] = mapped_column(String(256), nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="active")
     capabilities: Mapped[str] = mapped_column(String(256), default="inference,quantize")
-    last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class WebhookEvent(str, enum.Enum):
@@ -262,13 +272,13 @@ class Webhook(Base):
     __tablename__ = "webhooks"
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
-    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), default="")
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     url: Mapped[str] = mapped_column(String(512), nullable=False)
     secret: Mapped[str] = mapped_column(String(128), default="")
     events: Mapped[str] = mapped_column(String(512), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class DeploymentStatus(str, enum.Enum):
@@ -282,9 +292,9 @@ class Deployment(Base):
     __tablename__ = "deployments"
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
-    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), default="")
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
-    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), default="")
+    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     replicas: Mapped[int] = mapped_column(Integer, default=1)
     # H3: node this deployment is placed on. "local" = the hub's own
@@ -296,8 +306,8 @@ class Deployment(Base):
     gray_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     gray_version_id: Mapped[str] = mapped_column(String(16), default="")
     gray_traffic_ratio: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class EvaluationStatus(str, enum.Enum):
@@ -311,16 +321,16 @@ class EvaluationResult(Base):
     __tablename__ = "evaluation_results"
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
-    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), default="")
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
-    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), default="")
+    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=True)
     benchmark_name: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[EvaluationStatus] = mapped_column(Enum(EvaluationStatus), default=EvaluationStatus.PENDING)
     score: Mapped[float] = mapped_column(Float, default=0.0)
     metrics: Mapped[str] = mapped_column(Text, default="{}")
     error_message: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ScanStatus(str, enum.Enum):
@@ -335,13 +345,13 @@ class SecurityScan(Base):
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
-    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), default="")
+    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=True)
     scan_type: Mapped[str] = mapped_column(String(32), default="full")
     status: Mapped[ScanStatus] = mapped_column(Enum(ScanStatus), default=ScanStatus.PENDING)
     findings: Mapped[str] = mapped_column(Text, default="{}")
     risk_level: Mapped[str] = mapped_column(String(16), default="unknown")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Watermark(Base):
@@ -349,11 +359,11 @@ class Watermark(Base):
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
-    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), default="")
+    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=True)
     watermark_type: Mapped[str] = mapped_column(String(32), default="metadata")
     payload: Mapped[str] = mapped_column(Text, default="{}")
     signature: Mapped[str] = mapped_column(String(128), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class ApprovalStatus(str, enum.Enum):
@@ -373,16 +383,16 @@ class ApprovalRequest(Base):
     __tablename__ = "approval_requests"
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
-    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), default="")
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
-    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), default="")
+    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=True)
     level: Mapped[ApprovalLevel] = mapped_column(Enum(ApprovalLevel), default=ApprovalLevel.L1)
     status: Mapped[ApprovalStatus] = mapped_column(Enum(ApprovalStatus), default=ApprovalStatus.PENDING)
     requester: Mapped[str] = mapped_column(String(128), default="")
     approver: Mapped[str] = mapped_column(String(128), default="")
     comment: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class LoraMergeTask(Base):
@@ -396,8 +406,8 @@ class LoraMergeTask(Base):
     status: Mapped[TaskStatus] = mapped_column(Enum(TaskStatus), default=TaskStatus.PENDING)
     output_version_id: Mapped[str] = mapped_column(String(16), default="")
     error_message: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class DistributedTaskStatus(str, enum.Enum):
@@ -413,14 +423,15 @@ class DistributedTask(Base):
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
-    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), default="")
+    version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=True)
     target_nodes: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[DistributedTaskStatus] = mapped_column(
-        Enum(DistributedTaskStatus), default=DistributedTaskStatus.PENDING,
+        Enum(DistributedTaskStatus),
+        default=DistributedTaskStatus.PENDING,
     )
     progress: Mapped[str] = mapped_column(Text, default="{}")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class GitLfsLock(Base):
@@ -430,7 +441,7 @@ class GitLfsLock(Base):
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
     path: Mapped[str] = mapped_column(String(512), nullable=False)
     owner: Mapped[str] = mapped_column(String(128), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class ModelRating(Base):
@@ -441,7 +452,7 @@ class ModelRating(Base):
     user_id: Mapped[str] = mapped_column(String(128), default="")
     score: Mapped[int] = mapped_column(Integer, default=0)
     comment: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     model: Mapped["Model"] = relationship(back_populates="ratings")
 
@@ -452,7 +463,7 @@ class ModelFavorite(Base):
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(128), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     model: Mapped["Model"] = relationship(back_populates="favorites")
 
@@ -469,12 +480,12 @@ class ModelBranch(Base):
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
-    base_version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), default="")
-    head_version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), default="")
+    base_version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=True)
+    head_version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=True)
     status: Mapped[BranchStatus] = mapped_column(Enum(BranchStatus), default=BranchStatus.ACTIVE)
     description: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     model: Mapped["Model"] = relationship(back_populates="branches")
 
@@ -497,5 +508,5 @@ class DownloadTask(Base):
     file_path: Mapped[str] = mapped_column(String(512), default="")
     expected_sha256: Mapped[str] = mapped_column(String(64), default="")
     file_hash: Mapped[str] = mapped_column(String(64), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
