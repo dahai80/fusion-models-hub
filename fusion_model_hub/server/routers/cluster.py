@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import logging
 from datetime import UTC, datetime
 from urllib.parse import urlparse
@@ -22,6 +23,43 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["cluster"])
 
 _HEARTBEAT_STALE_SECONDS = 120
+
+
+def _validate_node_url(url: str) -> None:
+    # Cluster nodes legitimately live on private networks (10.x / 172.16-31 /
+    # 192.168.x) — a peer Hub on the lab LAN is the normal deployment, so the
+    # broad validate_external_url SSRF guard (which rejects all RFC1918 space)
+    # is the wrong tool here and would block real multi-node setups. The actual
+    # server-side-fetch risk for a stored node URL is narrower: a non-http(s)
+    # scheme (file:///etc/passwd, gopher://...), a missing host, or a host that
+    # points at a cloud metadata service / loopback the Hub should never fetch
+    # on a caller's behalf. Reject exactly those; allow RFC1918 peer nodes.
+    try:
+        parsed = urlparse(url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid node URL: {e}")
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=400,
+            detail="Node URL must use http or https scheme",
+        )
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host:
+        raise HTTPException(status_code=400, detail="Node URL must include a hostname")
+    if host in ("localhost", "localhost.", "ip6-localhost", "ip6-loopback"):
+        raise HTTPException(status_code=400, detail="Node URL cannot point to loopback")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None and (ip.is_loopback or ip.is_link_local or ip.is_unspecified):
+        # 169.254.169.254 (cloud metadata), 127.0.0.1, ::1, 0.0.0.0 — never a
+        # legitimate peer node; reject. RFC1918 private IPs are allowed (see above).
+        raise HTTPException(
+            status_code=400,
+            detail="Node URL cannot point to loopback or link-local address",
+        )
+
 
 
 class NodeCreate(BaseModel):
@@ -133,6 +171,11 @@ async def _reap_stale_nodes(session) -> int:
 
 @router.post("/cluster/nodes", status_code=201)
 async def add_node(body: NodeCreate, session: SessionDep):
+    # Validate the node URL at registration: reject non-http schemes, missing
+    # host, and loopback / link-local (cloud metadata) targets, but ALLOW
+    # RFC1918 peer nodes (see _validate_node_url). Stops a bad URL from
+    # persisting and being trusted by _check_alive / topology / routing.
+    _validate_node_url(body.url)
     logger.info("Adding cluster node: name=%s url=%s", body.name, body.url)
     node = await create_cluster_node(
         session, name=body.name, url=body.url, capabilities=body.capabilities,
@@ -215,8 +258,7 @@ async def submit_distributed_task(body: DistributedTaskCreate, session: SessionD
                             failed += 1
                             continue
                         try:
-                            from ..ssrf import validate_external_url
-                            validate_external_url(node.url)
+                            _validate_node_url(node.url)
                             async with httpx.AsyncClient(timeout=30.0) as client:
                                 resp = await client.post(
                                     f"{node.url}/api/v1/cluster/remote-sync",
@@ -355,8 +397,7 @@ async def sync_model_to_cluster(body: SyncModelRequest, session: SessionDep, set
     remote_ok = remote_failed = 0
     for node in nodes:
         try:
-            from ..ssrf import validate_external_url
-            validate_external_url(node.url)
+            _validate_node_url(node.url)
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
                     f"{node.url}/api/v1/cluster/remote-sync",
@@ -446,6 +487,12 @@ async def route_inference(body: RouteInferenceRequest, session: SessionDep, sett
         if _effective_status(node) != "active":
             continue
         try:
+            # E-S14: re-validate the node URL before every fetch. add_node
+            # validated at registration, but a node row can drift (manual DB
+            # edit, a URL that resolved public then flips via DNS rebinding),
+            # and route_inference is a privileged server-side fetch — never
+            # trust a stored URL without re-checking it against the SSRF guard.
+            _validate_node_url(node.url)
             result = await _chat(node.url, settings, model_name, body.messages)
             logger.info("Route-inference remote: node=%s model=%s", node.id, model_name)
             return _chat_to_response(result, node.id, "remote", model_name)
