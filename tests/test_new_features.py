@@ -333,6 +333,82 @@ class TestClusterRouteInference:
             })
             assert resp.status_code == 503
 
+    @pytest.mark.asyncio
+    async def test_route_inference_round_robin_balances_across_nodes(self, client):
+        # Issue #31: with 3 active nodes and mode=cluster, N sequential requests
+        # must spread evenly (round-robin), not all hit nodes[-1] (the
+        # created_at-DESC newest-registered node that the old failover loop hit
+        # every call). Mock _check_alive -> False to force the cluster branch,
+        # and mock _chat to echo the node URL so the response records which
+        # node served each call. The module counter is reset for determinism.
+        import fusion_model_hub.server.routers.cluster as cmod
+        cmod._round_robin_counter = __import__("itertools").count()
+
+        model = await client.post("/api/v1/models", json={"name": "rr-model"})
+        mid = model.json()["id"]
+
+        for i in range(3):
+            await client.post("/api/v1/cluster/nodes", json={
+                "name": f"node-{i}",
+                "url": f"http://10.0.0.{10+i}:11434",
+            })
+
+        async def _fake_chat(url, settings, model_name, messages):
+            return {"id": f"chat-{url}", "model": model_name,
+                    "choices": [{"message": {"role": "assistant", "content": url}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+
+        routed = []
+        with patch.object(cmod, "_check_alive", new=AsyncMock(return_value=False)), \
+             patch.object(cmod, "_chat", new=_fake_chat):
+            for _ in range(6):
+                resp = await client.post("/api/v1/cluster/route-inference", json={
+                    "model_id": mid,
+                    "mode": "cluster",
+                    "messages": [{"role": "user", "content": "ping"}],
+                })
+                assert resp.status_code == 200, resp.text
+                routed.append(resp.json()["routedTo"])
+
+        # 3 nodes, 6 calls -> exactly 2 per node (round-robin, not failover).
+        from collections import Counter
+        counts = Counter(routed)
+        assert len(counts) == 3, f"load not spread across all 3 nodes: {counts}"
+        assert set(counts.values()) == {2}, f"uneven distribution: {counts}"
+
+    @pytest.mark.asyncio
+    async def test_route_inference_round_robin_failover_within_call(self, client):
+        # Issue #31: round-robin rotates the START node, but iteration must
+        # still fall through to the rest of the active list on failure (failover
+        # preserved within a single call). Register 2 nodes; make the
+        # round-robin start node's _chat raise so the second node must serve.
+        import fusion_model_hub.server.routers.cluster as cmod
+        cmod._round_robin_counter = __import__("itertools").count()
+
+        model = await client.post("/api/v1/models", json={"name": "fo-model"})
+        mid = model.json()["id"]
+        await client.post("/api/v1/cluster/nodes", json={
+            "name": "node-0", "url": "http://10.0.0.20:11434"})
+        await client.post("/api/v1/cluster/nodes", json={
+            "name": "node-1", "url": "http://10.0.0.21:11434"})
+
+        async def _fake_chat(url, settings, model_name, messages):
+            if url.endswith(".20:11434"):
+                raise RuntimeError("node-0 down")
+            return {"id": "chat-ok", "model": model_name,
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+
+        with patch.object(cmod, "_check_alive", new=AsyncMock(return_value=False)), \
+             patch.object(cmod, "_chat", new=_fake_chat):
+            resp = await client.post("/api/v1/cluster/route-inference", json={
+                "model_id": mid,
+                "mode": "cluster",
+                "messages": [{"role": "user", "content": "ping"}],
+            })
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["content"] == "ok"
+
 
 class TestModelsourceEnum:
     def test_modelscope_in_enum(self):
