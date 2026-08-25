@@ -40,6 +40,15 @@ async def client(app, settings):
 
 
 def _mock_httpx_client(response_status=200, response_json=None, side_effect=None):
+    # H8: inference.py + cluster.py do `from .. import http_client as httpx` and
+    # read `httpx.AsyncClient` — which is the pooled PoolClient, NOT bare
+    # httpx.AsyncClient. A bare `patch("httpx.AsyncClient")` does NOT reach those
+    # call sites, so cluster/sync/route tests silently hit real httpx (DNS to a
+    # fake host -> 503, connect-refused -> False). Patch BOTH the bare symbol
+    # (low-frequency callers: repo search, benchmark, downloads) AND the pooled
+    # alias `http_client.AsyncClient` so the MLX-hot-path modules see the mock.
+    # Returns a context manager (ExitStack) usable as `with _mock_httpx_client():`.
+    import contextlib
     mock_resp = MagicMock()
     mock_resp.status_code = response_status
     mock_resp.json.return_value = response_json or {}
@@ -53,7 +62,15 @@ def _mock_httpx_client(response_status=200, response_json=None, side_effect=None
     else:
         mock_ctx.post = AsyncMock(return_value=mock_resp)
         mock_ctx.get = AsyncMock(return_value=mock_resp)
-    return patch("httpx.AsyncClient", return_value=mock_ctx)
+
+    @contextlib.contextmanager
+    def _ctx():
+        with patch("httpx.AsyncClient", return_value=mock_ctx), \
+             patch("fusion_model_hub.server.http_client.AsyncClient",
+                   return_value=mock_ctx):
+            yield
+
+    return _ctx()
 
 
 class TestRateLimiter:

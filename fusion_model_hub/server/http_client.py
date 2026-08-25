@@ -12,10 +12,15 @@ therefore reused across calls.
 Design constraints:
 - ``PoolClient`` subclasses ``httpx.AsyncClient``, so ``async with
   PoolClient(...) as c`` and ``await c.post(...)`` are unchanged.
-- Tests that do ``patch("...inference.httpx.AsyncClient", return_value=mock)``
-  still intercept, because ``inference`` imports this module as ``httpx`` and
-  reads ``httpx.AsyncClient`` (== ``PoolClient``); the mock supplies its own
-  ``__aenter__`` / ``__aexit__`` / ``post``.
+- Tests that mock the MLX hot path MUST patch BOTH bare ``httpx.AsyncClient``
+  (low-frequency callers: repo search, benchmark, downloads use real httpx)
+  AND ``fusion_model_hub.server.http_client.AsyncClient`` (== ``PoolClient`` —
+  what inference.py / cluster.py actually read via ``from .. import http_client
+  as httpx``). A bare ``patch("httpx.AsyncClient")`` alone does NOT reach those
+  call sites, so cluster/sync/route tests silently fall through to real httpx
+  (DNS to a fake host -> 503, connect-refused -> False). The
+  ``_mock_httpx_client`` helper in tests/test_new_features.py returns an
+  ExitStack that patches both symbols.
 - Per-call ``timeout`` passes straight through to the wrapper constructor and
   does not touch the shared transport, so serve (60s) and chat (120s) keep
   their own deadlines.
