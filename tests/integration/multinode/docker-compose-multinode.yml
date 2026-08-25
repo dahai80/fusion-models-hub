@@ -1,0 +1,88 @@
+# Multi-node scale load test stack.
+#
+# Topology:
+#   hub        — one fusion-model-hub container (FastAPI, Linux-runnable)
+#   mock-mlx-1..3 — deterministic MLX stubs (real MLX can't containerize)
+#   node 0 (real MLX) lives on the HOST at host.docker.internal:11434 —
+#     OrbStack exposes the host to containers, and _validate_node_url accepts
+#     host.docker.internal (not a loopback / link-local / metadata IP).
+#
+# The load driver (run on the host) registers all N nodes as cluster nodes in
+# the Hub, then fires concurrent /cluster/route-inference and measures
+# throughput / latency / per-node distribution.
+#
+# route_inference (mode=cluster) iterates nodes in list_cluster_nodes order
+# (created_at DESC = newest-registered first) and returns on the first success
+# — so under all-healthy nodes the NEWEST node serves every request (failover,
+# not round-robin). Earlier-registered nodes (e.g. real-mlx) are shadowed —
+# see issue #31. The driver exercises failover by dropping the dominant node.
+services:
+  hub:
+    build:
+      context: ../../..
+      dockerfile: tests/integration/multinode/Dockerfile
+    container_name: fmh-hub
+    ports:
+      - "11444:11444"
+    environment:
+      # Real MLX is node 0 — point the Hub's own FMH_MLX_URL at the host MLX
+      # so /health probes and local-mode inference work. host.docker.internal
+      # resolves to the host inside OrbStack/Docker Desktop.
+      FMH_MLX_URL: http://host.docker.internal:11434
+      FUSION_MLX_API_KEY: ${FUSION_MLX_API_KEY:-fg-admin-key}
+      MODEL_HUB_AUTH_ENABLED: "false"
+      FMH_EXPOSE_METRICS: "true"
+      FMH_DATA_DIR: /data
+    volumes:
+      - hub-data:/data
+    networks:
+      - multinode
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:11444/api/v1/system/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  mock-mlx-1:
+    build:
+      context: ../../..
+      dockerfile: tests/integration/multinode/Dockerfile.mock
+    container_name: mock-mlx-1
+    environment:
+      MOCK_NODE_NAME: mock-mlx-1
+      MOCK_PORT: "11434"
+      MOCK_DELAY_MS: "15"
+    networks:
+      - multinode
+
+  mock-mlx-2:
+    build:
+      context: ../../..
+      dockerfile: tests/integration/multinode/Dockerfile.mock
+    container_name: mock-mlx-2
+    environment:
+      MOCK_NODE_NAME: mock-mlx-2
+      MOCK_PORT: "11434"
+      MOCK_DELAY_MS: "15"
+    networks:
+      - multinode
+
+  mock-mlx-3:
+    build:
+      context: ../../..
+      dockerfile: tests/integration/multinode/Dockerfile.mock
+    container_name: mock-mlx-3
+    environment:
+      MOCK_NODE_NAME: mock-mlx-3
+      MOCK_PORT: "11434"
+      MOCK_DELAY_MS: "15"
+    networks:
+      - multinode
+
+networks:
+  multinode:
+    driver: bridge
+
+volumes:
+  hub-data:

@@ -1,0 +1,139 @@
+{
+  "args": {
+    "hub": "http://localhost:11444",
+    "concurrency": 32,
+    "requests": 150,
+    "real_mlx_url": "http://host.docker.internal:11434",
+    "model_id": "Qwen3-0.6B-4bit",
+    "mock_nodes": "mock-mlx-1:11434,mock-mlx-2:11434,mock-mlx-3:11434",
+    "out": "/tmp/scale_final2.json"
+  },
+  "started_at": "2026-08-25T16:56:58",
+  "scenarios": {
+    "S1_all_healthy": {
+      "total": 150,
+      "ok": 150,
+      "failed": 0,
+      "wall_seconds": 4.178,
+      "throughput_rps": 35.91,
+      "latency_ms": {
+        "p50": 827.96,
+        "p95": 1164.62,
+        "p99": 1373.01,
+        "mean": 804.09,
+        "min": 281.13,
+        "max": 1392.73
+      },
+      "node_distribution": {
+        "3c0a93c5fa314de0": 127,
+        "aecfae04f357439b": 17,
+        "b6fc7f8b23fd4734": 6
+      },
+      "errors": []
+    },
+    "S2_failover": {
+      "total": 150,
+      "ok": 149,
+      "failed": 1,
+      "wall_seconds": 22.197,
+      "throughput_rps": 6.71,
+      "latency_ms": {
+        "p50": 913.45,
+        "p95": 1493.36,
+        "p99": 18695.51,
+        "mean": 1471.99,
+        "min": 385.11,
+        "max": 21267.61
+      },
+      "node_distribution": {
+        "aecfae04f357439b": 115,
+        "b6fc7f8b23fd4734": 29,
+        "c0659bcdb8b74f9c": 5
+      },
+      "errors": [
+        {
+          "ok": false,
+          "status": 503,
+          "ms": 863.7217499926919,
+          "routedTo": null,
+          "error": "{\"detail\":\"No available node for inference routing\"}"
+        }
+      ]
+    },
+    "S3_real_mlx_only": {
+      "total": 150,
+      "ok": 10,
+      "failed": 140,
+      "wall_seconds": 66.68,
+      "throughput_rps": 0.15,
+      "latency_ms": {
+        "p50": 49729.44,
+        "p95": 65918.37,
+        "p99": 65918.37,
+        "mean": 49466.83,
+        "min": 31987.63,
+        "max": 65918.37
+      },
+      "node_distribution": {
+        "c0659bcdb8b74f9c": 10
+      },
+      "errors": [
+        {
+          "ok": false,
+          "status": 503,
+          "ms": 939.6111660025781,
+          "routedTo": null,
+          "error": "{\"detail\":\"No available node for inference routing\"}"
+        },
+        {
+          "ok": false,
+          "status": 503,
+          "ms": 1125.0129169930005,
+          "routedTo": null,
+          "error": "{\"detail\":\"No available node for inference routing\"}"
+        },
+        {
+          "ok": false,
+          "status": 503,
+          "ms": 1202.0074580068467,
+          "routedTo": null,
+          "error": "{\"detail\":\"No available node for inference routing\"}"
+        },
+        {
+          "ok": false,
+          "status": 503,
+          "ms": 1159.1841250046855,
+          "routedTo": null,
+          "error": "{\"detail\":\"No available node for inference routing\"}"
+        },
+        {
+          "ok": false,
+          "status": 503,
+          "ms": 1056.9896249944577,
+          "routedTo": null,
+          "error": "{\"detail\":\"No available node for inference routing\"}"
+        }
+      ]
+    }
+  },
+  "model_id": "01fa961da88141f2",
+  "nodes": [
+    {
+      "name": "real-mlx",
+      "id": "c0659bcdb8b74f9c"
+    },
+    {
+      "name": "mock-mlx-1",
+      "id": "b6fc7f8b23fd4734"
+    },
+    {
+      "name": "mock-mlx-2",
+      "id": "aecfae04f357439b"
+    },
+    {
+      "name": "mock-mlx-3",
+      "id": "3c0a93c5fa314de0"
+    }
+  ],
+  "finished_at": "2026-08-25T16:58:32"
+}
