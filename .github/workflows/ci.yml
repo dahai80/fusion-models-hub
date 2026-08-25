@@ -22,6 +22,8 @@ jobs:
         run: ruff check fusion_model_hub/ tests/
 
   test:
+    # Unit suite: default pytest run (addopts ignores the 4 integration files).
+    # Mocks httpx — no backing services, no real MLX. Coverage gate 60%.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,3 +35,87 @@ jobs:
       - name: Run tests with coverage
         run: |
           python -m pytest tests/ --cov=fusion_model_hub --cov-report=term-missing --cov-fail-under=60 -q
+
+  integration-multinode:
+    # Real multi-node smoke test: two in-process uvicorn hubs over loopback TCP.
+    # No backing services — binds 127.0.0.1 ports (SSRF guard now allows loopback
+    # for admin-gated node URLs). Verifies the cross-node HTTP plumbing the mocked
+    # unit suite skips.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[test]"
+      - name: Run multi-node integration tests
+        run: |
+          python -m pytest tests/test_integration_multinode.py -o addopts="" -q
+
+  integration-pg-minio:
+    # PG + MinIO integration: real PostgreSQL (asyncpg) + real MinIO (S3 chunked
+    # upload/assemble), AND the Alembic migration gate (alembic upgrade head on a
+    # fresh PG vs Base.metadata.create_all — the ORM-single-source-of-truth check).
+    # PG runs as a GHA service container (its default CMD boots the server).
+    # MinIO is started manually in a step: GHA `services:` cannot pass a `command`
+    # arg, and `minio/minio:latest` prints help and exits with no args, so the
+    # service container never became healthy. `docker run ... minio server /data`
+    # gives full control over the command. Tests skip self-managed compose
+    # (FMH_INT_NO_COMPOSE=1) since both services are already up.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fmh
+          POSTGRES_PASSWORD: fmh
+          POSTGRES_DB: fmh
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U fmh -d fmh"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      FMH_INT_NO_COMPOSE: "1"
+      FMH_INT_PG_HOST: 127.0.0.1
+      FMH_INT_PG_PORT: "5433"
+      FMH_INT_MINIO_ENDPOINT: 127.0.0.1:9000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start MinIO (server /data)
+        run: |
+          docker run -d --name fmh-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+      - name: Wait for MinIO ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9000/minio/health/ready >/dev/null; then
+              echo "MinIO ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO not ready"; docker logs fmh-minio; exit 1
+      - name: Install dependencies
+        run: pip install -e ".[test,integration]"
+      - name: Install psql client (migration gate uses the psql CLI)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Run PG/MinIO integration tests
+        run: |
+          python -m pytest tests/test_integration_pg_minio.py -o addopts="" -q
+      - name: Run migration gate (alembic upgrade head vs ORM metadata)
+        run: |
+          python -m pytest tests/test_integration_migration.py -o addopts="" -q
+
+# NOTE: test_integration_mlx.py is NOT in CI — it requires a real Apple Silicon
+# host running Fusion-MLX with a loaded model. Run it manually on a Mac:
+#   ~/claude-home/fusion-mlx/start.sh start
+#   pytest tests/test_integration_mlx.py -o addopts="" -q

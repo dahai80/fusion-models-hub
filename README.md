@@ -943,6 +943,9 @@ Environment variables:
 | `FMH_BENCH_URL` | `http://localhost:8081` | Fusion-Bench server URL (for auto bench trigger) |
 | `FMH_BENCH_AUTO_TRIGGER` | `true` | Auto-trigger bench after quantize task completes |
 | `FMH_PRECISION_LOSS_THRESHOLD` | `10.0` | Precision loss % threshold for quantize warning |
+| `FMH_DOWNLOAD_SPEED_LIMIT` | `0` | Download speed limit (kbps, 0=unlimited) |
+| `FMH_EXPOSE_METRICS` | `false` | Expose Prometheus `/metrics` endpoint (opt-in; 404s when off) |
+| `FMH_AUTH_BOOTSTRAP_TOKEN` | `` | Token gating first API-key creation (open bootstrap if unset) |
 | `FUSION_MLX_API_KEY` | `` | Bearer token for Hub→MLX requests (MLX_INTERNAL_API_KEY as deprecated fallback) |
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
@@ -958,6 +961,33 @@ Three long-lived secrets gate production deployments. Set all three via env (nev
 | `FMH_AUTH_BOOTSTRAP_TOKEN` | Gate on first API-key creation (open bootstrap otherwise) | open bootstrap (IP-rate-limited only) — not safe on a networked Hub |
 
 **Rotating these secrets:** see [`docs/secret-rotation-runbook.md`](docs/secret-rotation-runbook.md) for per-secret procedures, blast radius, rollback, multi-node notes, and a self-test drill. Key invariants: rotating `FMH_API_KEY_PEPPER` invalidates every existing API key (re-issue after); `FUSION_MLX_API_KEY` must match Fusion-MLX's own key (rotate both sides together).
+
+### Production deployment checklist
+
+Run through this before exposing a Hub on a network. Every item is a hard gate for commercial release; the dev defaults are NOT safe on a networked host.
+
+**Secrets (all three from the table above)**
+- [ ] `FMH_API_KEY_PEPPER` set to a high-entropy random value (≥32 bytes). Unset → per-install derived pepper, breaks multi-node key validity, logs a WARNING. Do NOT ship unset.
+- [ ] `FUSION_MLX_API_KEY` set AND equal to Fusion-MLX's `~/.fusion-mlx/settings.json` `auth.api_key` (admin-role key). Mismatch → MLX 401 "Admin authentication required" on `/v1/models`/`/load`/`/v1/chat/completions`, dead Hub→MLX path. Verify with `curl -H "Authorization: Bearer $FUSION_MLX_API_KEY" $FMH_MLX_URL/v1/models`.
+- [ ] `FMH_AUTH_BOOTSTRAP_TOKEN` set, OR bootstrap done + disabled. Unset on a networked host = open first-key creation (IP-rate-limited only).
+
+**Auth & network**
+- [ ] `MODEL_HUB_AUTH_ENABLED=true` (default). Disabling auth is dev-only.
+- [ ] `FMH_CORS_ORIGINS` set to explicit origins, not `*`.
+- [ ] `FMH_TLS_CERTFILE` / `FMH_TLS_KEYFILE` set for HTTPS, or fronted by a TLS-terminating reverse proxy. Hub never disables TLS verification internally.
+- [ ] `FMH_EXPOSE_METRICS=true` only behind auth/reverse-proxy; `/metrics` leaks request/latency telemetry.
+
+**Storage & data**
+- [ ] `FMH_STORAGE_TYPE` chosen: `local` (single node) or `minio` (shared/S3). For `minio`, set all `FMH_MINIO_*`.
+- [ ] `FMH_DB_URL` points at PostgreSQL for multi-node/shared deployments (SQLite is single-node only). Run `fusion-model-hub migrate` after pointing `FMH_ALEMBIC_URL` at the same PG.
+- [ ] `FMH_DATA_DIR` on persistent, backed-up storage.
+- [ ] `FMH_BACKUP_DIR` set if auto-backup desired (disabled if unset).
+
+**Runtime**
+- [ ] Fusion-MLX reachable at `FMH_MLX_URL`; `start.sh status` shows healthy + model loaded.
+- [ ] Python 3.12+ (declared in `pyproject.toml` `requires-python` and the monorepo `.python-version`). A 3.14 venv works but the contract is 3.12; pin to avoid surprise stdlib/dep breaks.
+- [ ] `pytest` green (864 unit tests, default run) and `ruff check .` clean before tagging a release.
+- [ ] Integration suites pass in CI when changed: `test_integration_multinode`, `test_integration_pg_minio`, `test_integration_migration` (see `.github/workflows/ci.yml`). MLX integration (`test_integration_mlx`) is manual — Apple Silicon only.
 
 ## CLI
 
@@ -1008,6 +1038,21 @@ pytest --cov=fusion_model_hub --cov-report=term-missing
 # Start Fusion-MLX (for integration tests)
 ~/claude-home/fusion-mlx/start.sh start
 ```
+
+## Release-Blockers Changelog (v1.0.16 → v1.0.17)
+
+Production-readiness audit follow-up. Three blockers + four minor items closed on branch `fix/release-blockers-ssrf-ci-env`.
+
+| Fix | Change |
+|-----|--------|
+| SSRF guard allows loopback for admin-gated node URLs | `routers/cluster.py` `_validate_node_url`: rejects only non-http(s) schemes, missing host, link-local (cloud-metadata `169.254.169.254`), and unspecified (`0.0.0.0`) targets — but allows loopback + RFC1918 peer nodes. The broad `validate_external_url` SSRF guard blocked legitimate same-host multi-port Hub peers and broke the multi-node integration test. Strict guard unchanged for untrusted caller-supplied fetches (`sync_registry`, `downloads`). |
+| Integration tests gated in CI | `.github/workflows/ci.yml`: added `integration-multinode` (loopback, no services) and `integration-pg-minio` (postgres:16 + minio service containers → pg_minio + Alembic migration gate, `FMH_INT_NO_COMPOSE=1`). MLX integration stays manual (Apple Silicon only). `psycopg[binary]` added to `[integration]` extra so the migration gate no longer skips. |
+| RuntimeWarning mock artifact | `tests/test_enterprise.py`: pinned mock `resp.raise_for_status` to a sync `MagicMock` (was auto-async → coroutine-never-awaited warning at `inference.py:302`). |
+| Production deployment checklist | `README.md`: added checklist (secrets, auth/network, storage/data, runtime) + missing env vars (`FMH_API_KEY_PEPPER`, `FMH_AUTH_BOOTSTRAP_TOKEN`, `FMH_EXPOSE_METRICS`, `FMH_DOWNLOAD_SPEED_LIMIT`). |
+| Coverage gaps closed | `tests/test_coverage_release.py` (26 tests): `recommend/scorer.py` 47→100%, `cli/main.py` 0→93%, `cli/recommend.py` 0→98%, `storage/minio_store.py` 66→97%. |
+| MLX 401 root cause | Verified NOT a defect — MLX returns 200 with the correct `auth.api_key`, 401 with wrong/missing key (expected). Root cause is Hub key resolution (env → settings.json fallback), documented in README. No upstream issue filed. |
+
+Test count: 864 → 890. Coverage: 79% → 81%.
 
 ## Patch Changelog (v1.0.15 → v1.0.16)
 

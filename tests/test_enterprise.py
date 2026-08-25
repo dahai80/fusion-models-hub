@@ -605,7 +605,7 @@ class TestInferenceTenantIsolation:
 
     @pytest.mark.asyncio
     async def test_cross_tenant_serve_is_denied(self, client):
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from fusion_model_hub.server.auth import set_auth_enabled
         set_auth_enabled(True)
@@ -632,7 +632,13 @@ class TestInferenceTenantIsolation:
                 headers={"X-API-Key": key_b},
             )
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=AsyncMock(status_code=200, text="ok"))
+            # raise_for_status is SYNC on a real httpx.Response — an AsyncMock
+            # resp inherits it as AsyncMock, whose call returns an un-awaited
+            # coroutine (RuntimeWarning). Pin it to a sync MagicMock so the
+            # mock shape matches production (inference.py:302 resp.raise_for_status()).
+            _load_resp = AsyncMock(status_code=200, text="ok")
+            _load_resp.raise_for_status = MagicMock()
+            mock_client.post = AsyncMock(return_value=_load_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             with patch("fusion_model_hub.server.routers.inference.httpx.AsyncClient", return_value=mock_client):
