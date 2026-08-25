@@ -50,6 +50,7 @@ addopts = [
     "--ignore=tests/test_integration_pg_minio.py",
     "--ignore=tests/test_integration_multinode.py",
     "--ignore=tests/test_integration_mlx.py",
+    "--ignore=tests/test_integration_migration.py",
 ]
 
 [tool.ruff]
