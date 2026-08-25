@@ -134,15 +134,21 @@ async def pull_from_remote(body: SyncPullRequest, session: SessionDep, settings:
     for rv in remote_versions:
         if body.version_ids and rv.get("id") not in body.version_ids:
             continue
-        v = await crud.create_version(
-            session,
-            model_id=new_m.id,
-            version=rv.get("version", ""),
-            format=rv.get("format", "mlx"),
-            quantization=rv.get("quantization", "4bit"),
-            file_size=rv.get("file_size", 0),
-        )
-        pulled_versions.append(v.id)
+        try:
+            v = await crud.create_version(
+                session,
+                model_id=new_m.id,
+                version=rv.get("version", ""),
+                format=rv.get("format", "mlx"),
+                quantization=rv.get("quantization", "4bit"),
+                file_size=rv.get("file_size", 0),
+            )
+        except crud.VersionConflictError:
+            # P1-D: duplicate version on a re-sync — skip rather than 500.
+            logger.warning("Sync: version %s/%s already exists, skipping", new_m.id, rv.get("version", ""))
+            continue
+        if v:
+            pulled_versions.append(v.id)
     logger.info("Pulled model %s with %d versions from %s", new_m.id, len(pulled_versions), body.source_url)
     return {
         "status": "pulled",

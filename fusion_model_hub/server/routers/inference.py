@@ -13,6 +13,7 @@ from ...db import crud
 from ...db.models import ModelStatus
 from ..deps import SessionDep, SettingsDep, get_session_factory
 from ..errors import safe_http_error
+from .models import _check_model_owner, _check_model_read
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
@@ -224,10 +225,15 @@ class ServeRequest(BaseModel):
 
 
 @router.post("/models/{model_id}/serve")
-async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, settings: SettingsDep):
+async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, settings: SettingsDep, request: Request):
     m = await crud.get_model(session, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
+
+    # P0-C: tenant isolation — a non-admin caller may only serve models in their
+    # own tenant. Without this, tenant A's key could serve (and thus load on the
+    # shared MLX) tenant B's model by id.
+    _check_model_owner(m, request)
 
     if m.model_status == ModelStatus.DRAFT:
         raise HTTPException(status_code=403, detail="Model not published. Only published models can be served.")
@@ -325,7 +331,9 @@ class HotReloadRequest(BaseModel):
 
 
 @router.post("/models/{model_id}/hot-reload")
-async def hot_reload_model(model_id: str, body: HotReloadRequest, session: SessionDep, settings: SettingsDep):
+async def hot_reload_model(
+    model_id: str, body: HotReloadRequest, session: SessionDep, settings: SettingsDep, request: Request,
+):
     # FR-015 zero-downtime hot reload: preload new version, swap served record,
     # then dispatch webhook. MLX loads by hf_repo; version swap is recorded at
     # hub layer. Real model swap handled by gateway/MLX routing. Hub does
@@ -339,6 +347,8 @@ async def hot_reload_model(model_id: str, body: HotReloadRequest, session: Sessi
     m = await crud.get_model(session, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
+    # P0-C: tenant isolation on hot-reload (write op).
+    _check_model_owner(m, request)
     v = await crud.get_version(session, body.version_id)
     if not v or v.model_id != model_id:
         raise HTTPException(status_code=404, detail="Target version not found for this model")
@@ -397,11 +407,18 @@ async def hot_reload_model(model_id: str, body: HotReloadRequest, session: Sessi
 
 
 @router.delete("/models/{model_id}/serve")
-async def unload_model(model_id: str, settings: SettingsDep):
+async def unload_model(model_id: str, settings: SettingsDep, session: SessionDep, request: Request):
     async with _loaded_lock:
         if model_id not in _loaded_models:
             raise HTTPException(status_code=404, detail="Model not loaded")
         model_name = _loaded_models[model_id]["model_name"]
+
+    # P0-C: tenant isolation — only the model's tenant (or admin) may unload it.
+    # A served model always has a DB row, so a miss is the test-injected loaded
+    # shortcut; production rows are checked and ownership enforced.
+    m = await crud.get_model(session, model_id)
+    if m:
+        _check_model_owner(m, request)
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -420,7 +437,14 @@ async def unload_model(model_id: str, settings: SettingsDep):
 
 
 @router.get("/models/{model_id}/serve")
-async def get_serve_status(model_id: str):
+async def get_serve_status(model_id: str, session: SessionDep, request: Request):
+    # P0-C: tenant isolation on read — a key scoped to tenant A must not see
+    # tenant B's serve status (which leaks the served version + mlx model name).
+    # A non-existent id returns not_loaded (200) to avoid leaking existence; a
+    # real served row is checked and isolation enforced.
+    m = await crud.get_model(session, model_id)
+    if m:
+        _check_model_read(m, request)
     info = _loaded_models.get(model_id)
     if not info:
         return {"model_id": model_id, "status": "not_loaded"}
@@ -428,26 +452,40 @@ async def get_serve_status(model_id: str):
 
 
 @router.post("/models/{model_id}/pin")
-async def pin_model(model_id: str, session: SessionDep):
-    m = await crud.update_model(session, model_id, pinned=True)
-    if not m:
+async def pin_model(model_id: str, session: SessionDep, request: Request):
+    existing = await crud.get_model(session, model_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Model not found")
+    # P0-C: tenant isolation — pin is a write; only the owner tenant / admin.
+    _check_model_owner(existing, request)
+    await crud.update_model(session, model_id, pinned=True)
     logger.info("Model pinned: id=%s", model_id)
     return {"model_id": model_id, "pinned": True}
 
 
 @router.delete("/models/{model_id}/pin")
-async def unpin_model(model_id: str, session: SessionDep):
-    m = await crud.update_model(session, model_id, pinned=False)
-    if not m:
+async def unpin_model(model_id: str, session: SessionDep, request: Request):
+    existing = await crud.get_model(session, model_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Model not found")
+    # P0-C: tenant isolation on unpin (write).
+    _check_model_owner(existing, request)
+    await crud.update_model(session, model_id, pinned=False)
     logger.info("Model unpinned: id=%s", model_id)
     return {"model_id": model_id, "pinned": False}
 
 
 @router.post("/inference/{model_id}/chat")
-async def chat_completion(model_id: str, body: dict, settings: SettingsDep, request: Request):
+async def chat_completion(model_id: str, body: dict, settings: SettingsDep, request: Request, session: SessionDep):
     await _check_module_access(model_id, request)
+    # P0-C: tenant isolation — a key scoped to tenant A must not run inference
+    # against tenant B's model by id (cross-tenant read -> 404, no existence leak).
+    # A served model always has a DB row (serve_model creates-then-loads), so the
+    # get_model miss path is only the test-injected _loaded_models shortcut; in
+    # production the row exists and the read check enforces isolation.
+    m = await crud.get_model(session, model_id)
+    if m:
+        _check_model_read(m, request)
     info = _loaded_models.get(model_id)
     if not info:
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")
@@ -499,8 +537,14 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
 
 
 @router.post("/inference/{model_id}/completions")
-async def text_completion(model_id: str, body: dict, settings: SettingsDep, request: Request):
+async def text_completion(model_id: str, body: dict, settings: SettingsDep, request: Request, session: SessionDep):
     await _check_module_access(model_id, request)
+    # P0-C: tenant isolation on inference read (cross-tenant -> 404). A served
+    # model always has a DB row, so a miss is only the test-injected loaded
+    # shortcut; production rows are checked and isolation enforced.
+    m = await crud.get_model(session, model_id)
+    if m:
+        _check_model_read(m, request)
     info = _loaded_models.get(model_id)
     if not info:
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")
@@ -548,8 +592,14 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
 
 
 @router.post("/inference/{model_id}/embeddings")
-async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: Request):
+async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: Request, session: SessionDep):
     await _check_module_access(model_id, request)
+    # P0-C: tenant isolation on inference read (cross-tenant -> 404). A served
+    # model always has a DB row, so a miss is only the test-injected loaded
+    # shortcut; production rows are checked and isolation enforced.
+    m = await crud.get_model(session, model_id)
+    if m:
+        _check_model_read(m, request)
     info = _loaded_models.get(model_id)
     if not info:
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")

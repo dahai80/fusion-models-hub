@@ -554,6 +554,104 @@ class TestAuthMiddleware:
             set_auth_enabled(False)
 
 
+class TestInferenceTenantIsolation:
+    # P0-C: a tenant-A key must NOT read/serve/inference a tenant-B model by
+    # id. Cross-tenant read -> 404 (no existence leak); cross-tenant write
+    # (serve) -> 403. Uses real DB rows + real tenant-scoped keys, not the
+    # _loaded_models shortcut, so the get_model-then-check path is exercised.
+    @staticmethod
+    async def _mkkey(client, body, headers=None):
+        resp = await client.post("/api/v1/auth/keys", json=body, headers=headers or {})
+        assert resp.status_code == 201, resp.text
+        return resp.json()["key"]
+
+    @pytest.mark.asyncio
+    async def test_cross_tenant_serve_status_is_denied(self, client):
+        from fusion_model_hub.server.auth import set_auth_enabled
+        from fusion_model_hub.server.routers import inference as inf_mod
+        set_auth_enabled(True)
+        try:
+            root = await self._mkkey(client, {"name": "root", "role": "admin"})
+            key_a = await self._mkkey(
+                client, {"name": "ka", "tenant_id": "tenA", "role": "developer"}, {"X-API-Key": root},
+            )
+            key_b = await self._mkkey(
+                client, {"name": "kb", "tenant_id": "tenB", "role": "developer"}, {"X-API-Key": root},
+            )
+            # tenant B owns the model (key carries tenant_id into create).
+            mb = (await client.post("/api/v1/models", json={
+                "name": "b-only", "description": "x",
+                "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
+            }, headers={"X-API-Key": key_b})).json()
+            await client.post(f"/api/v1/models/{mb['id']}/publish", headers={"X-API-Key": key_b})
+            # served (loaded) state injected — read path checks DB tenant, not MLX.
+            inf_mod._loaded_models.clear()
+            inf_mod._loaded_models[mb["id"]] = {
+                "version_id": "v1", "model_name": "b-only", "status": "loaded", "loaded_at": 0.0,
+            }
+            # owner (tenant B) reads -> 200.
+            own = await client.get(
+                f"/api/v1/models/{mb['id']}/serve", headers={"X-API-Key": key_b},
+            )
+            assert own.status_code == 200, own.text
+            # cross-tenant (tenant A) reads -> 404, no existence leak.
+            cross = await client.get(
+                f"/api/v1/models/{mb['id']}/serve", headers={"X-API-Key": key_a},
+            )
+            assert cross.status_code == 404, cross.text
+            inf_mod._loaded_models.clear()
+        finally:
+            set_auth_enabled(False)
+
+    @pytest.mark.asyncio
+    async def test_cross_tenant_serve_is_denied(self, client):
+        from unittest.mock import AsyncMock, patch
+
+        from fusion_model_hub.server.auth import set_auth_enabled
+        set_auth_enabled(True)
+        try:
+            root = await self._mkkey(client, {"name": "root2", "role": "admin"})
+            key_a = await self._mkkey(
+                client, {"name": "ka2", "tenant_id": "tenA", "role": "developer"}, {"X-API-Key": root},
+            )
+            key_b = await self._mkkey(
+                client, {"name": "kb2", "tenant_id": "tenB", "role": "developer"}, {"X-API-Key": root},
+            )
+            mb = (await client.post("/api/v1/models", json={
+                "name": "b-only2", "description": "x",
+                "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
+            }, headers={"X-API-Key": key_b})).json()
+            # publish needs admin — root (admin, no tenant) bypasses the owner
+            # check so B's developer key can subsequently serve its own model.
+            await client.post(f"/api/v1/models/{mb['id']}/publish", headers={"X-API-Key": root})
+            # serve needs a version; create + publish one via B's key.
+            await client.post(
+                f"/api/v1/models/{mb['id']}/versions",
+                data={"version": "1.0.0", "format": "mlx", "quantization": "4bit"},
+                files={"file": ("", b"")},
+                headers={"X-API-Key": key_b},
+            )
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=AsyncMock(status_code=200, text="ok"))
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            with patch("fusion_model_hub.server.routers.inference.httpx.AsyncClient", return_value=mock_client):
+                # owner (tenant B) serves -> 200.
+                own = await client.post(
+                    f"/api/v1/models/{mb['id']}/serve", json={}, headers={"X-API-Key": key_b},
+                )
+                assert own.status_code == 200, own.text
+                # cross-tenant (tenant A) serves -> 403 (owner check, not read).
+                cross = await client.post(
+                    f"/api/v1/models/{mb['id']}/serve", json={}, headers={"X-API-Key": key_a},
+                )
+                assert cross.status_code == 403, cross.text
+            from fusion_model_hub.server.routers import inference as inf_mod
+            inf_mod._loaded_models.clear()
+        finally:
+            set_auth_enabled(False)
+
+
 class TestSelectiveExport:
     @pytest.mark.asyncio
     async def test_export_all(self, client):

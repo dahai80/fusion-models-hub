@@ -50,6 +50,7 @@ addopts = [
     "--ignore=tests/test_integration_pg_minio.py",
     "--ignore=tests/test_integration_multinode.py",
     "--ignore=tests/test_integration_mlx.py",
+    "--ignore=tests/test_integration_migration.py",
 ]
 
 [tool.ruff]
@@ -74,6 +75,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "RUF059", "F841", "E501", "SIM117", "SIM222"]
+# alembic/versions are autogenerate output — never hand-edited for style.
+"alembic/versions/**" = ["E", "F", "I", "UP", "B", "SIM", "PIE", "RUF", "ASYNC", "S"]
 
 [tool.setuptools.packages.find]
 include = ["fusion_model_hub*"]

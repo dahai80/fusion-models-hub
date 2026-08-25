@@ -477,14 +477,24 @@ async def import_from_hf(body: HfImportRequest, session: SessionDep):
         downloader = ModelDownloader()
         result = await downloader.download(download_url, name)
         if result.get("status") == "completed":
-            version = await crud.create_version(
-                session,
-                model_id=m.id,
-                version="hf-default",
-                file_path=result["path"],
-                file_size=result.get("size_bytes", 0),
-            )
-            logger.info("Downloaded HF model files: repo=%s version_id=%s path=%s", hf_repo, version.id, result["path"])
+            try:
+                version = await crud.create_version(
+                    session,
+                    model_id=m.id,
+                    version="hf-default",
+                    file_path=result["path"],
+                    file_size=result.get("size_bytes", 0),
+                )
+            except crud.VersionConflictError:
+                # P1-D: a concurrent import already created hf-default for this
+                # new model — rare (new id each import) but guard against 500.
+                version = None
+                logger.warning("HF import: hf-default already exists for model=%s", m.id)
+            if version:
+                logger.info(
+                    "Downloaded HF model files: repo=%s version_id=%s path=%s",
+                    hf_repo, version.id, result["path"],
+                )
         else:
             logger.warning("HF model download failed: repo=%s error=%s", hf_repo, result.get("error", "unknown"))
 

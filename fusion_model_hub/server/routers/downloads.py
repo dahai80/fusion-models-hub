@@ -163,8 +163,28 @@ async def _run_download(task_id: str, source_url: str, settings):
                 if t:
                     expected_sha256 = (t.expected_sha256 or "").lower()
 
+            # E-S14: follow_redirects=True is required for CDN LFS hops (HF →
+            # cdn-lfs.huggingface.co), but a public source_url can 302 to an
+            # internal address. validate_external_url ran once at submit time,
+            # but a redirect target is a different URL — re-validate each
+            # redirect target via an async event hook so an internal redirect
+            # is refused rather than silently followed into SSRF. Mirrors the
+            # repo/downloader.py _ssrf_guard pattern.
+            async def _ssrf_guard(request: httpx.Request) -> None:
+                try:
+                    validate_external_url(str(request.url))
+                except Exception as guard_exc:
+                    logger.warning(
+                        "SSRF guard rejected redirect to %s: %s",
+                        request.url.host, guard_exc,
+                    )
+                    raise
+
             async with (
-                httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client,
+                httpx.AsyncClient(
+                    timeout=300.0, follow_redirects=True,
+                    event_hooks={"request": [_ssrf_guard]},
+                ) as client,
                 client.stream("GET", source_url, headers=headers) as resp,
             ):
                     if resp.status_code not in (200, 206):

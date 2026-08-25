@@ -11,7 +11,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from ...db import crud
-from ...db.crud import EvaluationThresholdError, InvalidTransition
+from ...db.crud import EvaluationThresholdError, InvalidTransition, VersionConflictError
 from ...db.models import ModelFormat, Quantization, VersionStatus
 from ...repo.downloader import ModelDownloader
 from ..deps import SessionDep, SettingsDep, StoreDep
@@ -166,13 +166,16 @@ async def upload_version(
             file_path = str(target_path)
         logger.info("Uploaded file for model=%s version=%s size=%d", model_id, version, file_size)
 
-    v = await crud.create_version(
-        session,
-        model_id=model_id, version=version, format=format,
-        quantization=quantization, file_path=file_path,
-        file_hash=file_hash, file_size=file_size,
-        release_notes=release_notes,
-    )
+    try:
+        v = await crud.create_version(
+            session,
+            model_id=model_id, version=version, format=format,
+            quantization=quantization, file_path=file_path,
+            file_hash=file_hash, file_size=file_size,
+            release_notes=release_notes,
+        )
+    except VersionConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     if not v:
         raise HTTPException(status_code=500, detail="Failed to create version")
     return _version_to_dict(v)
@@ -230,13 +233,16 @@ async def chunk_upload_version(
         logger.warning("Assembled upload exceeds cap: upload=%s size=%d", upload_id, size)
         raise HTTPException(status_code=413, detail="Assembled upload exceeds max_upload_size_mb")
 
-    v = await crud.create_version(
-        session,
-        model_id=model_id, version=version, format=format,
-        quantization=quantization, file_path=str(path),
-        file_hash=hash_val, file_size=size,
-        release_notes=release_notes,
-    )
+    try:
+        v = await crud.create_version(
+            session,
+            model_id=model_id, version=version, format=format,
+            quantization=quantization, file_path=str(path),
+            file_hash=hash_val, file_size=size,
+            release_notes=release_notes,
+        )
+    except VersionConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     if not v:
         raise HTTPException(status_code=500, detail="Failed to create version")
     return _version_to_dict(v)
@@ -517,17 +523,26 @@ async def download_version_from_url(
         sf = get_session_factory()
         if result.get("status") == "completed":
             async with sf() as s:
-                await crud.create_version(
-                    s,
-                    model_id=model_id,
-                    version=version,
-                    format=body.format,
-                    quantization=body.quantization,
-                    file_path=result.get("path", ""),
-                    file_hash=result.get("hash", body.expected_hash),
-                    file_size=result.get("size_bytes", 0),
-                    release_notes=body.release_notes,
-                )
+                try:
+                    await crud.create_version(
+                        s,
+                        model_id=model_id,
+                        version=version,
+                        format=body.format,
+                        quantization=body.quantization,
+                        file_path=result.get("path", ""),
+                        file_hash=result.get("hash", body.expected_hash),
+                        file_size=result.get("size_bytes", 0),
+                        release_notes=body.release_notes,
+                    )
+                except VersionConflictError:
+                    # P1-D: a concurrent upload/download already created this
+                    # version — the bytes are already on disk under the same
+                    # path, so mark the task completed rather than crashing it.
+                    logger.warning(
+                        "URL download: version %s/%s already exists, marking task completed",
+                        model_id, version,
+                    )
                 await crud.update_download_task(
                     s, dl_task_id, status="completed",
                     file_path=result.get("path", ""),
@@ -701,18 +716,29 @@ async def import_model_tar(
                         target.parent.mkdir(parents=True, exist_ok=True)
                         target.write_bytes(f.read())
 
+            imported = 0
             for v_data in metadata.get("versions", []):
                 _version_dir = model_dir / v_data.get("version", "unknown")
-                await crud.create_version(
-                    session,
-                    model_id=m.id,
-                    version=v_data.get("version", ""),
-                    file_hash=v_data.get("file_hash", ""),
-                    file_size=v_data.get("file_size", 0),
-                    release_notes="imported from tar",
-                )
+                try:
+                    await crud.create_version(
+                        session,
+                        model_id=m.id,
+                        version=v_data.get("version", ""),
+                        file_hash=v_data.get("file_hash", ""),
+                        file_size=v_data.get("file_size", 0),
+                        release_notes="imported from tar",
+                    )
+                    imported += 1
+                except VersionConflictError:
+                    # P1-D: re-importing a tar with an existing version is
+                    # idempotent — skip the duplicate rather than failing the
+                    # whole import.
+                    logger.warning(
+                        "Tar import: version %s/%s already exists, skipping",
+                        m.id, v_data.get("version", ""),
+                    )
 
             logger.info("Imported model from tar: name=%s id=%s", name, m.id)
-            return {"id": m.id, "name": m.name, "versions_imported": len(metadata.get("versions", []))}
+            return {"id": m.id, "name": m.name, "versions_imported": imported}
     except tarfile.TarError as e:
         raise HTTPException(status_code=400, detail=f"Invalid tar file: {e}")
