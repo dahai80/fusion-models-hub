@@ -8,6 +8,13 @@ from .models import Base
 
 logger = logging.getLogger(__name__)
 
+# Track every async engine created in this process so they can be disposed
+# deterministically. aiosqlite spawns a background worker thread bound to the
+# event loop; if the engine is never disposed, the worker wakes after the loop
+# closes and raises `RuntimeError: Event loop is closed`. This registry lets
+# tests (conftest) and the server lifespan dispose all engines before teardown.
+_engines: list = []
+
 # R9: SQLite default journal mode is DELETE — readers block the single writer
 # and a contended write fails immediately with "database is locked". WAL allows
 # concurrent readers alongside one writer; busy_timeout makes a contended write
@@ -29,6 +36,7 @@ def get_engine(db_url: str = ""):
     if not db_url:
         db_url = "sqlite+aiosqlite:///./data/hub.db"
     engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
+    _engines.append(engine)
     if _is_file_sqlite(db_url):
         @event.listens_for(engine.sync_engine, "connect")
         def _set_sqlite_pragmas(dbapi_conn, _record):
@@ -54,3 +62,15 @@ async def init_db(engine) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database initialized: %s", engine.url)
+
+
+async def dispose_all_engines() -> None:
+    global _engines
+    pending = _engines
+    _engines = []
+    for engine in pending:
+        try:
+            await engine.dispose()
+        except Exception as e:
+            logger.warning("Failed to dispose engine %s: %s", engine.url, e)
+    logger.info("Disposed %d async engine(s)", len(pending))
