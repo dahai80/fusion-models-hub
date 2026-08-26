@@ -145,6 +145,12 @@ class MinioStore(StorageBackend):
         except Exception:
             return None
 
+    def put_lfs_object(self, oid: str, data: bytes) -> Path:
+        raise NotImplementedError("Git LFS object upload not implemented for MinioStore")
+
+    def get_lfs_object(self, oid: str) -> Path | None:
+        raise NotImplementedError("Git LFS object download not implemented for MinioStore")
+
     def delete_version_files(self, model_id: str, version: str) -> bool:
         client = self._get_client()
         prefix = f"{model_id}/{version}/"

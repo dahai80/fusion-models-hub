@@ -166,7 +166,10 @@ async def _run_quantize(
                 if result.get("status") == "completed" and out_path:
                     try:
                         cache = get_cache_manager()
-                        cache.put(
+                        # P1-6/P1-8: offload the multi-GB copy+SHA256 to a
+                        # worker thread so the loop isn't blocked while the
+                        # quantized artifact is cached.
+                        await cache.put_async(
                             model_id=model_id,
                             level=CacheLevel.QUANTIZED,
                             source_path=out_path,
@@ -211,6 +214,12 @@ async def _run_quantize(
             # can still recover if even this commit fails.
             new_ver = None
             async with session_factory() as session:
+                # P1-17 / H4: autocommit=False on BOTH so they flush into the one
+                # open session; the `async with` exit commits the transaction once.
+                # Before, create_version committed on its own, then update_quantize_task
+                # committed again — a crash between them orphaned a version AND left
+                # the task RUNNING forever (reconcile only fixes PENDING/RUNNING
+                # orphans, not a committed-but-unlinked version).
                 new_ver = await create_version(
                     session,
                     model_id=source_ver.model_id,
@@ -221,6 +230,7 @@ async def _run_quantize(
                     file_hash=output_hash,
                     file_size=output_size,
                     release_notes=f"Auto-quantized from {source_ver.version} ({quant_bits}-bit)",
+                    autocommit=False,
                 )
                 if new_ver:
                     await update_quantize_task(
@@ -229,7 +239,13 @@ async def _run_quantize(
                         status=TaskStatus.COMPLETED,
                         output_version_id=new_ver.id,
                         completed_at=datetime.now(UTC),
+                        autocommit=False,
                     )
+                # P1-17 / H4: AsyncSession.__aexit__ does NOT autocommit — an
+                # open transaction with pending changes is rolled back on close.
+                # autocommit=False above only flushed; commit explicitly here so
+                # the version-create and the task COMPLETED land as one tx.
+                await session.commit()
 
             if new_ver:
                 logger.info("Quantize task completed: id=%s output_ver=%s", task_id, new_ver.id)

@@ -145,6 +145,28 @@ def _run_migrate(args):
         logger.info("Migrated to head")
 
 
+def _run_restore(args):
+    from ..db.database import get_engine, init_db
+    from .backup import restore_from_backup
+    from .config import Settings
+    from .deps import init_deps
+
+    settings = Settings(data_dir=args.data_dir, db_url=args.db_url or "")
+    engine = get_engine(settings.db_url)
+
+    async def _do_restore():
+        await init_db(engine)
+        init_deps(settings, engine)
+        result = await restore_from_backup(args.input)
+        logger.info(
+            "Restore result: models=%d versions=%d skipped=%d",
+            result["models_restored"], result["versions_restored"], result["skipped"],
+        )
+        print(json.dumps(result, indent=2))
+
+    asyncio.run(_do_restore())
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fusion Model Hub — Model repository & management server")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -184,6 +206,14 @@ def main():
     migrate_parser.add_argument("--db-url", default="", help="Database URL")
     migrate_parser.add_argument("--revision", default="", help="Target revision (default: head)")
 
+    # P1-22: restore path for the auto-backup schema (models + versions). The
+    # `import` subcommand consumes a different schema (tenants/webhooks), so it
+    # cannot load a backup file — this is the matching reader.
+    restore_parser = subparsers.add_parser("restore", help="Restore models+versions from a backup JSON")
+    restore_parser.add_argument("--data-dir", default="", help="Data directory")
+    restore_parser.add_argument("--db-url", default="", help="Database URL")
+    restore_parser.add_argument("--input", "-i", required=True, help="Backup JSON file to restore from")
+
     args = parser.parse_args()
     command = args.command or "serve"
 
@@ -214,6 +244,8 @@ def main():
         _run_import(args)
     elif command == "migrate":
         _run_migrate(args)
+    elif command == "restore":
+        _run_restore(args)
 
 
 if __name__ == "__main__":

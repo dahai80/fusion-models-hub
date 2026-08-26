@@ -233,6 +233,7 @@ async def create_version(
     file_hash: str = "",
     file_size: int = 0,
     release_notes: str = "",
+    autocommit: bool = True,
 ) -> ModelVersion | None:
     m = await get_model(session, model_id)
     if not m:
@@ -249,7 +250,16 @@ async def create_version(
     )
     session.add(v)
     try:
-        await session.commit()
+        # P1-17 / H4: autocommit=False flushes the row into the open transaction
+        # WITHOUT committing, so a caller that needs the version-create and a
+        # follow-up status update to land atomically (LoRA merge output version
+        # + task COMPLETED, quantize output version + task COMPLETED) can do
+        # both in one session and commit once. Default True preserves every
+        # existing caller's behavior.
+        if autocommit:
+            await session.commit()
+        else:
+            await session.flush()
     except IntegrityError as e:
         # P1-D: the uq_model_version unique constraint fires on a concurrent
         # duplicate (model_id, version) insert — the DB is the deterministic
@@ -478,6 +488,8 @@ _TASK_UPDATABLE = {"status", "output_version_id", "error_message", "started_at",
 async def update_quantize_task(
     session: AsyncSession,
     task_id: str,
+    *,
+    autocommit: bool = True,
     **fields,
 ) -> QuantizeTask | None:
     t = await get_quantize_task(session, task_id)
@@ -486,7 +498,12 @@ async def update_quantize_task(
     for k, val in fields.items():
         if k in _TASK_UPDATABLE and val is not None:
             setattr(t, k, val)
-    await session.commit()
+    # P1-17 / H4: autocommit=False flushes without committing so a caller can
+    # pair this with a create_version(autocommit=False) in one atomic tx.
+    if autocommit:
+        await session.commit()
+    else:
+        await session.flush()
     await session.refresh(t)
     logger.info("Updated quantize task: id=%s fields=%s", task_id, list(fields.keys()))
     return t
@@ -521,10 +538,42 @@ async def claim_quantize_task(session: AsyncSession, task_id: str) -> bool:
 _API_KEY_PEPPER = ""
 _PBKDF2_ITERS = 200_000
 
+# P0-1: PBKDF2 (200k rounds) is ~100-200ms of pure CPU. Running it synchronously
+# on the event loop blocked every other coroutine on each authenticated request,
+# with no caching. Two fixes:
+#  (1) _hash_key_cached caches (raw_key -> key_hash) so a repeated request skips
+#      the KDF entirely — the hash is deterministic (same key+pepper -> same hash)
+#      so caching the result is safe; the cache is bounded and in-memory only.
+#  (2) verify_api_key offloads the (uncached) KDF to a worker thread via
+#      anyio.to_thread.run_sync so the first lookup for a key no longer stalls the
+#      loop. The SQL lookup stays on the loop (fast, and indexed after P0-2).
+_HASH_CACHE: dict[str, str] = {}
+_HASH_CACHE_MAX = 512
+
+
+def _hash_key_cached(key: str) -> str:
+    cached = _HASH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    h = _hash_key(key)
+    if len(_HASH_CACHE) >= _HASH_CACHE_MAX:
+        # Evict ~25% to bound memory under key churn.
+        for k in list(_HASH_CACHE.keys())[: _HASH_CACHE_MAX // 4]:
+            _HASH_CACHE.pop(k, None)
+    _HASH_CACHE[key] = h
+    return h
+
+
+def invalidate_hash_cache() -> None:
+    # Called when a key is deactivated/deleted so a stale hash cannot verify.
+    _HASH_CACHE.clear()
+
 
 def set_api_key_pepper(pepper: str) -> None:
     global _API_KEY_PEPPER
     _API_KEY_PEPPER = pepper or ""
+    # Pepper change invalidates all cached hashes (salt is pepper-derived).
+    invalidate_hash_cache()
     if not _API_KEY_PEPPER:
         logger.warning("API key pepper is empty — key hashes fall back to plain SHA-256")
 
@@ -616,7 +665,18 @@ async def verify_api_key(session: AsyncSession, raw_key: str) -> ApiKey | None:
     # F-08: pure read — no with_for_update, no last_used_at commit per request.
     # last_used_at refreshed via touch_api_key_last_used from the middleware on a
     # throttle; SQLite write lock no longer serializes every authenticated call.
-    key_hash = _hash_key(raw_key)
+    # P0-1: cache hit skips the KDF; cache miss offloads the 200k-round PBKDF2 to
+    # a worker thread so the event loop is not blocked on first lookup of a key.
+    cached = _HASH_CACHE.get(raw_key)
+    if cached is not None:
+        key_hash = cached
+    else:
+        import anyio
+        key_hash = await anyio.to_thread.run_sync(_hash_key, raw_key)
+        if len(_HASH_CACHE) >= _HASH_CACHE_MAX:
+            for k in list(_HASH_CACHE.keys())[: _HASH_CACHE_MAX // 4]:
+                _HASH_CACHE.pop(k, None)
+        _HASH_CACHE[raw_key] = key_hash
     result = await session.execute(select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.is_active.is_(True)))
     ak = result.scalar_one_or_none()
     if ak:
@@ -642,6 +702,8 @@ async def deactivate_api_key(session: AsyncSession, key_id: str) -> ApiKey | Non
     ak.is_active = False
     await session.commit()
     await session.refresh(ak)
+    # P0-1: drop cached hash so the deactivated key fails verify on next use.
+    invalidate_hash_cache()
     logger.info("Deactivated API key: id=%s", key_id)
     return ak
 
@@ -652,6 +714,7 @@ async def delete_api_key(session: AsyncSession, key_id: str) -> bool:
         return False
     await session.delete(ak)
     await session.commit()
+    invalidate_hash_cache()
     logger.info("Deleted API key: id=%s", key_id)
     return True
 
@@ -1324,7 +1387,9 @@ async def list_lora_merge_tasks(
     return list(result.scalars().all()), total
 
 
-async def update_lora_merge_task(session: AsyncSession, task_id: str, **fields) -> LoraMergeTask | None:
+async def update_lora_merge_task(
+    session: AsyncSession, task_id: str, *, autocommit: bool = True, **fields,
+) -> LoraMergeTask | None:
     result = await session.execute(select(LoraMergeTask).where(LoraMergeTask.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
@@ -1332,7 +1397,12 @@ async def update_lora_merge_task(session: AsyncSession, task_id: str, **fields) 
     for k, v in fields.items():
         if k in _LORA_MERGE_UPDATABLE:
             setattr(task, k, v)
-    await session.commit()
+    # P1-17: autocommit=False flushes without committing so a caller can pair
+    # this with a create_version(autocommit=False) in one atomic tx.
+    if autocommit:
+        await session.commit()
+    else:
+        await session.flush()
     await session.refresh(task)
     return task
 

@@ -1,12 +1,15 @@
 import asyncio
 import contextlib
 import hashlib
+import io
 import json
 import logging
 import os
+import tarfile
 import uuid
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
@@ -18,6 +21,67 @@ from ..deps import SessionDep, SettingsDep, StoreDep
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["versions"])
+
+
+def _build_export_tar(model: Any, versions: list, model_dir) -> "io.BytesIO":
+    # P1-9: tar build (metadata + rglob add) is heavy synchronous IO on the
+    # loop; run from a worker thread. Returns the in-memory buffer the caller
+    # streams back.
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        metadata = {
+            "model": {
+                "id": model.id, "name": model.name, "description": model.description,
+                "model_type": model.model_type.value, "architecture": model.architecture,
+                "params_size": model.params_size, "hf_repo": model.hf_repo,
+            },
+            "versions": [
+                {
+                    "id": v.id, "version": v.version, "format": v.format.value,
+                    "quantization": v.quantization.value, "file_hash": v.file_hash,
+                    "file_size": v.file_size,
+                }
+                for v in versions
+            ],
+        }
+        meta_bytes = json.dumps(metadata, indent=2, ensure_ascii=False).encode()
+        info = tarfile.TarInfo(name="metadata.json")
+        info.size = len(meta_bytes)
+        tar.addfile(info, io.BytesIO(meta_bytes))
+
+        for f in model_dir.rglob("*"):
+            if f.is_file():
+                arcname = f.relative_to(model_dir)
+                tar.add(str(f), arcname=str(arcname))
+    buf.seek(0)
+    return buf
+
+
+def _extract_tar_members(tar: "tarfile.TarFile", model_dir, model_dir_resolved) -> None:
+    # P1-9: synchronous tar extraction run on a worker thread so the event
+    # loop is not blocked per-member. F-02 TarSlip guards preserved verbatim.
+    for member in tar.getmembers():
+        if member.name == "metadata.json":
+            continue
+        if member.issym() or member.islnk():
+            logger.warning("Skipping unsafe tar link member: %s", member.name)
+            continue
+        target = (model_dir / member.name)
+        try:
+            resolved = target.resolve(strict=False)
+        except (OSError, ValueError):
+            logger.warning("Skipping unresolvable tar member: %s", member.name)
+            continue
+        if not str(resolved).startswith(str(model_dir_resolved) + os.sep) and resolved != model_dir_resolved:
+            logger.warning("Skipping tar member escaping model dir: %s", member.name)
+            continue
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+        elif member.isfile():
+            f = tar.extractfile(member)
+            if f:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(f.read())
 
 _running_url_downloads: dict[str, asyncio.Task] = {}
 
@@ -70,6 +134,13 @@ def _version_to_dict(v) -> dict[str, Any]:
 
 MAX_TOTAL_CHUNKS = 10000
 CHUNK_READ_SIZE = 5 * 1024 * 1024
+# P1-18: per-chunk upper bound. chunk.read() loads the whole chunk into memory;
+# without a cap a single oversized POST (or a hostile client setting total_chunks=1)
+# OOMs the process before the final assembled-size check (which runs AFTER every
+# chunk is already stored) ever fires. 64MB is well above the streaming read block
+# (5MB) yet bounds per-request memory; the global max_upload_size_mb still caps the
+# assembled total.
+MAX_CHUNK_SIZE = 64 * 1024 * 1024
 
 
 def _caller_tenant(request: Request) -> str:
@@ -209,13 +280,34 @@ async def chunk_upload_version(
     if chunk_index < 0 or chunk_index >= total_chunks:
         raise HTTPException(status_code=400, detail="chunk_index out of range")
 
+    # P1-11: path traversal. filename is a raw Form string that flows into
+    # store.assemble_chunks as target_dir / filename. Without sanitization an
+    # attacker controls the destination path (../../etc/x) to write outside the
+    # version dir. Reduce to a bare basename and reject traversal patterns.
+    safe_filename = os.path.basename(filename or "")
+    if not safe_filename or safe_filename != (filename or ""):
+        logger.warning("Rejected traversal filename: %r", filename)
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
     # upload_id random token appended so concurrent uploads of the same
     # (model_id, version) don't clobber each other's chunk slots.
     upload_id = f"{model_id}_{version}_{_chunk_upload_token(model_id, version)}"
     if not chunk:
         raise HTTPException(status_code=400, detail="chunk file is required")
 
-    data = await chunk.read()
+    # P1-18: read at most MAX_CHUNK_SIZE+1 bytes so an oversized chunk is
+    # rejected (413) instead of read wholesale into memory (OOM). One byte of
+    # headroom lets us distinguish "exactly the cap" from "over the cap".
+    data = await chunk.read(MAX_CHUNK_SIZE + 1)
+    if len(data) > MAX_CHUNK_SIZE:
+        logger.warning(
+            "Rejected oversized chunk: upload=%s idx=%d size=%d cap=%d",
+            upload_id, chunk_index, len(data), MAX_CHUNK_SIZE,
+        )
+        raise HTTPException(
+            status_code=413,
+            detail=f"Chunk exceeds per-chunk cap of {MAX_CHUNK_SIZE} bytes",
+        )
     await store.write_chunk(upload_id, chunk_index, data)
 
     if chunk_index < total_chunks - 1:
@@ -223,7 +315,7 @@ async def chunk_upload_version(
 
     try:
         target_dir = store.model_version_dir(model_id, version)
-        path, hash_val, size = await store.assemble_chunks(upload_id, target_dir, filename, total_chunks)
+        path, hash_val, size = await store.assemble_chunks(upload_id, target_dir, safe_filename, total_chunks)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -574,9 +666,6 @@ async def export_model_tar(
     session: SessionDep,
     store: StoreDep,
 ):
-    import io
-    import tarfile
-
     from fastapi.responses import StreamingResponse
 
     m = await crud.get_model(session, model_id)
@@ -595,34 +684,7 @@ async def export_model_tar(
     if not model_dir.exists():
         raise HTTPException(status_code=404, detail="Model files not found on disk")
 
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        metadata = {
-            "model": {
-                "id": m.id, "name": m.name, "description": m.description,
-                "model_type": m.model_type.value, "architecture": m.architecture,
-                "params_size": m.params_size, "hf_repo": m.hf_repo,
-            },
-            "versions": [
-                {
-                    "id": v.id, "version": v.version, "format": v.format.value,
-                    "quantization": v.quantization.value, "file_hash": v.file_hash,
-                    "file_size": v.file_size,
-                }
-                for v in versions
-            ],
-        }
-        meta_bytes = json.dumps(metadata, indent=2, ensure_ascii=False).encode()
-        info = tarfile.TarInfo(name="metadata.json")
-        info.size = len(meta_bytes)
-        tar.addfile(info, io.BytesIO(meta_bytes))
-
-        for f in model_dir.rglob("*"):
-            if f.is_file():
-                arcname = f.relative_to(model_dir)
-                tar.add(str(f), arcname=str(arcname))
-
-    buf.seek(0)
+    buf = await anyio.to_thread.run_sync(_build_export_tar, m, versions, model_dir)
     logger.info("Exported model tar: model=%s versions=%d size=%d", model_id, len(versions), buf.getbuffer().nbytes)
     return StreamingResponse(
         buf,
@@ -637,9 +699,6 @@ async def import_model_tar(
     session: SessionDep,
     store: StoreDep,
 ):
-    import io
-    import tarfile
-
     content = await file.read()
     buf = io.BytesIO(content)
 
@@ -690,31 +749,11 @@ async def import_model_tar(
             model_dir.mkdir(parents=True, exist_ok=True)
             model_dir_resolved = model_dir.resolve()
 
-            for member in tar.getmembers():
-                if member.name == "metadata.json":
-                    continue
-                # F-02 TarSlip: reject any member whose resolved path escapes the
-                # model dir (absolute paths, .. traversal, symlinks). filter='data'
-                # is the 3.12+ hardening; we also resolve-check as defense-in-depth.
-                if member.issym() or member.islnk():
-                    logger.warning("Skipping unsafe tar link member: %s", member.name)
-                    continue
-                target = (model_dir / member.name)
-                try:
-                    resolved = target.resolve(strict=False)
-                except (OSError, ValueError):
-                    logger.warning("Skipping unresolvable tar member: %s", member.name)
-                    continue
-                if not str(resolved).startswith(str(model_dir_resolved) + os.sep) and resolved != model_dir_resolved:
-                    logger.warning("Skipping tar member escaping model dir: %s", member.name)
-                    continue
-                if member.isdir():
-                    target.mkdir(parents=True, exist_ok=True)
-                elif member.isfile():
-                    f = tar.extractfile(member)
-                    if f:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_bytes(f.read())
+            # P1-9: the per-member extractfile+write_bytes loop is heavy sync
+            # IO; offload it to a worker thread. TarSlip guards stay in place.
+            await anyio.to_thread.run_sync(
+                _extract_tar_members, tar, model_dir, model_dir_resolved,
+            )
 
             imported = 0
             for v_data in metadata.get("versions", []):

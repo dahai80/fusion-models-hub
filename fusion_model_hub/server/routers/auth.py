@@ -82,7 +82,33 @@ async def _require_admin_or_bootstrap(session, request: Request, settings) -> No
 @router.post("/auth/keys", status_code=201)
 async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request, settings: SettingsDep):
     await _require_admin_or_bootstrap(session, request, settings)
-    tenant_id = body.tenant_id or _caller_tenant(request) or ""
+    # P1-12: cross-tenant key forge. Before, body.tenant_id always won, so any
+    # admin could mint a key for an arbitrary tenant. Now a tenanted admin is
+    # forced to its own tenant and may NOT set a different one; a root/super
+    # admin (no tenant) and bootstrap keep provisioning any tenant. Local mode
+    # (auth off) preserves the legacy body-or-empty behavior.
+    caller_tenant = _caller_tenant(request)
+    caller_role = _caller_role(request)
+    if not _is_auth_enabled():
+        tenant_id = body.tenant_id or ""
+    elif caller_role == "admin" and not caller_tenant:
+        # root/super-admin provisioning: may target any tenant
+        tenant_id = body.tenant_id or ""
+    elif caller_role == "admin" and caller_tenant:
+        # tenanted admin: pinned to own tenant, cross-tenant body value rejected
+        if body.tenant_id and body.tenant_id != caller_tenant:
+            logger.warning(
+                "Cross-tenant key forge blocked: caller_tenant=%s body_tenant=%s",
+                caller_tenant, body.tenant_id,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot create an API key for a different tenant",
+            )
+        tenant_id = caller_tenant
+    else:
+        # bootstrap (first key): root admin, no tenant
+        tenant_id = ""
     ak, full_key = await crud.create_api_key(
         session, name=body.name, tenant_id=tenant_id, permissions=body.permissions, role=body.role,
         qps_limit=body.qps_limit, allowed_models=body.allowed_models, allowed_modules=body.allowed_modules,

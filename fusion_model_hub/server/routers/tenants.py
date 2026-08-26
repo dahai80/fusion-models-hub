@@ -146,13 +146,15 @@ def _role_to_dict(r) -> dict:
 
 
 @router.get("/{tenant_id}/roles")
-async def list_roles(tenant_id: str, session: SessionDep):
+async def list_roles(tenant_id: str, session: SessionDep, request: Request):
+    _require_admin(request)
     roles = await crud.list_roles(session, tenant_id)
     return {"items": [_role_to_dict(r) for r in roles]}
 
 
 @router.post("/{tenant_id}/roles", status_code=201)
-async def create_role(tenant_id: str, body: RoleCreate, session: SessionDep):
+async def create_role(tenant_id: str, body: RoleCreate, session: SessionDep, request: Request):
+    _require_admin(request)
     t = await crud.get_tenant(session, tenant_id)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -163,7 +165,8 @@ async def create_role(tenant_id: str, body: RoleCreate, session: SessionDep):
 
 
 @router.put("/{tenant_id}/roles/{role_id}")
-async def update_role(tenant_id: str, role_id: str, body: RoleUpdate, session: SessionDep):
+async def update_role(tenant_id: str, role_id: str, body: RoleUpdate, session: SessionDep, request: Request):
+    _require_admin(request)
     r = await crud.get_role(session, role_id)
     if not r or r.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Role not found")
@@ -175,7 +178,8 @@ async def update_role(tenant_id: str, role_id: str, body: RoleUpdate, session: S
 
 
 @router.delete("/{tenant_id}/roles/{role_id}")
-async def delete_role(tenant_id: str, role_id: str, session: SessionDep):
+async def delete_role(tenant_id: str, role_id: str, session: SessionDep, request: Request):
+    _require_admin(request)
     r = await crud.get_role(session, role_id)
     if not r or r.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Role not found")

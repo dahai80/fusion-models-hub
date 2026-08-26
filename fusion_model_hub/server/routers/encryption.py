@@ -3,8 +3,11 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import struct
+from pathlib import Path
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -20,7 +23,12 @@ router = APIRouter(tags=["encryption"])
 # decrypt — "encrypted: true" was a false guarantee. Now refuse to operate
 # unless a non-default key is configured. Fail loud, not false security.
 _DEFAULT_KEY = "fusion-model-hub-default-encryption-key-32b"
-_MAX_INMEM_BYTES = 512 * 1024 * 1024  # 512MB guard against whole-file OOM (P2: stream)
+# P1-4: chunked streaming so GB-scale model files no longer hit a 512MB in-mem
+# cap. Each chunk is Fernet-encrypted independently and framed with a 4-byte
+# big-endian length prefix; a magic header distinguishes the chunked format
+# from the legacy whole-file format so old ciphertext still decrypts.
+_CHUNK = 64 * 1024 * 1024  # 64MB per encrypted chunk
+_MAGIC = b"FMH1"  # chunked-encryption format marker
 
 
 class EncryptRequest(BaseModel):
@@ -44,6 +52,69 @@ def _resolve_fernet() -> Any:
     return Fernet(base64.urlsafe_b64encode(key_bytes))
 
 
+def _stream_encrypt(path: Path, fernet: Any) -> int:
+    # P1-4: read + encrypt in _CHUNK-sized pieces, framing each Fernet token
+    # with a 4-byte length prefix under a magic header. Memory stays bounded
+    # regardless of file size; the staging-then-replace keeps the original
+    # intact if encryption dies mid-way.
+    import uuid
+    staging = path.parent / f".{path.name}.{uuid.uuid4().hex}.enc.tmp"
+    total = 0
+    try:
+        with open(path, "rb") as src, open(staging, "wb") as out:
+            out.write(_MAGIC)
+            while True:
+                chunk = src.read(_CHUNK)
+                if not chunk:
+                    break
+                token = fernet.encrypt(chunk)
+                out.write(struct.pack(">I", len(token)))
+                out.write(token)
+                total += len(chunk)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(staging, path)
+    finally:
+        if staging.exists():
+            staging.unlink(missing_ok=True)
+    return total
+
+
+def _stream_decrypt(path: Path, fernet: Any) -> int:
+    import uuid
+    staging = path.parent / f".{path.name}.{uuid.uuid4().hex}.dec.tmp"
+    total = 0
+    try:
+        with open(path, "rb") as src, open(staging, "wb") as out:
+            head = src.read(len(_MAGIC))
+            if head == _MAGIC:
+                # chunked format: framed tokens
+                while True:
+                    lp = src.read(4)
+                    if not lp:
+                        break
+                    if len(lp) < 4:
+                        raise ValueError("Truncated length prefix in encrypted file")
+                    (tlen,) = struct.unpack(">I", lp)
+                    token = src.read(tlen)
+                    if len(token) < tlen:
+                        raise ValueError("Truncated Fernet token in encrypted file")
+                    out.write(fernet.decrypt(token))
+                    total += 1
+            else:
+                # legacy whole-file format: rest of file is one Fernet token
+                rest = head + src.read()
+                out.write(fernet.decrypt(rest))
+                total = 1
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(staging, path)
+    finally:
+        if staging.exists():
+            staging.unlink(missing_ok=True)
+    return total
+
+
 @router.post("/encryption/encrypt")
 async def encrypt_version(body: EncryptRequest, session: SessionDep, store: StoreDep):
     v = await crud.get_version(session, body.version_id)
@@ -55,16 +126,9 @@ async def encrypt_version(body: EncryptRequest, session: SessionDep, store: Stor
     if v.file_path:
         file_path = store.get_file(v.file_path)
         if file_path and file_path.exists():
-            size = file_path.stat().st_size
-            if size > _MAX_INMEM_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large to encrypt in memory ({size} bytes); "
-                           "streaming encryption not yet implemented (P2)",
-                )
-            raw = file_path.read_bytes()
-            encrypted = fernet.encrypt(raw)
-            file_path.write_bytes(encrypted)
+            # P1-4/P1-10: offload the blocking read/encrypt/write to a thread so
+            # the event loop is not blocked by GB-scale file IO.
+            size = await anyio.to_thread.run_sync(_stream_encrypt, file_path, fernet)
             logger.info("Encrypted version file: id=%s path=%s bytes=%d", v.id, v.file_path, size)
     v = await crud.update_version(session, body.version_id, encrypted=True)
     return {"version_id": v.id, "encrypted": v.encrypted}
@@ -81,16 +145,7 @@ async def decrypt_version(body: DecryptRequest, session: SessionDep, store: Stor
     if v.file_path:
         file_path = store.get_file(v.file_path)
         if file_path and file_path.exists():
-            size = file_path.stat().st_size
-            if size > _MAX_INMEM_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large to decrypt in memory ({size} bytes); "
-                           "streaming decryption not yet implemented (P2)",
-                )
-            encrypted = file_path.read_bytes()
-            decrypted = fernet.decrypt(encrypted)
-            file_path.write_bytes(decrypted)
+            size = await anyio.to_thread.run_sync(_stream_decrypt, file_path, fernet)
             logger.info("Decrypted version file: id=%s path=%s bytes=%d", v.id, v.file_path, size)
     v = await crud.update_version(session, body.version_id, encrypted=False)
     return {"version_id": v.id, "encrypted": v.encrypted}

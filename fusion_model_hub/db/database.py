@@ -32,10 +32,22 @@ def _is_file_sqlite(db_url: str) -> bool:
     return db_url.startswith("sqlite") and ":memory:" not in db_url
 
 
-def get_engine(db_url: str = ""):
+def _is_server_db(db_url: str) -> bool:
+    # P1-15: only PostgreSQL/MySQL/others use a real connection pool (QueuePool).
+    # aiosqlite uses NullPool (one connection); passing pool_size there errors.
+    return not db_url.startswith("sqlite")
+
+
+def get_engine(db_url: str = "", *, pool_size: int = 10, max_overflow: int = 20):
     if not db_url:
         db_url = "sqlite+aiosqlite:///./data/hub.db"
-    engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
+    engine_kwargs: dict = {"echo": False, "pool_pre_ping": True}
+    # P1-15: expose pool sizing for server-side DBs. SQLite ignores these
+    # (NullPool); only QueuePool-backed dialects honor pool_size/max_overflow.
+    if _is_server_db(db_url):
+        engine_kwargs["pool_size"] = pool_size
+        engine_kwargs["max_overflow"] = max_overflow
+    engine = create_async_engine(db_url, **engine_kwargs)
     _engines.append(engine)
     if _is_file_sqlite(db_url):
         @event.listens_for(engine.sync_engine, "connect")

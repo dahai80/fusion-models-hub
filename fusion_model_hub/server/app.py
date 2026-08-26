@@ -131,8 +131,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        engine = get_engine(settings.db_url)
-        await init_db(engine)
+        engine = get_engine(
+            settings.db_url,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+        )
+        # P1-19: a failing init_db (corrupt DB, disk full, bad DDL) used to crash
+        # startup hard, leaving the operator with no API to inspect/recover. Now
+        # log loudly and degrade — metadata reads may partially work or fail per
+        # request, but the process stays up so /system/health and logs are reachable.
+        try:
+            await init_db(engine)
+        except Exception:
+            logger.exception("init_db failed — starting in degraded mode; DB ops will error until recovered")
         init_deps(settings, engine)
         set_auth_enabled(settings.auth_enabled)
         await _reconcile_orphaned_tasks()

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from ...db import crud
 from ..deps import SessionDep
+from ..tasks import submit_quantize
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["quantize-presets"])
@@ -46,7 +47,7 @@ async def list_presets():
     return {"presets": list(QUANTIZE_PRESETS.values())}
 
 
-@router.post("/quantize/presets/{name}/apply")
+@router.post("/quantize/presets/{name}/apply", status_code=202)
 async def apply_preset(name: str, body: PresetApplyRequest, session: SessionDep):
     preset = QUANTIZE_PRESETS.get(name)
     if not preset:
@@ -56,17 +57,27 @@ async def apply_preset(name: str, body: PresetApplyRequest, session: SessionDep)
     if not v:
         raise HTTPException(status_code=404, detail="Source version not found")
 
-    task = await crud.create_quantize_task(
-        session,
-        source_version_id=body.source_version_id,
-        target_format=preset["target_format"],
-        quant_bits=preset["quant_bits"],
-        calibration_dataset=preset["calibration_dataset"],
-    )
-    logger.info("Applied preset '%s' to create quantize task: id=%s", name, task.id)
+    if preset["quant_bits"] not in (2, 4, 6, 8):
+        raise HTTPException(status_code=400, detail="quant_bits must be one of: 2, 4, 6, 8")
+
+    # P1-1: previously created a PENDING task via crud.create_quantize_task but
+    # never spawned the runner — preset tasks stuck PENDING forever. Route
+    # through submit_quantize so the task is created AND the runner launched,
+    # matching POST /quantize behavior.
+    try:
+        task_id = await submit_quantize(
+            source_version_id=body.source_version_id,
+            target_format=preset["target_format"],
+            quant_bits=preset["quant_bits"],
+            calibration_dataset=preset["calibration_dataset"],
+        )
+    except Exception as e:
+        logger.exception("Failed to submit preset quantize task: preset=%s", name)
+        raise HTTPException(status_code=500, detail="Failed to submit quantize task") from e
+    logger.info("Applied preset '%s' -> submitted quantize task: id=%s", name, task_id)
     return {
-        "task_id": task.id,
+        "task_id": task_id,
         "preset": name,
-        "status": task.status.value,
+        "status": "submitted",
         "quant_bits": preset["quant_bits"],
     }
