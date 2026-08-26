@@ -140,7 +140,12 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
     if existing:
         raise HTTPException(status_code=409, detail=f"Model name already exists: {body.name}")
     tenant_id = getattr(request.state, "tenant_id", "") or ""
-    if body.model_type == ModelType.LORA and body.base_model_id:
+    if body.model_type == ModelType.LORA:
+        if not body.base_model_id:
+            raise HTTPException(
+                status_code=400,
+                detail="base_model_id is required for LoRA adapter models",
+            )
         base_m = await crud.get_model(session, body.base_model_id)
         if not base_m:
             raise HTTPException(status_code=404, detail="base_model_id not found")

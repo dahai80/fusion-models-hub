@@ -1431,6 +1431,16 @@ class TestLoraAdapter:
         assert "base_model_id" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
+    async def test_lora_empty_base_model_id_rejected(self, client):
+        resp = await client.post("/api/v1/models", json={
+            "name": "lora-orphan",
+            "model_type": "lora",
+            "base_model_id": "",
+        })
+        assert resp.status_code == 400
+        assert "base_model_id" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
     async def test_lora_base_model_id_persisted_and_queryable(self, client):
         base = await _create_model(client, "lora-base-host")
         resp = await client.post("/api/v1/models", json={
