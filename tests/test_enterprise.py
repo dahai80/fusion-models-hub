@@ -553,6 +553,48 @@ class TestAuthMiddleware:
         finally:
             set_auth_enabled(False)
 
+    @pytest.mark.asyncio
+    async def test_tenanted_admin_cannot_forge_cross_tenant_key(self, client):
+        # P1-12: a tenanted admin must be pinned to its own tenant when creating
+        # keys; setting a different body.tenant_id is a cross-tenant forge that
+        # must be rejected. Root/super-admin (no tenant) still provisions any.
+        from fusion_model_hub.server.auth import set_auth_enabled
+        set_auth_enabled(True)
+        try:
+            # bootstrap: root admin (no tenant).
+            root = (await client.post("/api/v1/auth/keys", json={"name": "root", "role": "admin"})).json()["key"]
+            # root provisions a tenanted admin for tenant B.
+            admin_b = (await client.post(
+                "/api/v1/auth/keys",
+                json={"name": "adminB", "tenant_id": "tenB", "role": "admin"},
+                headers={"X-API-Key": root},
+            )).json()["key"]
+            # adminB mints a key for its own tenant -> ok (201).
+            own = await client.post(
+                "/api/v1/auth/keys",
+                json={"name": "b-dev", "tenant_id": "tenB", "role": "developer"},
+                headers={"X-API-Key": admin_b},
+            )
+            assert own.status_code == 201, own.text
+            assert own.json()["tenant_id"] == "tenB"
+            # adminB mints a key for tenant A -> 403 (cross-tenant forge).
+            forge = await client.post(
+                "/api/v1/auth/keys",
+                json={"name": "a-evil", "tenant_id": "tenA", "role": "developer"},
+                headers={"X-API-Key": admin_b},
+            )
+            assert forge.status_code == 403, forge.text
+            # root (super-admin, no tenant) still provisions tenant A -> ok.
+            root_prov = await client.post(
+                "/api/v1/auth/keys",
+                json={"name": "a-dev", "tenant_id": "tenA", "role": "developer"},
+                headers={"X-API-Key": root},
+            )
+            assert root_prov.status_code == 201
+            assert root_prov.json()["tenant_id"] == "tenA"
+        finally:
+            set_auth_enabled(False)
+
 
 class TestInferenceTenantIsolation:
     # P0-C: a tenant-A key must NOT read/serve/inference a tenant-B model by

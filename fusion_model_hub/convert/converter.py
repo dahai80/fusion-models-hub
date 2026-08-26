@@ -107,13 +107,37 @@ class ModelConverter:
                 })
                 resp.raise_for_status()
                 data = resp.json()
-                return {
+                result = {
                     "status": "completed",
-                    "output_path": output_path,
+                    "output_path": data.get("output_path", output_path),
                     "quant_bits": bits,
                     "original_size_gb": data.get("original_size_gb", 0),
                     "converted_size_gb": data.get("converted_size_gb", 0),
                 }
+                # P1-5: provenance repair. Before this, quantize returned no
+                # file_hash/file_size, so the output ModelVersion was recorded
+                # with empty hash + 0 bytes — corrupt provenance that broke
+                # integrity checks, cache validation, and download resumes.
+                # Prefer MLX-reported values; fall back to a local SHA256+size
+                # pass on the output file when MLX omits them.
+                out = Path(result["output_path"])
+                result["file_hash"] = data.get("file_hash", "")
+                result["file_size"] = data.get("file_size", 0)
+                if (not result["file_hash"] or not result["file_size"]) and out.exists():
+                    import anyio
+
+                    from ..utils.hashing import compute_sha256_and_size
+
+                    digest, size = await anyio.to_thread.run_sync(compute_sha256_and_size, out)
+                    if not result["file_hash"]:
+                        result["file_hash"] = digest
+                    if not result["file_size"]:
+                        result["file_size"] = size
+                    logger.info(
+                        "Computed quantize output provenance: path=%s size=%d hash=%s",
+                        out, size, digest[:16],
+                    )
+                return result
         except Exception as e:
             return {"status": "failed", "error": str(e)}
 

@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import anyio
+
 from .base import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -22,8 +24,10 @@ class LocalStore(StorageBackend):
         self.data_dir = Path(data_dir)
         self._models_dir = self.data_dir / "models"
         self.uploads_dir = self.data_dir / "uploads"
+        self.lfs_dir = self.data_dir / "lfs"
         self._models_dir.mkdir(parents=True, exist_ok=True)
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        self.lfs_dir.mkdir(parents=True, exist_ok=True)
 
     # E-R3: models_dir is now an abstract property on StorageBackend so the
     # contract is explicit and MinioStore cannot silently lack it. Expose the
@@ -48,17 +52,24 @@ class LocalStore(StorageBackend):
     ) -> Path:
         tmp_dir = self.upload_tmp_dir(upload_id)
         chunk_path = tmp_dir / f"{chunk_index:06d}.part"
-        chunk_path.write_bytes(chunk_data)
+        # P1-7: the disk write blocks the event loop; offload it.
+        await anyio.to_thread.run_sync(chunk_path.write_bytes, chunk_data)
         logger.info("Wrote chunk: upload=%s index=%d size=%d", upload_id, chunk_index, len(chunk_data))
         return chunk_path
 
-    async def assemble_chunks(
+    def _assemble_chunks_sync(
         self, upload_id: str, target_dir: Path, filename: str, total_chunks: int,
     ) -> tuple[Path, str, int]:
         # E-D3: assemble to a side temp file, fsync, then atomic os.replace into
         # place. A crash mid-assemble leaves the old target untouched instead of a
         # truncated/corrupt file at the final path. Chunk tmp is cleaned in finally
         # so a failed/aborted upload does not leak .part files forever.
+        # P1-11 (defense-in-depth): reduce filename to a bare basename so a
+        # traversal value (../etc/x) cannot escape target_dir even if a caller
+        # bypasses the router-level check.
+        filename = os.path.basename(filename)
+        if not filename or filename in (".", ".."):
+            raise ValueError("Invalid filename")
         tmp_dir = self.upload_tmp_dir(upload_id)
         target_path = target_dir / filename
         staging_path = target_dir / f".{filename}.{uuid.uuid4().hex}.tmp"
@@ -88,8 +99,22 @@ class LocalStore(StorageBackend):
         )
         return target_path, file_hash, total_size
 
-    async def write_file(self, target_dir: Path, filename: str, data: bytes) -> tuple[Path, str, int]:
+    async def assemble_chunks(
+        self, upload_id: str, target_dir: Path, filename: str, total_chunks: int,
+    ) -> tuple[Path, str, int]:
+        # P1-7: the multi-chunk read+write+fsync blocks the event loop for the
+        # whole upload; run the blocking assembly on a worker thread.
+        return await anyio.to_thread.run_sync(
+            self._assemble_chunks_sync, upload_id, target_dir, filename, total_chunks,
+        )
+
+    def _write_file_sync(self, target_dir: Path, filename: str, data: bytes) -> tuple[Path, str, int]:
         # E-D3: atomic write via staging file + os.replace.
+        # P1-11 (defense-in-depth): bare basename so a traversal filename cannot
+        # escape target_dir.
+        filename = os.path.basename(filename)
+        if not filename or filename in (".", ".."):
+            raise ValueError("Invalid filename")
         target_path = target_dir / filename
         staging_path = target_dir / f".{filename}.{uuid.uuid4().hex}.tmp"
         try:
@@ -105,11 +130,43 @@ class LocalStore(StorageBackend):
         logger.info("Wrote file: %s size=%d", filename, len(data))
         return target_path, file_hash, len(data)
 
+    async def write_file(self, target_dir: Path, filename: str, data: bytes) -> tuple[Path, str, int]:
+        # P1-7: offload the blocking file write to a worker thread.
+        return await anyio.to_thread.run_sync(self._write_file_sync, target_dir, filename, data)
+
     def get_file(self, file_path: str) -> Path | None:
         p = Path(file_path)
         if p.exists():
             return p
         return None
+
+    def put_lfs_object(self, oid: str, data: bytes) -> Path:
+        # FR-027 / P1-2: store a Git LFS object keyed by oid (content SHA256).
+        # Atomic write via staging file + os.replace; oid is sanitized to a
+        # bare filename so a malicious oid cannot escape lfs_dir.
+        safe_oid = os.path.basename(oid)
+        if not safe_oid or safe_oid != oid:
+            raise ValueError("Invalid LFS oid")
+        target = self.lfs_dir / safe_oid
+        staging = self.lfs_dir / f".{safe_oid}.{uuid.uuid4().hex}.tmp"
+        try:
+            with open(staging, "wb") as out:
+                out.write(data)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(staging, target)
+        finally:
+            if staging.exists():
+                staging.unlink(missing_ok=True)
+        logger.info("Stored LFS object: oid=%s size=%d", safe_oid[:16], len(data))
+        return target
+
+    def get_lfs_object(self, oid: str) -> Path | None:
+        safe_oid = os.path.basename(oid)
+        if not safe_oid or safe_oid != oid:
+            return None
+        p = self.lfs_dir / safe_oid
+        return p if p.exists() else None
 
     def is_path_within_store(self, file_path: Path) -> bool:
         try:

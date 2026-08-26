@@ -2,7 +2,19 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -73,6 +85,17 @@ def _uuid4() -> str:
 
 class Model(Base):
     __tablename__ = "models"
+    # P0-2: indexes on every hot filter/order column. PG does not auto-index
+    # FKs, so tenant_id/base_model_id need explicit indexes; created_at/
+    # updated_at back every ORDER BY in list_models/list_pinned_models.
+    __table_args__ = (
+        Index("ix_models_tenant_id", "tenant_id"),
+        Index("ix_models_model_type", "model_type"),
+        Index("ix_models_base_model_id", "base_model_id"),
+        Index("ix_models_model_status", "model_status"),
+        Index("ix_models_created_at", "created_at"),
+        Index("ix_models_updated_at", "updated_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
@@ -130,7 +153,12 @@ class ModelVersion(Base):
     # uploads of the same version created two rows (TOCTOU in create_version's
     # check-then-insert). The DB-level unique constraint is the deterministic
     # final defense; create_version catches the IntegrityError and surfaces 409.
-    __table_args__ = (UniqueConstraint("model_id", "version", name="uq_model_version"),)
+    __table_args__ = (
+        UniqueConstraint("model_id", "version", name="uq_model_version"),
+        Index("ix_model_versions_model_id", "model_id"),
+        Index("ix_model_versions_status", "status"),
+        Index("ix_model_versions_created_at", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
@@ -158,6 +186,7 @@ class ModelVersion(Base):
 
 class ModelTag(Base):
     __tablename__ = "model_tags"
+    __table_args__ = (Index("ix_model_tags_model_id", "model_id"),)
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
@@ -176,6 +205,10 @@ class TaskStatus(str, enum.Enum):
 
 class QuantizeTask(Base):
     __tablename__ = "quantize_tasks"
+    __table_args__ = (
+        Index("ix_quantize_tasks_status", "status"),
+        Index("ix_quantize_tasks_created_at", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     source_version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=False)
@@ -220,6 +253,13 @@ class Role(Base):
 
 class ApiKey(Base):
     __tablename__ = "api_keys"
+    # P0-2: key_hash is the WHERE column on every authenticated request — without
+    # an index, verify_api_key full-scans api_keys per request. tenant_id backs
+    # key list scoping.
+    __table_args__ = (
+        Index("ix_api_keys_key_hash", "key_hash"),
+        Index("ix_api_keys_tenant_id", "tenant_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
@@ -238,6 +278,12 @@ class ApiKey(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    # P0-2: audit log grows unbounded; list views ORDER BY created_at + filter
+    # tenant_id. Without indexes both are full scans.
+    __table_args__ = (
+        Index("ix_audit_logs_tenant_id", "tenant_id"),
+        Index("ix_audit_logs_created_at", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
@@ -251,6 +297,8 @@ class AuditLog(Base):
 
 class ClusterNode(Base):
     __tablename__ = "cluster_nodes"
+    # P0-2: cluster router filters active nodes every routed call.
+    __table_args__ = (Index("ix_cluster_nodes_status", "status"),)
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -267,14 +315,21 @@ class WebhookEvent(str, enum.Enum):
     MODEL_HOT_RELOADED = "model.hot_reloaded"
     VERSION_PUBLISHED = "version.published"
     VERSION_DEPRECATED = "version.deprecated"
+    VERSION_RETIRED = "version.retired"
     QUANTIZE_COMPLETED = "quantize.completed"
     QUANTIZE_FAILED = "quantize.failed"
+    QUANTIZE_PRECISION_WARNING = "quantize.precision_warning"
     ADAPTER_PUBLISHED = "adapter.published"
     ADAPTER_MERGED = "adapter.merged"
 
 
 class Webhook(Base):
     __tablename__ = "webhooks"
+    # P0-2: dispatch filters webhooks by tenant_id + is_active per event.
+    __table_args__ = (
+        Index("ix_webhooks_tenant_id", "tenant_id"),
+        Index("ix_webhooks_is_active", "is_active"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
@@ -295,6 +350,12 @@ class DeploymentStatus(str, enum.Enum):
 
 class Deployment(Base):
     __tablename__ = "deployments"
+    # P0-2: deployment list scoped by tenant_id; status/model_id lookups hot.
+    __table_args__ = (
+        Index("ix_deployments_tenant_id", "tenant_id"),
+        Index("ix_deployments_model_id", "model_id"),
+        Index("ix_deployments_status", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
@@ -324,6 +385,11 @@ class EvaluationStatus(str, enum.Enum):
 
 class EvaluationResult(Base):
     __tablename__ = "evaluation_results"
+    # P0-2: evaluations list scoped by tenant_id; model_id lookups hot.
+    __table_args__ = (
+        Index("ix_evaluation_results_tenant_id", "tenant_id"),
+        Index("ix_evaluation_results_model_id", "model_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
@@ -347,6 +413,11 @@ class ScanStatus(str, enum.Enum):
 
 class SecurityScan(Base):
     __tablename__ = "security_scans"
+    # P0-2: scan list filtered by model_id; status lookups hot.
+    __table_args__ = (
+        Index("ix_security_scans_model_id", "model_id"),
+        Index("ix_security_scans_status", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
@@ -361,6 +432,8 @@ class SecurityScan(Base):
 
 class Watermark(Base):
     __tablename__ = "watermarks"
+    # P0-2: watermark lookup by model_id.
+    __table_args__ = (Index("ix_watermarks_model_id", "model_id"),)
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
@@ -386,6 +459,12 @@ class ApprovalLevel(str, enum.Enum):
 
 class ApprovalRequest(Base):
     __tablename__ = "approval_requests"
+    # P0-2: approval list scoped by tenant_id; model_id/status lookups hot.
+    __table_args__ = (
+        Index("ix_approval_requests_tenant_id", "tenant_id"),
+        Index("ix_approval_requests_model_id", "model_id"),
+        Index("ix_approval_requests_status", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
@@ -402,6 +481,8 @@ class ApprovalRequest(Base):
 
 class LoraMergeTask(Base):
     __tablename__ = "lora_merge_tasks"
+    # P0-2: merge task list filtered by status.
+    __table_args__ = (Index("ix_lora_merge_tasks_status", "status"),)
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     base_version_id: Mapped[str] = mapped_column(String(16), ForeignKey("model_versions.id"), nullable=False)
@@ -425,6 +506,8 @@ class DistributedTaskStatus(str, enum.Enum):
 
 class DistributedTask(Base):
     __tablename__ = "distributed_tasks"
+    # P0-2: distributed task list filtered by status.
+    __table_args__ = (Index("ix_distributed_tasks_status", "status"),)
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
@@ -441,6 +524,8 @@ class DistributedTask(Base):
 
 class GitLfsLock(Base):
     __tablename__ = "gitlfs_locks"
+    # P0-2: lock lookup by model_id.
+    __table_args__ = (Index("ix_gitlfs_locks_model_id", "model_id"),)
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
@@ -451,6 +536,8 @@ class GitLfsLock(Base):
 
 class ModelRating(Base):
     __tablename__ = "model_ratings"
+    # P0-2: ratings loaded per model_id.
+    __table_args__ = (Index("ix_model_ratings_model_id", "model_id"),)
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
@@ -464,6 +551,8 @@ class ModelRating(Base):
 
 class ModelFavorite(Base):
     __tablename__ = "model_favorites"
+    # P0-2: favorites loaded per model_id.
+    __table_args__ = (Index("ix_model_favorites_model_id", "model_id"),)
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
@@ -481,6 +570,11 @@ class BranchStatus(str, enum.Enum):
 
 class ModelBranch(Base):
     __tablename__ = "model_branches"
+    # P0-2: branches loaded per model_id; status filter hot.
+    __table_args__ = (
+        Index("ix_model_branches_model_id", "model_id"),
+        Index("ix_model_branches_status", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
     model_id: Mapped[str] = mapped_column(String(16), ForeignKey("models.id"), nullable=False)
@@ -497,6 +591,11 @@ class ModelBranch(Base):
 
 class DownloadTask(Base):
     __tablename__ = "download_tasks"
+    # P0-2: download task list filtered by status; model_id lookups hot.
+    __table_args__ = (
+        Index("ix_download_tasks_model_id", "model_id"),
+        Index("ix_download_tasks_status", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     model_id: Mapped[str] = mapped_column(String(36), ForeignKey("models.id"), nullable=False)

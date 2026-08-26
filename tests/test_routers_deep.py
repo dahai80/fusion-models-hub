@@ -149,6 +149,27 @@ class TestChunkUploadDeep:
                 assert resp.status_code == 201
                 assert resp.json()["version"] == "3chunk-ver"
 
+    @pytest.mark.asyncio
+    async def test_chunk_upload_traversal_filename_rejected(self, client):
+        # P1-11: a traversal filename must be rejected at the router boundary,
+        # not written outside the version dir.
+        model = await _create_model(client, "chunk-traversal-deep")
+        for bad_name in ("../evil.bin", "a/b/c.bin", "/etc/passwd", "../../x"):
+            resp = await client.post(
+                f"/api/v1/models/{model['id']}/versions/chunk-upload",
+                data={
+                    "version": f"trav-{abs(hash(bad_name))}",
+                    "format": "mlx",
+                    "quantization": "4bit",
+                    "filename": bad_name,
+                    "total_chunks": "1",
+                    "chunk_index": "0",
+                },
+                files={"chunk": ("chunk.bin", b"data", "application/octet-stream")},
+            )
+            assert resp.status_code == 400, f"{bad_name!r} should be rejected, got {resp.status_code}"
+
+
 
 class TestVersionListDeep:
     @pytest.mark.asyncio

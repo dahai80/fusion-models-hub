@@ -255,11 +255,19 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
                     version=f"lora-merge-{task_id[:8]}",
                     release_notes=f"LoRA merge of {lora_v.version} onto {base_v.version}",
                     file_path=output_path,
+                    autocommit=False,
                 )
+                # P1-17: the output-version create and the task COMPLETED update
+                # MUST commit in one transaction. Before, create_version committed
+                # on its own — a crash before update_lora_merge_task left an orphan
+                # version plus a stuck RUNNING merge task forever. Flush both into
+                # the open session and let the `async with sf()` exit commit once.
                 await crud.update_lora_merge_task(
                     s, task_id, status=TaskStatus.COMPLETED,
                     output_version_id=new_ver.id if new_ver else "",
+                    autocommit=False,
                 )
+                await s.commit()
                 logger.info(
                     "LoRA merge completed: id=%s output_version=%s",
                     task_id, new_ver.id if new_ver else "",

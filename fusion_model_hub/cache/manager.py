@@ -406,3 +406,34 @@ class CacheManager:
         from ..utils.hashing import compute_sha256
 
         return compute_sha256(path)
+
+    # P1-6/P1-8: the sync methods above are correct but block the event loop
+    # when called from an async context (tasks.py does cache.put() with no
+    # await, running multi-GB copy+SHA256 on the loop). These async wrappers
+    # offload the blocking work to a worker thread; the index dict is still
+    # guarded by the threading.Lock so concurrent sync + async callers stay
+    # serialized. The cache router (sync endpoints) keeps using the sync
+    # methods; the quantize hot path uses these async wrappers.
+    async def put_async(self, *args: Any, **kwargs: Any) -> CacheEntry:
+        from functools import partial
+
+        import anyio
+
+        # anyio.to_thread.run_sync only forwards positional args to the func
+        # (its **kwargs are its own: abandon_on_cancel/cancellable/limiter).
+        # Bind kwargs via partial so callers using keyword args reach self.put.
+        return await anyio.to_thread.run_sync(partial(self.put, *args, **kwargs))
+
+    async def gc_async(self, *args: Any, **kwargs: Any) -> int:
+        from functools import partial
+
+        import anyio
+
+        return await anyio.to_thread.run_sync(partial(self.gc, *args, **kwargs))
+
+    async def validate_async(self, *args: Any, **kwargs: Any) -> int:
+        from functools import partial
+
+        import anyio
+
+        return await anyio.to_thread.run_sync(partial(self.validate, *args, **kwargs))

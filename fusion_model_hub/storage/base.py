@@ -45,6 +45,19 @@ class StorageBackend(ABC):
     def get_file(self, file_path: str) -> Path | None:
         ...
 
+    # FR-027 / P1-2: Git LFS batch API references /gitlfs/objects/{oid} for
+    # upload (PUT) and download (GET). Backends must be able to store and
+    # retrieve a raw LFS object keyed by its oid (the SHA256 of the content).
+    # MinioStore raises NotImplementedError — LFS upload/download on object
+    # storage is a separate path not wired here yet.
+    @abstractmethod
+    def put_lfs_object(self, oid: str, data: bytes) -> Path:
+        ...
+
+    @abstractmethod
+    def get_lfs_object(self, oid: str) -> Path | None:
+        ...
+
     @abstractmethod
     def delete_version_files(self, model_id: str, version: str) -> bool:
         ...

@@ -348,6 +348,63 @@ class TestBackup:
             await _run_backup_loop()
 
     @pytest.mark.asyncio
+    async def test_restore_from_backup_reinserts_rows(self, settings):
+        # P1-22: backup wrote models+versions but nothing could read them back
+        # (the `import` subcommand consumes a different schema). Verify
+        # restore_from_backup re-inserts rows with their original IDs and is
+        # idempotent (a second run skips rows that already exist).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = get_engine(settings.db_url)
+            await init_db(engine)
+            init_deps(settings, engine)
+            from fusion_model_hub.server.deps import get_session_factory
+            sf = get_session_factory()
+            backup_file = os.path.join(tmpdir, "backup_test.json")
+            payload = {
+                "timestamp": "20260101_000000",
+                "models": [
+                    {"id": "m-restore-1", "name": "restored-model", "description": "d",
+                     "model_type": "llm", "architecture": "qwen", "params_size": "7B",
+                     "license": "apache-2.0"},
+                ],
+                "versions": [
+                    {"id": "v-restore-1", "model_id": "m-restore-1", "version": "1.0.0",
+                     "format": "mlx", "quantization": "4bit", "status": "published",
+                     "file_hash": "abc", "file_size": 1024, "benchmark_score": 0.9},
+                ],
+            }
+            with open(backup_file, "w") as f:
+                json.dump(payload, f)
+            from fusion_model_hub.server.backup import restore_from_backup
+            result = await restore_from_backup(backup_file)
+            assert result["models_restored"] == 1
+            assert result["versions_restored"] == 1
+            async with sf() as session:
+                from fusion_model_hub.db.crud import get_model, get_version
+                m = await get_model(session, "m-restore-1")
+                assert m is not None and m.name == "restored-model"
+                v = await get_version(session, "v-restore-1")
+                assert v is not None and v.model_id == "m-restore-1" and v.file_size == 1024
+            # idempotent: re-running skips the already-present rows
+            result2 = await restore_from_backup(backup_file)
+            assert result2["models_restored"] == 0
+            assert result2["versions_restored"] == 0
+            assert result2["skipped"] >= 2
+
+    @pytest.mark.asyncio
+    async def test_restore_empty_backup_is_noop(self, settings):
+        engine = get_engine(settings.db_url)
+        await init_db(engine)
+        init_deps(settings, engine)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backup_file = os.path.join(tmpdir, "empty.json")
+            with open(backup_file, "w") as f:
+                json.dump({"timestamp": "x", "models": [], "versions": []}, f)
+            from fusion_model_hub.server.backup import restore_from_backup
+            result = await restore_from_backup(backup_file)
+            assert result == {"models_restored": 0, "versions_restored": 0, "skipped": 0}
+
+    @pytest.mark.asyncio
     async def test_run_backup_loop_cancelled(self):
         from fusion_model_hub.server.backup import _run_backup_loop
         mock_settings = MagicMock()

@@ -58,3 +58,49 @@ class TestMlxApiKeyResolution:
         # no ~/.fusion-mlx/settings.json — must not raise
         s = Settings()
         assert s.mlx_internal_api_key == ""
+
+
+class TestOpsEnvWiring:
+    # P1-21: FMH_HOST/FMH_PORT/FMH_LOG_LEVEL/FMH_DB_URL must be honored. Before,
+    # the serve CLI passed non-empty argparse defaults (127.0.0.1/11444/INFO)
+    # into Settings(), so __post_init__'s `if not self.x` hooks never fired and
+    # an operator's container env was silently ignored.
+
+    def test_fmh_host_env_overrides_default(self, monkeypatch):
+        monkeypatch.setenv("FMH_HOST", "0.0.0.0")
+        s = Settings(host="127.0.0.1")
+        assert s.host == "0.0.0.0"
+
+    def test_fmh_port_env_overrides_default(self, monkeypatch):
+        monkeypatch.setenv("FMH_PORT", "22000")
+        s = Settings(port=11444)
+        assert s.port == 22000
+
+    def test_fmh_port_invalid_falls_back(self, monkeypatch):
+        monkeypatch.setenv("FMH_PORT", "not-an-int")
+        s = Settings(port=11444)
+        assert s.port == 11444
+
+    def test_fmh_log_level_env_overrides_default(self, monkeypatch):
+        monkeypatch.setenv("FMH_LOG_LEVEL", "DEBUG")
+        s = Settings(log_level="INFO")
+        assert s.log_level == "DEBUG"
+
+    def test_fmh_db_url_env_overrides_derived_sqlite(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("FMH_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("FMH_DB_URL", "postgresql+asyncpg://user:pass@db:5432/hub")
+        s = Settings()
+        assert s.db_url == "postgresql+asyncpg://user:pass@db:5432/hub"
+
+    def test_db_url_derives_sqlite_when_env_unset(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("FMH_DATA_DIR", str(tmp_path))
+        monkeypatch.delenv("FMH_DB_URL", raising=False)
+        s = Settings()
+        assert s.db_url.startswith("sqlite+aiosqlite:///")
+        assert s.db_url.endswith("hub.db")
+
+    def test_explicit_constructor_arg_beats_env(self, monkeypatch):
+        # an explicit non-default constructor value must not be clobbered by env
+        monkeypatch.setenv("FMH_HOST", "0.0.0.0")
+        s = Settings(host="10.0.0.5")
+        assert s.host == "10.0.0.5"

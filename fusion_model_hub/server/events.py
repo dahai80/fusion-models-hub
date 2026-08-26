@@ -19,6 +19,21 @@ logger = logging.getLogger(__name__)
 _WEBHOOK_MAX_RETRIES = 3
 _WEBHOOK_BACKOFF_BASE = 1.0
 
+# P1-16: bound concurrent in-flight webhook deliveries so a burst of events
+# cannot spawn an unbounded number of tasks (each holding an httpx client).
+_WEBHOOK_CONCURRENCY = 32
+_webhook_semaphore: asyncio.Semaphore | None = None
+# P1-16: keep strong refs to fire-and-forget tasks so they are not GC'd mid-
+# flight. Cleared as each completes via done-callback.
+_pending_webhook_tasks: set[asyncio.Task] = set()
+
+
+def _get_webhook_semaphore() -> asyncio.Semaphore:
+    global _webhook_semaphore
+    if _webhook_semaphore is None:
+        _webhook_semaphore = asyncio.Semaphore(_WEBHOOK_CONCURRENCY)
+    return _webhook_semaphore
+
 
 def _sign_payload(payload: bytes, secret: str) -> str:
     return hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
@@ -85,12 +100,35 @@ async def dispatch_webhook_event(event: str, data: dict, tenant_id: str = "") ->
             "X-Webhook-Event": event,
             "X-Webhook-Signature": signature,
         }
-        try:
-            await _send_webhook_with_retry(w.url, payload_bytes, headers, w.id, event)
-        except Exception:
-            # E-E4: isolate per-webhook failures. Log and continue to the next
-            # subscriber so one broken URL cannot suppress delivery to the rest.
-            logger.exception(
-                "dispatch_webhook_event: subscriber id=%s url=%s raised, skipping (event=%s)",
-                w.id, w.url, event,
-            )
+        # P1-16: fire-and-forget. Before, dispatch_webhook_event awaited
+        # _send_webhook_with_retry inline — up to 3 retries x (5s timeout +
+        # exponential backoff) ~= 21s of blocking per subscriber, paid by the
+        # caller (version publish, quantize complete, hot-reload). The caller
+        # only needs "attempted", not the delivery result (retries + give-up are
+        # logged inside _send_webhook_with_retry). Spawn a bounded task per
+        # subscriber and return immediately; one slow/dead URL no longer stalls
+        # the request path or the subscribers behind it.
+        task = asyncio.create_task(
+            _deliver_one_webhook(w.url, payload_bytes, headers, w.id, event),
+            name=f"webhook-{w.id}-{event}",
+        )
+        _pending_webhook_tasks.add(task)
+        task.add_done_callback(_pending_webhook_tasks.discard)
+
+
+async def _deliver_one_webhook(
+    url: str, payload_bytes: bytes, headers: dict, webhook_id: str, event: str,
+) -> None:
+    # P1-16: per-subscriber delivery coroutine, gated by the concurrency
+    # semaphore so a burst does not open dozens of httpx clients at once.
+    # E-E4: isolate per-webhook failures — one broken URL must not suppress
+    # the rest (they run as independent tasks now, but the guard is kept).
+    sem = _get_webhook_semaphore()
+    try:
+        async with sem:
+            await _send_webhook_with_retry(url, payload_bytes, headers, webhook_id, event)
+    except Exception:
+        logger.exception(
+            "dispatch_webhook_event: subscriber id=%s url=%s raised, skipping (event=%s)",
+            webhook_id, url, event,
+        )

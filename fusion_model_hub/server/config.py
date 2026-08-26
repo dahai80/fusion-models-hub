@@ -42,14 +42,53 @@ class Settings:
     # the root admin key. If unset, bootstrap is still open but IP rate-limited
     # (see routers/auth.py) — set the env in any shared/networked deployment.
     auth_bootstrap_token: str = ""
+    # P1-15: pool sizing for server-side DBs (PostgreSQL/MySQL). SQLite uses
+    # NullPool (single connection) and ignores these. Before, the engine was a
+    # fixed pool of 5+10 with pre_ping, undocumented and unconfigurable; a
+    # multi-worker/fronted-by-gateway deployment would exhaust it. Expose the
+    # knobs so an operator can match pool size to expected concurrency.
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
 
     def __post_init__(self):
+        # P1-21: wire FMH_HOST/FMH_PORT/FMH_LOG_LEVEL/FMH_DB_URL. Previously the
+        # CLI serve parser passed non-empty defaults (127.0.0.1, 11444, INFO)
+        # straight into Settings(), so __post_init__'s `if not self.x` env hooks
+        # never fired — an operator who set FMH_DB_URL in the container env got
+        # the derived SQLite path anyway. Resolve env here for the fields that
+        # had no hook at all. Constructor-arg values (non-empty) still win.
+        if not self.host or self.host == "127.0.0.1":
+            env_host = os.environ.get("FMH_HOST", "")
+            if env_host:
+                self.host = env_host
+        if not self.port or self.port == 11444:
+            env_port = os.environ.get("FMH_PORT", "")
+            if env_port:
+                try:
+                    self.port = int(env_port)
+                except ValueError:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "FMH_PORT=%r is not an int; keeping default 11444", env_port,
+                    )
+        if not self.log_level or self.log_level == "INFO":
+            env_log = os.environ.get("FMH_LOG_LEVEL", "")
+            if env_log:
+                self.log_level = env_log
         if not self.cache_dir:
             self.cache_dir = os.environ.get("FMH_CACHE_DIR", str(os.path.join(self.data_dir or os.getcwd(), "cache")))
         if not self.data_dir:
             self.data_dir = os.environ.get("FMH_DATA_DIR", str(os.path.join(os.getcwd(), "data")))
         if not self.db_url:
-            self.db_url = f"sqlite+aiosqlite:///{os.path.join(self.data_dir, 'hub.db')}"
+            # P1-21: prefer an explicit FMH_DB_URL env (PostgreSQL/MySQL in a
+            # container) before deriving the SQLite path. Before this, the env
+            # was silently ignored — a container with FMH_DB_URL=postgresql://...
+            # still wrote to ./data/hub.db.
+            env_db = os.environ.get("FMH_DB_URL", "")
+            if env_db:
+                self.db_url = env_db
+            else:
+                self.db_url = f"sqlite+aiosqlite:///{os.path.join(self.data_dir, 'hub.db')}"
         if not self.mlx_url:
             self.mlx_url = os.environ.get("FMH_MLX_URL", "http://127.0.0.1:11434")
         if not self.storage_type:
@@ -167,3 +206,8 @@ class Settings:
             self.expose_metrics = True
         if not self.auth_bootstrap_token:
             self.auth_bootstrap_token = os.environ.get("FMH_AUTH_BOOTSTRAP_TOKEN", "")
+        # P1-15: wire pool sizing env so operators can tune without code edits.
+        if not self.db_pool_size:
+            self.db_pool_size = int(os.environ.get("FMH_DB_POOL_SIZE", "10"))
+        if not self.db_max_overflow:
+            self.db_max_overflow = int(os.environ.get("FMH_DB_MAX_OVERFLOW", "20"))
