@@ -1039,6 +1039,16 @@ pytest --cov=fusion_model_hub --cov-report=term-missing
 ~/claude-home/fusion-mlx/start.sh start
 ```
 
+## Patch Changelog (v1.0.17 → v1.0.18)
+
+Runtime-warning fix + engine-lifecycle hardening.
+
+| Fix | Change |
+|-----|--------|
+| `PytestUnhandledThreadExceptionWarning` / `RuntimeError: Event loop is closed` | `db/database.py`: process-wide engine registry `_engines` captures every async engine created by `get_engine`; new `dispose_all_engines()` disposes them deterministically. aiosqlite spawns a background worker thread bound to the event loop — if the engine is never disposed, the worker wakes after the loop closes and raises. `server/app.py`: lifespan shutdown now calls `dispose_all_engines()` (also fixes a real production shutdown leak, not just tests). `tests/conftest.py`: autouse teardown disposes engines while the test event loop is still live. Verified: 890 pass, 3 consecutive runs with 0 warnings under `-W error::pytest.PytestUnhandledThreadExceptionWarning`. |
+
+Test count: 890 (unchanged). Coverage: 81% (unchanged).
+
 ## Release-Blockers Changelog (v1.0.16 → v1.0.17)
 
 Production-readiness audit follow-up. Three blockers + four minor items closed on branch `fix/release-blockers-ssrf-ci-env`.

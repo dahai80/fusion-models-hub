@@ -164,6 +164,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await close_all_transports()
         except Exception:
             logger.warning("Failed to close pooled httpx transports", exc_info=True)
+        # Dispose all async engines so aiosqlite worker threads shut down before
+        # the event loop closes (prevents `RuntimeError: Event loop is closed`).
+        try:
+            from ..db.database import dispose_all_engines
+            await dispose_all_engines()
+        except Exception:
+            logger.warning("Failed to dispose async engines", exc_info=True)
 
     app = FastAPI(
         title="Fusion Model Hub",
