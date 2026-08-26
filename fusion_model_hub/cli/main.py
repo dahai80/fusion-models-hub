@@ -58,7 +58,8 @@ async def _show_hardware() -> str:
 
 @app.command()
 def version():
-    typer.echo("fusion-model-hub v1.0.0")
+    from .. import __version__
+    typer.echo(f"fusion-model-hub {__version__}")
 
 
 def cli_main():

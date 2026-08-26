@@ -54,7 +54,10 @@ class LocalModelManager:
 
     def unregister(self, model_id: str) -> bool:
         """Remove a model from local registry."""
-        return self._models.pop(model_id, None) is not None
+        removed = self._models.pop(model_id, None) is not None
+        if removed:
+            self._save_meta()
+        return removed
 
     def list(self) -> list[dict[str, Any]]:
         """List all locally installed models."""

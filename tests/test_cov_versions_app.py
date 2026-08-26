@@ -410,6 +410,19 @@ class TestVersionStatusAndMetrics:
         resp = await client.post("/api/v1/versions/nonexistent/retire")
         assert resp.status_code == 404
 
+    async def test_retire_dispatches_webhook(self, client):
+        m = await _create_model(client, "retire-wh")
+        vid = await _create_published_version(client, m["id"])
+        with patch(
+            "fusion_model_hub.server.routers.webhooks.dispatch_webhook_event",
+            new=AsyncMock(),
+        ) as mock_dispatch:
+            resp = await client.post(f"/api/v1/versions/{vid}/retire")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "retired"
+        events = [call.args[0] for call in mock_dispatch.call_args_list]
+        assert "version.retired" in events
+
     async def test_deprecate_not_found(self, client):
         resp = await client.post(
             "/api/v1/versions/nonexistent/deprecate", json={}

@@ -209,6 +209,8 @@ class TestLocalModelManager:
             m.register("m1", "M1", "/tmp/m1.mlx")
             assert m.unregister("m1") is True
             assert m.unregister("nonexistent") is False
+            m_reloaded = LocalModelManager(models_dir=tmpdir)
+            assert m_reloaded.get("m1") is None
 
     def test_set_active(self):
         with tempfile.TemporaryDirectory() as tmpdir:

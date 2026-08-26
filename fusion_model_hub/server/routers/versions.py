@@ -516,6 +516,13 @@ async def retire_version(version_id: str, session: SessionDep):
         raise HTTPException(status_code=409, detail=str(e))
     if not v:
         raise HTTPException(status_code=404, detail="Version not found")
+    try:
+        from .webhooks import dispatch_webhook_event
+        await dispatch_webhook_event(
+            "version.retired", {"id": version_id, "model_id": v.model_id}
+        )
+    except Exception:
+        logger.exception("Webhook dispatch failed for version.retired")
     return _version_to_dict(v)
 
 
