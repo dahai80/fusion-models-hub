@@ -71,6 +71,7 @@ class TestDatabaseHelpers:
         await dispose_all_engines()
 
     async def test_get_engine_server_db_pool_kwargs(self):
+        pytest.importorskip("asyncpg", reason="asyncpg not installed (PG-only dep)")
         engine = get_engine(
             "postgresql+asyncpg://u:p@nonhost:5432/db", pool_size=5, max_overflow=3,
         )
