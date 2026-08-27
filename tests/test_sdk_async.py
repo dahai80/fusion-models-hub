@@ -961,3 +961,186 @@ class TestAsyncClientURLConstruction:
             MockAsync.assert_called_once()
             call_kwargs = MockAsync.call_args[1]
             assert call_kwargs["headers"]["X-API-Key"] == "test-key"
+
+
+class TestAsyncMissingRouterGroups:
+    # #8: async SDK gaps — serve lifecycle, cache, deployments, downloads,
+    # evaluations, tenants, webhooks, monitor. Mirror sync coverage.
+
+    @pytest.mark.asyncio
+    async def test_publish_model(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"status": "published"})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        result = await client.publish_model("m1")
+        assert result["status"] == "published"
+        assert mock_inner.post.call_args[0][0].endswith("/models/m1/publish")
+
+    @pytest.mark.asyncio
+    async def test_serve_model(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"served": True})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.serve_model("m1", version_id="v1", gpu=False)
+        assert mock_inner.post.call_args[1]["json"] == {"version_id": "v1", "gpu": False}
+
+    @pytest.mark.asyncio
+    async def test_cache_gc(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"removed": 2})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        result = await client.cache_gc(max_size_gb=5, max_age_days=14)
+        assert result["removed"] == 2
+        assert mock_inner.post.call_args[1]["params"] == {"max_size_gb": 5, "max_age_days": 14}
+
+    @pytest.mark.asyncio
+    async def test_cache_remove_entry_params(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.delete.return_value = _mock_response({"removed": True})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.cache_remove_entry("m1", "quantized", quant_bits=4)
+        assert mock_inner.delete.call_args[0][0].endswith("/cache/m1/quantized")
+        assert mock_inner.delete.call_args[1]["params"] == {"quant_bits": 4}
+
+    @pytest.mark.asyncio
+    async def test_create_deployment(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"id": "d1"})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        result = await client.create_deployment({"model_id": "m1"})
+        assert result["id"] == "d1"
+        assert mock_inner.post.call_args[1]["json"] == {"model_id": "m1"}
+
+    @pytest.mark.asyncio
+    async def test_update_deployment_patch(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.patch.return_value = _mock_response({"id": "d1", "replicas": 2})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        result = await client.update_deployment("d1", {"replicas": 2})
+        assert result["replicas"] == 2
+        assert mock_inner.patch.call_args[0][0].endswith("/deployments/d1")
+
+    @pytest.mark.asyncio
+    async def test_create_download(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"task_id": "t1"})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.create_download("m1", "https://hf-mirror.com/x")
+        sent = mock_inner.post.call_args[1]["json"]
+        assert sent["model_id"] == "m1"
+        assert sent["source_url"] == "https://hf-mirror.com/x"
+
+    @pytest.mark.asyncio
+    async def test_cancel_download(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.delete.return_value = _mock_response({"cancelled": True})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.cancel_download("t1")
+        assert mock_inner.delete.call_args[0][0].endswith("/downloads/t1")
+
+    @pytest.mark.asyncio
+    async def test_create_evaluation(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"id": "e1"})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.create_evaluation("m1", "mmlu", version_id="v1")
+        assert mock_inner.post.call_args[1]["json"] == {
+            "model_id": "m1",
+            "benchmark_name": "mmlu",
+            "version_id": "v1",
+        }
+
+    @pytest.mark.asyncio
+    async def test_update_evaluation_patch(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.patch.return_value = _mock_response({"id": "e1", "status": "completed"})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.update_evaluation("e1", {"status": "completed"})
+        assert mock_inner.patch.call_args[0][0].endswith("/evaluations/e1")
+
+    @pytest.mark.asyncio
+    async def test_create_tenant(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"id": "t1"})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.create_tenant("acme", display_name="Acme")
+        assert mock_inner.post.call_args[1]["json"] == {"name": "acme", "display_name": "Acme"}
+
+    @pytest.mark.asyncio
+    async def test_update_tenant_patch(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.patch.return_value = _mock_response({"id": "t1"})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.update_tenant("t1", display_name="New")
+        assert mock_inner.patch.call_args[0][0].endswith("/tenants/t1")
+
+    @pytest.mark.asyncio
+    async def test_create_role(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"id": "r1"})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.create_role("t1", "editor", permissions="read,write")
+        assert mock_inner.post.call_args[0][0].endswith("/tenants/t1/roles")
+
+    @pytest.mark.asyncio
+    async def test_create_webhook(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"id": "w1"})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.create_webhook("hook", "https://example.com/wh", events="model.created")
+        sent = mock_inner.post.call_args[1]["json"]
+        assert sent["name"] == "hook"
+        assert sent["events"] == "model.created"
+
+    @pytest.mark.asyncio
+    async def test_realtime_monitor(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.get.return_value = _mock_response({"cpu": 12.3})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        result = await client.realtime_monitor()
+        assert result["cpu"] == 12.3
+        assert mock_inner.get.call_args[0][0].endswith("/monitor/realtime")
+
+    @pytest.mark.asyncio
+    async def test_model_stats(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.get.return_value = _mock_response({"models": []})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.model_stats()
+        assert mock_inner.get.call_args[0][0].endswith("/monitor/model-stats")
+
+    @pytest.mark.asyncio
+    async def test_hot_reload_model(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"reloaded": True})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.hot_reload_model("m1", "v2")
+        assert mock_inner.post.call_args[0][0].endswith("/models/m1/hot-reload")
+        assert mock_inner.post.call_args[1]["json"] == {"version_id": "v2"}
+
+    @pytest.mark.asyncio
+    async def test_scale_deployment(self, client):
+        mock_inner = AsyncMock()
+        mock_inner.post.return_value = _mock_response({"scale": 5})
+        mock_inner.is_closed = False
+        client._client = mock_inner
+        await client.scale_deployment("d1", 5)
+        assert mock_inner.post.call_args[0][0].endswith("/deployments/d1/scale")
+        assert mock_inner.post.call_args[1]["json"] == {"scale": 5}

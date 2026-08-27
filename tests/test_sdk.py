@@ -833,3 +833,155 @@ class TestTLSConfig:
         sdk.get_model("m1")
         sdk.get_model("m2")
         assert MockClient.call_count == 1
+
+
+class TestSyncMissingRouterGroups:
+    # #8: SDK gaps — serve lifecycle, cache, deployments, downloads,
+    # evaluations, tenants, webhooks, monitor. Cover one representative
+    # method per group + the _patch-based update path.
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_publish_model(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"id": "m1", "status": "published"}))
+        result = sdk.publish_model("m1")
+        assert result["status"] == "published"
+        sdk._client.post.assert_called_once()
+        assert sdk._client.post.call_args[0][0].endswith("/models/m1/publish")
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_serve_model(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"model_id": "m1", "served": True}))
+        result = sdk.serve_model("m1", version_id="v1", gpu=False)
+        assert result["served"] is True
+        sent = sdk._client.post.call_args[1]["json"]
+        assert sent == {"version_id": "v1", "gpu": False}
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_cache_gc(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"removed": 3}))
+        result = sdk.cache_gc(max_size_gb=10, max_age_days=7)
+        assert result["removed"] == 3
+        assert sdk._client.post.call_args[0][0].endswith("/cache/gc")
+        assert sdk._client.post.call_args[1]["params"] == {"max_size_gb": 10, "max_age_days": 7}
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_cache_remove_entry_with_params(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "delete", _mock_response({"removed": True}))
+        sdk.cache_remove_entry("m1", "quantized", quant_bits=4)
+        assert sdk._client.delete.call_args[0][0].endswith("/cache/m1/quantized")
+        assert sdk._client.delete.call_args[1]["params"] == {"quant_bits": 4}
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_create_deployment(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"id": "d1"}))
+        result = sdk.create_deployment({"model_id": "m1", "name": "dep1"})
+        assert result["id"] == "d1"
+        assert sdk._client.post.call_args[1]["json"] == {"model_id": "m1", "name": "dep1"}
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_update_deployment_patch(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "patch", _mock_response({"id": "d1", "replicas": 3}))
+        result = sdk.update_deployment("d1", {"replicas": 3})
+        assert result["replicas"] == 3
+        assert sdk._client.patch.call_args[0][0].endswith("/deployments/d1")
+        assert sdk._client.patch.call_args[1]["json"] == {"replicas": 3}
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_create_download(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"task_id": "t1"}))
+        sdk.create_download("m1", "https://hf-mirror.com/x", version_id="v1")
+        sent = sdk._client.post.call_args[1]["json"]
+        assert sent["model_id"] == "m1"
+        assert sent["source_url"] == "https://hf-mirror.com/x"
+        assert sent["version_id"] == "v1"
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_cancel_download(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "delete", _mock_response({"cancelled": True}))
+        sdk.cancel_download("t1")
+        assert sdk._client.delete.call_args[0][0].endswith("/downloads/t1")
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_create_evaluation(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"id": "e1"}))
+        sdk.create_evaluation("m1", "mmlu", version_id="v1")
+        sent = sdk._client.post.call_args[1]["json"]
+        assert sent == {"model_id": "m1", "benchmark_name": "mmlu", "version_id": "v1"}
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_update_evaluation_patch(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "patch", _mock_response({"id": "e1", "status": "completed"}))
+        sdk.update_evaluation("e1", {"status": "completed"})
+        assert sdk._client.patch.call_args[0][0].endswith("/evaluations/e1")
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_create_tenant(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"id": "t1"}))
+        sdk.create_tenant("acme", display_name="Acme Inc")
+        assert sdk._client.post.call_args[1]["json"] == {"name": "acme", "display_name": "Acme Inc"}
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_update_tenant_patch(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "patch", _mock_response({"id": "t1"}))
+        sdk.update_tenant("t1", display_name="New")
+        assert sdk._client.patch.call_args[0][0].endswith("/tenants/t1")
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_create_role(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"id": "r1"}))
+        sdk.create_role("t1", "editor", permissions="read,write")
+        assert sdk._client.post.call_args[0][0].endswith("/tenants/t1/roles")
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_create_webhook(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"id": "w1"}))
+        sdk.create_webhook("hook", "https://example.com/wh", events="model.created")
+        sent = sdk._client.post.call_args[1]["json"]
+        assert sent["name"] == "hook"
+        assert sent["url"] == "https://example.com/wh"
+        assert sent["events"] == "model.created"
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_realtime_monitor(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "get", _mock_response({"cpu": 12.3}))
+        result = sdk.realtime_monitor()
+        assert result["cpu"] == 12.3
+        assert sdk._client.get.call_args[0][0].endswith("/monitor/realtime")
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_model_stats(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "get", _mock_response({"models": []}))
+        sdk.model_stats()
+        assert sdk._client.get.call_args[0][0].endswith("/monitor/model-stats")
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_hot_reload_model(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"reloaded": True}))
+        sdk.hot_reload_model("m1", "v2")
+        assert sdk._client.post.call_args[0][0].endswith("/models/m1/hot-reload")
+        assert sdk._client.post.call_args[1]["json"] == {"version_id": "v2"}
+
+    @patch("fusion_model_hub.sdk.client.httpx.Client")
+    def test_scale_deployment(self, MockClient):
+        sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
+        _setup_mock_client(MockClient, "post", _mock_response({"scale": 5}))
+        sdk.scale_deployment("d1", 5)
+        assert sdk._client.post.call_args[0][0].endswith("/deployments/d1/scale")
+        assert sdk._client.post.call_args[1]["json"] == {"scale": 5}
