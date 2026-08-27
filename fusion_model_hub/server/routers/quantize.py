@@ -323,10 +323,23 @@ async def start_layered_quantize(body: LayeredQuantizeRequest, settings: Setting
     mlx_url = settings.mlx_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # Upstream contract (fusion-mlx#646): MLX exposes POST /v1/quantize
+            # (whole-model), NOT /v1/quantize/layered. The MLX QuantizeRequest
+            # schema accepts model/output_path/quant_bits/quant_mode/
+            # quant_group_size/trust_remote_code — it has NO per-layer rules.
+            # Map default_bits→quant_bits and forward the supported fields;
+            # drop layer_rules (MLX would 422 on the unknown field) and log it
+            # so the caller knows per-layer quantize is not honored by MLX.
+            if body.layer_rules:
+                logger.warning(
+                    "Layered quantize requested with %d layer_rules for model=%s but "
+                    "Fusion-MLX has no per-layer quantize endpoint — applying uniform "
+                    "quant_bits=%d (layer_rules ignored)",
+                    len(body.layer_rules), body.model, body.default_bits,
+                )
             payload = {
                 "model": body.model,
-                "default_bits": body.default_bits,
-                "layer_rules": [{"pattern": r.pattern, "bits": r.bits} for r in body.layer_rules],
+                "quant_bits": body.default_bits,
                 "quant_group_size": body.quant_group_size,
                 "quant_mode": body.quant_mode,
                 "trust_remote_code": body.trust_remote_code,
@@ -335,7 +348,7 @@ async def start_layered_quantize(body: LayeredQuantizeRequest, settings: Setting
                 payload["output_path"] = body.output_path
 
             resp = await client.post(
-                f"{mlx_url}/v1/quantize/layered",
+                f"{mlx_url}/v1/quantize",
                 json=payload,
             )
             if resp.status_code in (200, 202):
@@ -375,7 +388,9 @@ async def get_layered_quantize_job(job_id: str, settings: SettingsDep):
     mlx_url = settings.mlx_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{mlx_url}/v1/quantize/layered/jobs/{job_id}")
+            # Upstream contract (fusion-mlx#646): MLX exposes GET
+            # /v1/quantize/jobs/{job_id}, NOT /v1/quantize/layered/jobs/{id}.
+            resp = await client.get(f"{mlx_url}/v1/quantize/jobs/{job_id}")
             if resp.status_code == 200:
                 return resp.json()
             if resp.status_code == 404:
@@ -400,7 +415,9 @@ async def list_layered_quantize_jobs(settings: SettingsDep):
     mlx_url = settings.mlx_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{mlx_url}/v1/quantize/layered/jobs")
+            # Upstream contract (fusion-mlx#646): MLX exposes GET
+            # /v1/quantize/jobs, NOT /v1/quantize/layered/jobs.
+            resp = await client.get(f"{mlx_url}/v1/quantize/jobs")
             if resp.status_code == 200:
                 return resp.json()
             logger.warning("MLX layered jobs list returned %d", resp.status_code)

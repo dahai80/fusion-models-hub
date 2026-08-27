@@ -174,15 +174,66 @@ class TestModelConverter:
 
     @pytest.mark.asyncio
     async def test_quantize_success(self):
+        # Upstream contract (fusion-mlx#646): POST /v1/quantize returns an
+        # async job {job_id, status:queued}; poll GET /v1/quantize/jobs/{id}
+        # until status=="done".
         c = ModelConverter()
-        with patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post:
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {"output_path": "/tmp/test-q4.mlx", "original_size_gb": 5.0, "converted_size_gb": 1.5}
-            mock_post.return_value = mock_resp
+        with patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post, \
+             patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get:
+            post_resp = MagicMock()
+            post_resp.status_code = 200
+            post_resp.json.return_value = {"job_id": "job-1", "status": "queued"}
+            mock_post.return_value = post_resp
+            get_resp = MagicMock()
+            get_resp.status_code = 200
+            get_resp.json.return_value = {
+                "status": "done",
+                "output_path": "/tmp/test-q4.mlx",
+                "original_size_gb": 5.0,
+                "converted_size_gb": 1.5,
+            }
+            mock_get.return_value = get_resp
             with tempfile.NamedTemporaryFile(suffix=".mlx") as f:
                 result = await c.quantize(f.name, bits=4)
                 assert result["status"] == "completed"
+                assert result["output_path"] == "/tmp/test-q4.mlx"
+
+    @pytest.mark.asyncio
+    async def test_quantize_sync_fallback(self):
+        # Older MLX may answer synchronously (no job_id). The converter must
+        # still honor a direct completed response.
+        c = ModelConverter()
+        with patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post:
+            post_resp = MagicMock()
+            post_resp.status_code = 200
+            post_resp.json.return_value = {
+                "status": "completed",
+                "output_path": "/tmp/test-q4.mlx",
+                "original_size_gb": 5.0,
+                "converted_size_gb": 1.5,
+            }
+            mock_post.return_value = post_resp
+            with tempfile.NamedTemporaryFile(suffix=".mlx") as f:
+                result = await c.quantize(f.name, bits=4)
+                assert result["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_quantize_job_failed(self):
+        c = ModelConverter()
+        with patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post, \
+             patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get:
+            post_resp = MagicMock()
+            post_resp.status_code = 200
+            post_resp.json.return_value = {"job_id": "job-2", "status": "queued"}
+            mock_post.return_value = post_resp
+            get_resp = MagicMock()
+            get_resp.status_code = 200
+            get_resp.json.return_value = {"status": "failed", "error": "OOM"}
+            mock_get.return_value = get_resp
+            with tempfile.NamedTemporaryFile(suffix=".mlx") as f:
+                result = await c.quantize(f.name, bits=4)
+                assert result["status"] == "failed"
+                assert "OOM" in result["error"]
 
 
 # ── LocalModelManager ──

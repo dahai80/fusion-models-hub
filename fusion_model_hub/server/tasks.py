@@ -133,7 +133,7 @@ async def _run_quantize(
             quant_enum = quant_map.get(quant_bits, Quantization.Q4)
             format_enum = ModelFormat(target_format)
 
-            converter = ModelConverter(mlx_url=settings.mlx_url)
+            converter = ModelConverter(mlx_url=settings.mlx_url, api_key=settings.mlx_internal_api_key)
             model_id = source_ver.model_id
 
             result = None
