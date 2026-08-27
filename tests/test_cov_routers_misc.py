@@ -776,6 +776,150 @@ class TestSystemCleanup:
         assert data["candidates"][0]["status"] == "retired"
 
 
+class TestSystemCleanupRealDelete:
+    # #6: dry_run=False actually deletes retired version files + clears the DB row.
+
+    async def _seed_retired_with_real_file(self, client, settings, name="real-clean-1"):
+        from pathlib import Path
+
+        from fusion_model_hub.db.crud import update_version, update_version_status
+        from fusion_model_hub.db.models import VersionStatus
+        from fusion_model_hub.server.deps import get_session_factory
+
+        m = await _create_model(client, name)
+        v = await _create_published_version(client, m["id"])
+        # Create the on-disk version dir + a fake weight file LocalStore will delete.
+        version_dir = Path(settings.data_dir) / "models" / m["id"] / v["version"]
+        version_dir.mkdir(parents=True, exist_ok=True)
+        (version_dir / "weights.bin").write_bytes(b"0" * 4096)
+        sf = get_session_factory()
+        async with sf() as session:
+            await update_version(
+                session,
+                v["id"],
+                file_path=str(version_dir / "weights.bin"),
+                file_size=4096,
+            )
+            await update_version_status(session, v["id"], VersionStatus.RETIRED)
+        return m, v, version_dir
+
+    async def test_cleanup_dry_run_default_does_not_delete(self, client, settings):
+        m, v, version_dir = await self._seed_retired_with_real_file(client, settings)
+        resp = await client.post("/api/v1/system/cleanup")  # dry_run defaults True
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["dry_run"] is True
+        assert data["total"] == 1
+        assert "deleted" not in data
+        # File + dir still present (dry run = no mutation).
+        assert version_dir.exists()
+        assert (version_dir / "weights.bin").exists()
+
+    async def test_cleanup_real_delete_clears_files_and_db(self, client, settings):
+        m, v, version_dir = await self._seed_retired_with_real_file(client, settings)
+        resp = await client.post("/api/v1/system/cleanup?dry_run=false")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["dry_run"] is False
+        assert data["deleted"] == 1
+        assert data["failed"] == 0
+        # On-disk version dir gone.
+        assert not version_dir.exists()
+        # DB row cleared but still exists (provenance kept).
+        from fusion_model_hub.db import crud
+        from fusion_model_hub.server.deps import get_session_factory
+
+        sf = get_session_factory()
+        async with sf() as session:
+            row = await crud.get_version(session, v["id"])
+            assert row is not None
+            assert row.file_path == ""
+            assert row.file_size == 0
+            assert row.status.value == "retired"
+
+
+class TestSystemScanDuplicatesRealDelete:
+    # #6: dry_run=False reclaims redundant duplicate weights (keeps oldest).
+
+    async def _seed_dup_pair(self, client, settings, hash_val="dup-hash-9"):
+        from pathlib import Path
+
+        from fusion_model_hub.db.crud import update_version
+        from fusion_model_hub.server.deps import get_session_factory
+
+        m1 = await _create_model(client, "dedup-a")
+        v1 = await _create_published_version(client, m1["id"])
+        m2 = await _create_model(client, "dedup-b")
+        v2 = await _create_published_version(client, m2["id"], version="2.0.0")
+        # Real on-disk weight files for both versions.
+        dir1 = Path(settings.data_dir) / "models" / m1["id"] / v1["version"]
+        dir2 = Path(settings.data_dir) / "models" / m2["id"] / v2["version"]
+        dir1.mkdir(parents=True, exist_ok=True)
+        dir2.mkdir(parents=True, exist_ok=True)
+        (dir1 / "weights.bin").write_bytes(b"0" * 4096)
+        (dir2 / "weights.bin").write_bytes(b"0" * 4096)
+        sf = get_session_factory()
+        async with sf() as session:
+            await update_version(
+                session,
+                v1["id"],
+                file_hash=hash_val,
+                file_size=4096,
+                file_path=str(dir1 / "weights.bin"),
+            )
+            await update_version(
+                session,
+                v2["id"],
+                file_hash=hash_val,
+                file_size=4096,
+                file_path=str(dir2 / "weights.bin"),
+            )
+        return (m1, v1, dir1), (m2, v2, dir2)
+
+    async def test_scan_dry_run_default_identifies_only(self, client, settings):
+        a, b = await self._seed_dup_pair(client, settings)
+        resp = await client.post("/api/v1/system/scan-duplicates")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["dry_run"] is True
+        assert data["total_groups"] == 1
+        assert "reclaimed" not in data
+        # Both weight dirs still present.
+        assert a[2].exists()
+        assert b[2].exists()
+
+    async def test_scan_real_delete_reclaims_redundant_keeps_oldest(self, client, settings):
+        a, b = await self._seed_dup_pair(client, settings)
+        # list_models is created_at-desc; the endpoint keeps the OLDEST version
+        # (last in the group) and retires the rest. Created near-simultaneously,
+        # so we assert exactly one dir survives + one is reclaimed.
+        resp = await client.post("/api/v1/system/scan-duplicates?dry_run=false")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["dry_run"] is False
+        assert data["total_groups"] == 1
+        assert data["reclaimed"] == 1
+        assert data["failed"] == 0
+        # Exactly one weight dir reclaimed, one kept.
+        remaining = [a[2].exists(), b[2].exists()]
+        assert remaining.count(True) == 1
+        assert remaining.count(False) == 1
+        # Reclaimed version's DB row is RETIRED with cleared file_path.
+        from fusion_model_hub.db import crud
+        from fusion_model_hub.server.deps import get_session_factory
+
+        sf = get_session_factory()
+        async with sf() as session:
+            r1 = await crud.get_version(session, a[1]["id"])
+            r2 = await crud.get_version(session, b[1]["id"])
+            retired = [r for r in (r1, r2) if r.status.value == "retired"]
+            kept = [r for r in (r1, r2) if r.status.value != "retired"]
+            assert len(retired) == 1
+            assert len(kept) == 1
+            assert retired[0].file_path == ""
+            assert retired[0].file_size == 0
+
+
 class TestSystemHardware:
     async def test_hardware_info_returns_fields(self, client):
         resp = await client.get("/api/v1/system/hardware")
