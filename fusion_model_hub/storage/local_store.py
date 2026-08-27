@@ -210,6 +210,29 @@ class LocalStore(StorageBackend):
             return True
         return False
 
+    def write_sidecar(self, model_id: str, version: str, filename: str, data: bytes) -> Path:
+        # #1: write a signed sidecar into the on-disk version dir so the
+        # watermark travels with the model files. Atomic write: tmp + os.replace.
+        import tempfile
+
+        version_dir = self.model_version_dir(model_id, version)
+        target = version_dir / filename
+        with tempfile.NamedTemporaryFile(dir=version_dir, prefix=f".{filename}.", suffix=".tmp", delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = Path(tmp.name)
+        os.replace(tmp_path, target)
+        logger.info("Wrote sidecar: model=%s version=%s file=%s size=%d", model_id, version, filename, len(data))
+        return target
+
+    def read_sidecar(self, model_id: str, version: str, filename: str) -> bytes | None:
+        # #1: read the sidecar back; None if absent (caller falls back to DB).
+        target = self.models_dir / model_id / version / filename
+        if not target.exists():
+            return None
+        data = target.read_bytes()
+        logger.info("Read sidecar: model=%s version=%s file=%s size=%d", model_id, version, filename, len(data))
+        return data
+
     @staticmethod
     def verify_hash(file_path: Path, expected_hash: str) -> bool:
         # E-E8: delegate to the shared utils helper (which logs mismatches).
