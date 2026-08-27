@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -924,6 +925,15 @@ class TestSyncPull:
         mock_resp.status_code = 200
         mock_resp.json = MagicMock(return_value=remote_model_data)
         mock_resp.raise_for_status = MagicMock()
+
+        # #2: same mock serves the model-fetch GET (.json) AND the per-version
+        # download GET (.aiter_bytes/.headers). A fresh async gen per call so
+        # each version pulls its own bytes instead of sharing an exhausted one.
+        async def _stream():
+            yield b"sync-pull-real-bytes"
+
+        mock_resp.aiter_bytes = MagicMock(side_effect=lambda *a, **k: _stream())
+        mock_resp.headers = {"content-disposition": 'attachment; filename="model.mlx"'}
         mock_client_instance = AsyncMock()
         mock_client_instance.get = AsyncMock(return_value=mock_resp)
         mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
@@ -943,6 +953,9 @@ class TestSyncPull:
 
     @pytest.mark.asyncio
     async def test_pull_already_exists(self, client):
+        # #2: re-pull semantics changed to get-or-create. A prior local model
+        # with the same name is reused (no duplicate created), and its remote
+        # versions are still pulled onto it.
         model = await _create_model(client, "pulled-model")
 
         remote_model_data = {
@@ -968,7 +981,11 @@ class TestSyncPull:
                 },
             )
         assert resp.status_code == 200
-        assert resp.json()["status"] == "already_exists"
+        data = resp.json()
+        assert data["status"] == "pulled"
+        # existing model reused, no new model created, no versions to pull.
+        assert data["model_id"] == model["id"]
+        assert data["versions_pulled"] == 0
 
     @pytest.mark.asyncio
     async def test_pull_with_version_filter(self, client):
@@ -985,6 +1002,12 @@ class TestSyncPull:
         mock_resp.status_code = 200
         mock_resp.json = MagicMock(return_value=remote_model_data)
         mock_resp.raise_for_status = MagicMock()
+
+        async def _stream():
+            yield b"sync-pull-filtered-bytes"
+
+        mock_resp.aiter_bytes = MagicMock(side_effect=lambda *a, **k: _stream())
+        mock_resp.headers = {"content-disposition": 'attachment; filename="model.mlx"'}
         mock_client_instance = AsyncMock()
         mock_client_instance.get = AsyncMock(return_value=mock_resp)
         mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
@@ -1055,7 +1078,15 @@ class TestSyncPush:
     @pytest.mark.asyncio
     async def test_push_success_with_mock(self, client):
         model = await _create_model(client, "push-ok")
-        ver = await _create_version(client, model["id"])
+        # #2: push now streams the real weight file, so upload a real file (not
+        # the empty-file helper) or the version is metadata-only and push
+        # correctly reports metadata_only instead of pushed.
+        ver_resp = await client.post(
+            f"/api/v1/models/{model['id']}/versions",
+            data={"version": "1.0.0", "format": "mlx", "quantization": "4bit"},
+            files={"file": ("model.mlx", b"push-bytes", "application/octet-stream")},
+        )
+        ver = ver_resp.json()
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -1097,6 +1128,187 @@ class TestSyncPush:
         assert resp.status_code == 200
         data = resp.json()
         assert any(p["status"] == "failed" for p in data["pushed"])
+
+
+class TestSyncRealBytes:
+    # #2: sync push/pull now stream real weight bytes, not just metadata.
+
+    @pytest.mark.asyncio
+    async def test_receive_writes_file_and_sets_hash(self, client):
+        # /sync/receive streams the uploaded file into the store, sets
+        # file_path/hash/size on the version row.
+        payload = b"real-weight-bytes-for-receive-endpoint"
+        resp = await client.post(
+            "/api/v1/sync/receive",
+            data={
+                "model_id": "recv-model-id",
+                "model_name": "recv-model",
+                "version": "1.0.0",
+                "format": "mlx",
+                "quantization": "4bit",
+            },
+            files={"file": ("model.mlx", payload, "application/octet-stream")},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "received"
+        assert data["file_size"] == len(payload)
+        assert data["file_hash"] == hashlib.sha256(payload).hexdigest()
+        # version row carries the file metadata.
+        vresp = await client.get(f"/api/v1/models/{data['model_id']}")
+        assert vresp.status_code == 200
+        v = vresp.json()["versions"][0]
+        assert str(v["file_size"]) == str(len(payload))
+
+    @pytest.mark.asyncio
+    async def test_receive_is_idempotent_overwrite(self, client):
+        # re-pushing the same model+version overwrites the bytes (no 409).
+        form = {
+            "model_id": "recv-idem-id",
+            "model_name": "recv-idem",
+            "version": "1.0.0",
+            "format": "mlx",
+            "quantization": "4bit",
+        }
+        first = await client.post(
+            "/api/v1/sync/receive",
+            data=form,
+            files={"file": ("model.mlx", b"first-bytes", "application/octet-stream")},
+        )
+        assert first.status_code == 200
+        second = await client.post(
+            "/api/v1/sync/receive",
+            data=form,
+            files={"file": ("model.mlx", b"second-bytes-longer", "application/octet-stream")},
+        )
+        assert second.status_code == 200
+        assert second.json()["file_size"] == len(b"second-bytes-longer")
+
+    @pytest.mark.asyncio
+    async def test_push_streams_real_file_to_remote(self, client):
+        # local model + a version with an actual file on disk -> push streams
+        # the file to the remote /sync/receive (mocked), not just metadata.
+        model = await _create_model(client, "push-real-bytes")
+        content = b"push-real-weight-bytes-12345"
+        ver_resp = await client.post(
+            f"/api/v1/models/{model['id']}/versions",
+            data={"version": "1.0.0", "format": "mlx", "quantization": "4bit"},
+            files={"file": ("model.mlx", content, "application/octet-stream")},
+        )
+        assert ver_resp.status_code == 201
+        ver = ver_resp.json()
+        assert ver["file_path"]
+
+        import_resp = MagicMock()
+        import_resp.status_code = 200
+        file_resp = MagicMock()
+        file_resp.status_code = 200
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post = AsyncMock(
+            side_effect=[import_resp, file_resp],
+        )
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+        with patch("fusion_model_hub.server.routers.sync.httpx.AsyncClient", return_value=mock_client_instance):
+            resp = await client.post(
+                "/api/v1/sync/push",
+                json={
+                    "target_url": "https://remote-hub.example.com",
+                    "model_id": model["id"],
+                    "version_ids": [ver["id"]],
+                },
+            )
+        assert resp.status_code == 200
+        entry = resp.json()["pushed"][0]
+        assert entry["status"] == "pushed"
+        assert entry["file_status"] == 200
+        # the 2nd post (file upload) carried the real filename + multipart.
+        sent_files = mock_client_instance.post.call_args_list[1].kwargs.get("files")
+        assert sent_files and "model.mlx" in str(sent_files)
+
+    @pytest.mark.asyncio
+    async def test_pull_streams_real_bytes_to_disk(self, client):
+        # pull fetches the model JSON, then streams the per-version download
+        # into the local store -> file_path/hash/size set on the local version.
+        remote_model_data = {
+            "name": "pull-real-model",
+            "description": "from remote",
+            "model_type": "llm",
+            "versions": [
+                {
+                    "id": "remote-vid-1",
+                    "version": "2.0.0",
+                    "format": "mlx",
+                    "quantization": "4bit",
+                    "file_size": 100,
+                },
+            ],
+        }
+        payload = b"pulled-weight-bytes-abc"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json = MagicMock(return_value=remote_model_data)
+        mock_resp.raise_for_status = MagicMock()
+
+        async def _stream():
+            yield payload
+
+        mock_resp.aiter_bytes = MagicMock(side_effect=lambda *a, **k: _stream())
+        mock_resp.headers = {"content-disposition": 'attachment; filename="model.mlx"'}
+        mock_client_instance = AsyncMock()
+        mock_client_instance.get = AsyncMock(return_value=mock_resp)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+        with patch("fusion_model_hub.server.routers.sync.httpx.AsyncClient", return_value=mock_client_instance):
+            resp = await client.post(
+                "/api/v1/sync/pull",
+                json={
+                    "source_url": "https://remote-hub.example.com",
+                    "model_id": "remote-model",
+                },
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "pulled"
+        assert data["versions_pulled"] == 1
+        # the local version row carries the streamed bytes.
+        mresp = await client.get(f"/api/v1/models/{data['model_id']}")
+        assert mresp.status_code == 200
+        v = mresp.json()["versions"][0]
+        assert str(v["file_size"]) == str(len(payload))
+
+    @pytest.mark.asyncio
+    async def test_pull_skips_download_when_remote_has_no_file(self, client):
+        # a remote version with file_size 0 -> no download attempted, version
+        # row created with no file (metadata-only pull, the legacy behavior).
+        remote_model_data = {
+            "name": "pull-nofile-model",
+            "description": "from remote",
+            "model_type": "llm",
+            "versions": [
+                {"id": "rv-nf", "version": "3.0.0", "format": "mlx", "quantization": "4bit", "file_size": 0},
+            ],
+        }
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json = MagicMock(return_value=remote_model_data)
+        mock_resp.raise_for_status = MagicMock()
+        mock_client_instance = AsyncMock()
+        mock_client_instance.get = AsyncMock(return_value=mock_resp)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+        with patch("fusion_model_hub.server.routers.sync.httpx.AsyncClient", return_value=mock_client_instance):
+            resp = await client.post(
+                "/api/v1/sync/pull",
+                json={
+                    "source_url": "https://remote-hub.example.com",
+                    "model_id": "remote-nf",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["versions_pulled"] == 1
+        # only the model-fetch GET happened, no download GET.
+        assert mock_client_instance.get.await_count == 1
 
 
 class TestSyncVersionManifest:
