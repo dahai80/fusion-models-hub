@@ -274,7 +274,14 @@ async def import_data(session: SessionDep, request: Request, data: dict):
 
 
 @router.post("/system/scan-duplicates")
-async def scan_duplicate_weights(session: SessionDep):
+async def scan_duplicate_weights(session: SessionDep, store: StoreDep, dry_run: bool = True):
+    # #6: dry_run=True (default) only identifies duplicate-weight groups by
+    # file_hash — safe, no mutation. dry_run=False keeps the oldest version per
+    # hash group (list_models is created_at-desc, so the FIRST entry in each
+    # group is the newest; we keep the OLDEST = last entry) and retires the
+    # rest: deletes the on-disk version files via the storage backend and
+    # flips the DB row to RETIRED with file_path/file_size cleared. DB rows
+    # are preserved (provenance); only the redundant weights are reclaimed.
     all_models, _ = await crud.list_models(session, page_size=10000)
 
     hash_groups: dict[str, list[dict]] = defaultdict(list)
@@ -293,12 +300,57 @@ async def scan_duplicate_weights(session: SessionDep):
                 )
 
     duplicates = [group for group in hash_groups.values() if len(group) > 1]
-    logger.info("Duplicate scan found %d duplicate groups", len(duplicates))
-    return {"duplicate_groups": duplicates, "total_groups": len(duplicates)}
+    logger.info("Duplicate scan found %d duplicate groups (dry_run=%s)", len(duplicates), dry_run)
+
+    if dry_run or not duplicates:
+        return {"duplicate_groups": duplicates, "total_groups": len(duplicates), "dry_run": dry_run}
+
+    # Real reclaim: keep the oldest version per group, retire the rest.
+    from ...db.models import VersionStatus
+
+    reclaimed = 0
+    failed = 0
+    for group in duplicates:
+        # list_models is created_at-desc, so group[-1] is the oldest (keep).
+        keep = group[-1]
+        for entry in group[:-1]:
+            try:
+                deleted = store.delete_version_files(entry["model_id"], entry["version"])
+                await crud.update_version_status(session, entry["version_id"], VersionStatus.RETIRED)
+                await crud.update_version(
+                    session,
+                    entry["version_id"],
+                    file_path="",
+                    file_size=0,
+                )
+                reclaimed += 1
+                logger.info(
+                    "Dedup reclaimed: model=%s version=%s deleted=%s kept=%s",
+                    entry["model_id"],
+                    entry["version_id"],
+                    deleted,
+                    keep["version_id"],
+                )
+            except Exception:
+                failed += 1
+                logger.exception("Dedup reclaim failed: version_id=%s", entry["version_id"])
+
+    logger.info("Dedup reclaim done: reclaimed=%d failed=%d groups=%d", reclaimed, failed, len(duplicates))
+    return {
+        "duplicate_groups": duplicates,
+        "total_groups": len(duplicates),
+        "dry_run": False,
+        "reclaimed": reclaimed,
+        "failed": failed,
+    }
 
 
 @router.post("/system/cleanup")
-async def disk_cleanup(session: SessionDep):
+async def disk_cleanup(session: SessionDep, store: StoreDep, dry_run: bool = True):
+    # #6: dry_run=True (default) only lists retired versions still holding
+    # on-disk files — safe. dry_run=False deletes those version files via the
+    # storage backend and clears the DB file_path/file_size (row kept for
+    # provenance, status already RETIRED).
     all_models, _ = await crud.list_models(session, page_size=10000)
     candidates = []
     for m in all_models:
@@ -315,8 +367,36 @@ async def disk_cleanup(session: SessionDep):
                         "status": v.status.value,
                     }
                 )
-    logger.info("Cleanup scan found %d retired versions with files", len(candidates))
-    return {"candidates": candidates, "total": len(candidates)}
+    logger.info("Cleanup scan found %d retired versions with files (dry_run=%s)", len(candidates), dry_run)
+
+    if dry_run or not candidates:
+        return {"candidates": candidates, "total": len(candidates), "dry_run": dry_run}
+
+    deleted_count = 0
+    failed = 0
+    for c in candidates:
+        try:
+            deleted = store.delete_version_files(c["model_id"], c["version"])
+            await crud.update_version(session, c["version_id"], file_path="", file_size=0)
+            deleted_count += 1
+            logger.info(
+                "Cleanup deleted: model=%s version=%s deleted=%s",
+                c["model_id"],
+                c["version_id"],
+                deleted,
+            )
+        except Exception:
+            failed += 1
+            logger.exception("Cleanup delete failed: version_id=%s", c["version_id"])
+
+    logger.info("Cleanup delete done: deleted=%d failed=%d", deleted_count, failed)
+    return {
+        "candidates": candidates,
+        "total": len(candidates),
+        "dry_run": False,
+        "deleted": deleted_count,
+        "failed": failed,
+    }
 
 
 def _collect_hardware_info() -> dict:
