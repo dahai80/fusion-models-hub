@@ -50,7 +50,7 @@ First **release candidate** after the 6-dimension enterprise audit. Baseline `1.
 2. Sync push/pull real file bytes (currently metadata only).
 3. Evaluations async execution runner (currently DB row, stuck PENDING).
 4. System `scan_duplicates`/`disk_cleanup` real delete (currently identify only).
-5. SDK missing router method groups + `AsyncFusionHubClient` not in `__init__.__all__`.
+5. ~~SDK missing router method groups + `AsyncFusionHubClient` not in `__init__.__all__`.~~ **Done** (PR #45, `0a282e7`): ~40 methods added per sync+async client (serve lifecycle, cache, deployments, downloads, evaluations, tenants/roles, webhooks, monitor); `_patch` helper + `_delete` params; `AsyncFusionModelHubClient` exported. 1446 tests.
 6. Per-inference ~4 DB roundtrips reduction.
 
 ---
