@@ -235,6 +235,46 @@ class TestModelConverter:
                 assert result["status"] == "failed"
                 assert "OOM" in result["error"]
 
+    @pytest.mark.asyncio
+    async def test_quantize_sync_failed_with_partial_path_not_promoted(self):
+        # Regression: a sync response that explicitly reports status="failed"
+        # but carries a partial output_path must NOT be coerced to "completed".
+        # Before the fix, ANY non-done status with an output_path flipped to
+        # completed, creating a corrupt ModelVersion from a failed quantize.
+        c = ModelConverter()
+        with patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post:
+            post_resp = MagicMock()
+            post_resp.status_code = 200
+            post_resp.json.return_value = {
+                "status": "failed",
+                "error": "quantize aborted",
+                "output_path": "/tmp/partial-q4.mlx",
+            }
+            mock_post.return_value = post_resp
+            with tempfile.NamedTemporaryFile(suffix=".mlx") as f:
+                result = await c.quantize(f.name, bits=4)
+                assert result["status"] == "failed"
+                assert "quantize aborted" in result.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_quantize_sync_missing_status_with_path_completes(self):
+        # The fix narrows the coercion to a MISSING status only. Legacy MLX
+        # returns the result dict with an output_path and no status field —
+        # that legitimate case must still resolve to completed.
+        c = ModelConverter()
+        with patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post:
+            post_resp = MagicMock()
+            post_resp.status_code = 200
+            post_resp.json.return_value = {
+                "output_path": "/tmp/test-q4.mlx",
+                "original_size_gb": 5.0,
+                "converted_size_gb": 1.5,
+            }
+            mock_post.return_value = post_resp
+            with tempfile.NamedTemporaryFile(suffix=".mlx") as f:
+                result = await c.quantize(f.name, bits=4)
+                assert result["status"] == "completed"
+
 
 # ── LocalModelManager ──
 

@@ -417,6 +417,46 @@ class TestLayeredQuantize:
         assert resp.status_code == 500
         assert "Fusion-MLX layered quantize failed" in resp.json()["detail"]
 
+    async def test_layered_submit_sends_bearer_when_key_set(self, client, settings, monkeypatch):
+        # Regression (fusion-mlx#646): the layered routes proxy to the SAME
+        # /v1/quantize endpoint the converter hits, so they must carry the
+        # Authorization: Bearer header when MLX enforces auth, or a secured MLX
+        # 401s while the converter path succeeds.
+        monkeypatch.setattr(settings, "mlx_internal_api_key", "secret-mlx-key")
+        ok = _mock_httpx_response(status_code=202, json_data={"job_id": "job-auth"})
+        ctx = _mock_httpx_ctx(post_return=ok)
+        with patch(
+            "fusion_model_hub.server.routers.quantize.httpx.AsyncClient",
+            return_value=ctx,
+        ):
+            resp = await client.post("/api/v1/quantize/layered", json={
+                "model": "test/auth-model",
+                "default_bits": 4,
+                "layer_rules": [{"pattern": ".*", "bits": 4}],
+            })
+        assert resp.status_code == 202
+        post_kwargs = ctx.post.call_args
+        assert post_kwargs.kwargs["headers"]["Authorization"] == "Bearer secret-mlx-key"
+
+    async def test_layered_submit_omits_header_when_no_key(self, client, settings, monkeypatch):
+        # An empty key must omit the header so an unauthenticated MLX still works.
+        monkeypatch.setattr(settings, "mlx_internal_api_key", "")
+        ok = _mock_httpx_response(status_code=202, json_data={"job_id": "job-noauth"})
+        ctx = _mock_httpx_ctx(post_return=ok)
+        with patch(
+            "fusion_model_hub.server.routers.quantize.httpx.AsyncClient",
+            return_value=ctx,
+        ):
+            resp = await client.post("/api/v1/quantize/layered", json={
+                "model": "test/noauth-model",
+                "default_bits": 4,
+                "layer_rules": [{"pattern": ".*", "bits": 4}],
+            })
+        assert resp.status_code == 202
+        post_kwargs = ctx.post.call_args
+        headers = post_kwargs.kwargs.get("headers", {}) or {}
+        assert "Authorization" not in headers
+
 
 # =====================================================================
 # quantize.py: layered job status + list (lines 373-418)
@@ -483,6 +523,21 @@ class TestLayeredJobStatus:
             resp = await client.get("/api/v1/quantize/layered/jobs/j4")
         assert resp.status_code == 500
         assert "Fusion-MLX layered job status failed" in resp.json()["detail"]
+
+    async def test_get_layered_job_sends_bearer_when_key_set(self, client, settings, monkeypatch):
+        # Regression (fusion-mlx#646): GET /v1/quantize/jobs/{id} must carry the
+        # same Bearer header as the converter's _poll_quantize_job.
+        monkeypatch.setattr(settings, "mlx_internal_api_key", "secret-mlx-key")
+        ok = _mock_httpx_response(status_code=200, json_data={"job_id": "ja", "status": "running"})
+        ctx = _mock_httpx_ctx(get_return=ok)
+        with patch(
+            "fusion_model_hub.server.routers.quantize.httpx.AsyncClient",
+            return_value=ctx,
+        ):
+            resp = await client.get("/api/v1/quantize/layered/jobs/ja")
+        assert resp.status_code == 200
+        get_kwargs = ctx.get.call_args
+        assert get_kwargs.kwargs["headers"]["Authorization"] == "Bearer secret-mlx-key"
 
     async def test_list_layered_jobs_success(self, client):
         ok = _mock_httpx_response(status_code=200, json_data=[{"job_id": "a"}, {"job_id": "b"}])
