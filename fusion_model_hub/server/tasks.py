@@ -267,8 +267,15 @@ async def _run_quantize(
                             "suite": "general",
                             "model_id": source_ver.model_id,
                         }
+                        bench_headers: dict[str, str] = {}
+                        if getattr(settings, "bench_api_key", ""):
+                            bench_headers["X-API-Key"] = settings.bench_api_key
                         async with httpx.AsyncClient(timeout=15.0) as client:
-                            resp = await client.post(f"{settings.bench_url}/api/v1/tasks", json=bench_payload)
+                            resp = await client.post(
+                                f"{settings.bench_url}/api/v1/tasks",
+                                json=bench_payload,
+                                headers=bench_headers,
+                            )
                             if resp.status_code in (200, 201, 202):
                                 logger.info("Auto-triggered bench for model=%s after quantize", source_ver.model_id)
                             else:

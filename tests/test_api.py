@@ -15,6 +15,9 @@ def settings():
         data_dir="/tmp/fmh_test_data",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
+        # #3: keep the eval runner off in the core suite — bench submission is
+        # exercised by the dedicated TestEvaluationRunner with a mocked bench.
+        eval_runner_enabled=False,
     )
 
 

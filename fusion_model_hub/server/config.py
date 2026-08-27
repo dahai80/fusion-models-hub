@@ -30,6 +30,18 @@ class Settings:
     tls_keyfile: str = ""
     bench_url: str = ""
     bench_auto_trigger: bool = False
+    # #3: Bearer/X-API-Key for Hub→Fusion-Bench requests. Fusion-Bench gates
+    # task creation behind Permission.TASK_CREATE (anonymous VIEWER lacks it),
+    # so the Hub must present an operator/admin bench API key to submit evals
+    # or trigger benchmarks. Empty = attempt anonymous (will 403 if bench
+    # enforces auth, surfaced as a clear FAILED on the eval row).
+    bench_api_key: str = ""
+    # #3: gate the async evaluation runner. When False, POST /evaluations
+    # creates the PENDING row but does not spawn the runner (the row stays
+    # PENDING until an operator or external bench callback updates it). Tests
+    # set this False to avoid background tasks racing the in-memory DB; prod
+    # leaves it True (default).
+    eval_runner_enabled: bool = True
     download_speed_limit_kbps: int = 0
     precision_loss_threshold: float = 10.0
     mlx_internal_api_key: str = ""
@@ -111,6 +123,13 @@ class Settings:
             self.bench_url = os.environ.get("FMH_BENCH_URL", "http://localhost:8090")
         if not self.bench_auto_trigger:
             self.bench_auto_trigger = os.environ.get("FMH_BENCH_AUTO_TRIGGER", "false").lower() == "true"
+        if not self.bench_api_key:
+            self.bench_api_key = os.environ.get("FMH_BENCH_API_KEY", "")
+        # #3: FMH_EVAL_RUNNER_ENABLED=false keeps POST /evaluations from spawning
+        # the async Fusion-Bench runner (row stays PENDING). Tests pass the ctor
+        # arg directly; operators toggle via env.
+        if os.environ.get("FMH_EVAL_RUNNER_ENABLED", "").lower() in ("false", "0", "no"):
+            self.eval_runner_enabled = False
         if not self.download_speed_limit_kbps:
             self.download_speed_limit_kbps = int(os.environ.get("FMH_DOWNLOAD_SPEED_LIMIT", "0"))
         if not self.precision_loss_threshold:

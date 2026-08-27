@@ -149,9 +149,14 @@ async def trigger_benchmark(body: BenchTriggerRequest, settings: SettingsDep):
     }
     if body.callback_url:
         payload["callback_url"] = body.callback_url
+    # Fusion-Bench gates task creation behind Permission.TASK_CREATE (anonymous
+    # VIEWER lacks it); present the configured bench API key if set.
+    headers: dict[str, str] = {}
+    if getattr(settings, "bench_api_key", ""):
+        headers["X-API-Key"] = settings.bench_api_key
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(f"{bench_url}/api/v1/tasks", json=payload)
+            resp = await client.post(f"{bench_url}/api/v1/tasks", json=payload, headers=headers)
             if resp.status_code in (200, 201, 202):
                 logger.info("Bench trigger submitted: model=%s suite=%s", body.model_id, suite)
                 return {"status": "submitted", "detail": resp.json()}
