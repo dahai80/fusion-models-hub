@@ -177,6 +177,105 @@ class TestWatermark:
         assert resp.status_code == 404
 
 
+class TestWatermarkSidecar:
+    # #1: the signed sidecar travels with the model files and verifies without
+    # the Hub DB. These assert the file is written, read back, and that
+    # tampering breaks the HMAC.
+
+    @pytest.mark.asyncio
+    async def test_embed_writes_sidecar_file(self, client, settings, monkeypatch):
+        monkeypatch.setenv("FMH_WATERMARK_SECRET", "enterprise-test-secret-32b")
+        model = await _create_model(client, name="wm-sidecar-write")
+        resp = await client.post(
+            "/api/v1/watermark/embed",
+            json={"model_id": model["id"], "payload": {"seed": "alice-seed"}},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["sidecar_written"] is True
+        # version_id empty -> sidecar lands under models/{id}/default/
+        from pathlib import Path
+
+        sidecar = Path(settings.data_dir) / "models" / model["id"] / "default" / "watermark.json"
+        assert sidecar.exists(), f"sidecar not written at {sidecar}"
+        import json
+
+        sc = json.loads(sidecar.read_bytes())
+        assert sc["model_id"] == model["id"]
+        # E-S6: payload.owner is overwritten with tenant context (empty when
+        # auth disabled); assert on a caller-supplied key that is preserved.
+        assert sc["payload"]["seed"] == "alice-seed"
+        assert sc["signature"]
+
+    @pytest.mark.asyncio
+    async def test_verify_reads_sidecar_without_db(self, client, settings, monkeypatch):
+        # Embed, then verify — verify must succeed via the sidecar (source=sidecar).
+        monkeypatch.setenv("FMH_WATERMARK_SECRET", "enterprise-test-secret-32b")
+        model = await _create_model(client, name="wm-sidecar-verify")
+        await client.post(
+            "/api/v1/watermark/embed",
+            json={"model_id": model["id"], "payload": {"seed": "bob-seed"}},
+        )
+        resp = await client.post(
+            "/api/v1/watermark/verify",
+            json={"model_id": model["id"]},
+        )
+        data = resp.json()
+        assert data["verified"] is True
+        # Both sidecar and DB row present after embed -> defense-in-depth source.
+        assert "sidecar" in data["source"]
+        assert data["watermark"]["payload"]["seed"] == "bob-seed"
+
+    @pytest.mark.asyncio
+    async def test_tampered_sidecar_fails_hmac(self, client, settings, monkeypatch):
+        # A tampered traveling sidecar is itself the failure signal: verify
+        # returns verified=False, source=sidecar — it does NOT silently fall
+        # back to the (untampered) DB row and report the model as verified.
+        import json
+        from pathlib import Path
+
+        monkeypatch.setenv("FMH_WATERMARK_SECRET", "enterprise-test-secret-32b")
+        model = await _create_model(client, name="wm-sidecar-tamper")
+        await client.post(
+            "/api/v1/watermark/embed",
+            json={"model_id": model["id"], "payload": {"seed": "carol-seed"}},
+        )
+        # Tamper the sidecar: change the payload so the re-derived sig no longer
+        # matches the stored (original) signature.
+        sidecar = Path(settings.data_dir) / "models" / model["id"] / "default" / "watermark.json"
+        sc = json.loads(sidecar.read_bytes())
+        sc["payload"]["seed"] = "evil-seed"
+        sidecar.write_bytes(json.dumps(sc, sort_keys=True).encode())
+        resp = await client.post(
+            "/api/v1/watermark/verify",
+            json={"model_id": model["id"]},
+        )
+        data = resp.json()
+        assert data["verified"] is False
+        # Both sources present after embed; defense-in-depth reports both.
+        assert "sidecar" in data["source"]
+
+    @pytest.mark.asyncio
+    async def test_sidecar_fallback_to_db_when_absent(self, client, settings, monkeypatch):
+        from pathlib import Path
+
+        monkeypatch.setenv("FMH_WATERMARK_SECRET", "enterprise-test-secret-32b")
+        model = await _create_model(client, name="wm-sidecar-absent")
+        await client.post(
+            "/api/v1/watermark/embed",
+            json={"model_id": model["id"], "payload": {"owner": "dan"}},
+        )
+        # Delete the sidecar so verify must fall back to the DB row.
+        sidecar = Path(settings.data_dir) / "models" / model["id"] / "default" / "watermark.json"
+        sidecar.unlink(missing_ok=True)
+        resp = await client.post(
+            "/api/v1/watermark/verify",
+            json={"model_id": model["id"]},
+        )
+        data = resp.json()
+        assert data["verified"] is True
+        assert data["source"] == "database"
+
+
 class TestEncryption:
     @pytest.mark.asyncio
     async def test_encrypt_version(self, client):

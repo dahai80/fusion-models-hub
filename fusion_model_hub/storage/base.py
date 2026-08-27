@@ -60,5 +60,16 @@ class StorageBackend(ABC):
     @abstractmethod
     def delete_model_files(self, model_id: str) -> bool: ...
 
+    # #1: watermark sidecar — a signed `watermark.json` written into the
+    # version directory so the watermark travels with the model files (survives
+    # copy/sync, verifiable without the Hub DB). LocalStore writes a real file;
+    # MinioStore raises NotImplementedError (object-storage sidecar is a
+    # separate path) so the gap is surfaced as 501, not a silent 500.
+    @abstractmethod
+    def write_sidecar(self, model_id: str, version: str, filename: str, data: bytes) -> Path: ...
+
+    @abstractmethod
+    def read_sidecar(self, model_id: str, version: str, filename: str) -> bytes | None: ...
+
     @abstractmethod
     def get_storage_stats(self) -> dict[str, Any]: ...

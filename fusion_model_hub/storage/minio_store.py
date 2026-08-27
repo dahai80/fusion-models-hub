@@ -188,6 +188,21 @@ class MinioStore(StorageBackend):
         logger.info("Deleted %d objects from MinIO: prefix=%s", deleted, prefix)
         return deleted > 0
 
+    def write_sidecar(self, model_id: str, version: str, filename: str, data: bytes) -> Path:
+        # #1: a real MinIO implementation is a one-line put_object; leave it
+        # NotImplementedError so the contract is explicit (object-storage
+        # sidecar watermark is a separate feature, surfaced as 501 not 500).
+        raise NotImplementedError(
+            "Watermark sidecar write not implemented for MinioStore — "
+            "use FMH_STORAGE_TYPE=local, or track the MinIO sidecar feature."
+        )
+
+    def read_sidecar(self, model_id: str, version: str, filename: str) -> bytes | None:
+        raise NotImplementedError(
+            "Watermark sidecar read not implemented for MinioStore — "
+            "use FMH_STORAGE_TYPE=local, or track the MinIO sidecar feature."
+        )
+
     def get_storage_stats(self) -> dict[str, Any]:
         client = self._get_client()
         total_size = 0
