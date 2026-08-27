@@ -77,9 +77,15 @@ class FusionModelHubClient:
         r.raise_for_status()
         return r.json()
 
-    def _delete(self, path: str) -> dict:
+    def _delete(self, path: str, params: dict | None = None) -> dict:
         c = self._get_client()
-        r = c.delete(self._url(path))
+        r = c.delete(self._url(path), params=params)
+        r.raise_for_status()
+        return r.json()
+
+    def _patch(self, path: str, json: dict | None = None) -> dict:
+        c = self._get_client()
+        r = c.patch(self._url(path), json=json)
         r.raise_for_status()
         return r.json()
 
@@ -577,3 +583,195 @@ class FusionModelHubClient:
 
     def merge_branch(self, branch_id: str) -> dict:
         return self._post(f"/models/branches/{branch_id}/merge")
+
+    # --- Model serve lifecycle ---
+    def publish_model(self, model_id: str) -> dict:
+        return self._post(f"/models/{model_id}/publish")
+
+    def serve_model(self, model_id: str, version_id: str = "", gpu: bool = True) -> dict:
+        return self._post(f"/models/{model_id}/serve", json={"version_id": version_id, "gpu": gpu})
+
+    def unload_model(self, model_id: str) -> dict:
+        return self._delete(f"/models/{model_id}/serve")
+
+    def serve_status(self, model_id: str) -> dict:
+        return self._get(f"/models/{model_id}/serve")
+
+    def hot_reload_model(self, model_id: str, version_id: str) -> dict:
+        return self._post(f"/models/{model_id}/hot-reload", json={"version_id": version_id})
+
+    # --- Cache (3-level: raw → converted → quantized) ---
+    def cache_stats(self) -> dict:
+        return self._get("/cache")
+
+    def cache_list_entries(self, level: str = "") -> dict:
+        return self._get("/cache/entries", params={"level": level} if level else {})
+
+    def cache_gc(self, max_size_gb: float = 0, max_age_days: float = 30) -> dict:
+        return self._post("/cache/gc", params={"max_size_gb": max_size_gb, "max_age_days": max_age_days})
+
+    def cache_validate(self, mlx_version: str = "") -> dict:
+        return self._post("/cache/validate", params={"mlx_version": mlx_version})
+
+    def cache_remove_model(self, model_id: str) -> dict:
+        return self._delete(f"/cache/{model_id}")
+
+    def cache_remove_entry(self, model_id: str, level: str, quant_bits: int = 0) -> dict:
+        return self._delete(f"/cache/{model_id}/{level}", params={"quant_bits": quant_bits} if quant_bits else {})
+
+    # --- Deployments ---
+    def list_deployments(self, model_id: str = "", status: str = "", page: int = 1, page_size: int = 20) -> dict:
+        return self._get(
+            "/deployments", params={"model_id": model_id, "status": status, "page": page, "page_size": page_size}
+        )
+
+    def create_deployment(self, data: dict) -> dict:
+        return self._post("/deployments", json=data)
+
+    def get_deployment(self, deployment_id: str) -> dict:
+        return self._get(f"/deployments/{deployment_id}")
+
+    def update_deployment(self, deployment_id: str, data: dict) -> dict:
+        return self._patch(f"/deployments/{deployment_id}", json=data)
+
+    def delete_deployment(self, deployment_id: str) -> dict:
+        return self._delete(f"/deployments/{deployment_id}")
+
+    def stop_deployment(self, deployment_id: str) -> dict:
+        return self._post(f"/deployments/{deployment_id}/stop")
+
+    def gray_release(self, deployment_id: str, data: dict | None = None) -> dict:
+        return self._post(f"/deployments/{deployment_id}/gray", json=data or {})
+
+    def stop_gray_release(self, deployment_id: str) -> dict:
+        return self._delete(f"/deployments/{deployment_id}/gray")
+
+    def scale_deployment(self, deployment_id: str, scale: int) -> dict:
+        return self._post(f"/deployments/{deployment_id}/scale", json={"scale": scale})
+
+    def deployment_metrics(self, deployment_id: str) -> dict:
+        return self._get(f"/deployments/{deployment_id}/metrics")
+
+    # --- Downloads ---
+    def create_download(
+        self,
+        model_id: str,
+        source_url: str,
+        version_id: str = "",
+        speed_limit_kbps: int = 0,
+        max_retries: int = 3,
+        expected_sha256: str = "",
+    ) -> dict:
+        return self._post(
+            "/downloads",
+            json={
+                "model_id": model_id,
+                "source_url": source_url,
+                "version_id": version_id,
+                "speed_limit_kbps": speed_limit_kbps,
+                "max_retries": max_retries,
+                "expected_sha256": expected_sha256,
+            },
+        )
+
+    def list_downloads(self, model_id: str = "", status: str = "", page: int = 1, page_size: int = 20) -> dict:
+        return self._get(
+            "/downloads", params={"model_id": model_id, "status": status, "page": page, "page_size": page_size}
+        )
+
+    def get_download(self, task_id: str) -> dict:
+        return self._get(f"/downloads/{task_id}")
+
+    def cancel_download(self, task_id: str) -> dict:
+        return self._delete(f"/downloads/{task_id}")
+
+    # --- Evaluations ---
+    def list_evaluations(
+        self,
+        model_id: str = "",
+        version_id: str = "",
+        benchmark_name: str = "",
+        status: str = "",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
+        return self._get(
+            "/evaluations",
+            params={
+                "model_id": model_id,
+                "version_id": version_id,
+                "benchmark_name": benchmark_name,
+                "status": status,
+                "page": page,
+                "page_size": page_size,
+            },
+        )
+
+    def create_evaluation(self, model_id: str, benchmark_name: str, version_id: str = "") -> dict:
+        return self._post(
+            "/evaluations", json={"model_id": model_id, "benchmark_name": benchmark_name, "version_id": version_id}
+        )
+
+    def compare_benchmarks(self, model_id: str = "", benchmark_name: str = "") -> dict:
+        return self._get(
+            "/evaluations/benchmarks/compare", params={"model_id": model_id, "benchmark_name": benchmark_name}
+        )
+
+    def get_evaluation(self, eval_id: str) -> dict:
+        return self._get(f"/evaluations/{eval_id}")
+
+    def update_evaluation(self, eval_id: str, data: dict) -> dict:
+        return self._patch(f"/evaluations/{eval_id}", json=data)
+
+    def delete_evaluation(self, eval_id: str) -> dict:
+        return self._delete(f"/evaluations/{eval_id}")
+
+    # --- Tenants + roles ---
+    def list_tenants(self) -> dict:
+        return self._get("/tenants")
+
+    def create_tenant(self, name: str, display_name: str = "") -> dict:
+        return self._post("/tenants", json={"name": name, "display_name": display_name})
+
+    def get_tenant(self, tenant_id: str) -> dict:
+        return self._get(f"/tenants/{tenant_id}")
+
+    def update_tenant(self, tenant_id: str, display_name: str = "") -> dict:
+        return self._patch(f"/tenants/{tenant_id}", json={"display_name": display_name})
+
+    def delete_tenant(self, tenant_id: str) -> dict:
+        return self._delete(f"/tenants/{tenant_id}")
+
+    def list_roles(self, tenant_id: str) -> dict:
+        return self._get(f"/tenants/{tenant_id}/roles")
+
+    def create_role(self, tenant_id: str, name: str, permissions: str = "read") -> dict:
+        return self._post(f"/tenants/{tenant_id}/roles", json={"name": name, "permissions": permissions})
+
+    def update_role(self, tenant_id: str, role_id: str, data: dict) -> dict:
+        return self._put(f"/tenants/{tenant_id}/roles/{role_id}", json=data)
+
+    def delete_role(self, tenant_id: str, role_id: str) -> dict:
+        return self._delete(f"/tenants/{tenant_id}/roles/{role_id}")
+
+    # --- Webhooks ---
+    def list_webhooks(self) -> dict:
+        return self._get("/webhooks")
+
+    def create_webhook(
+        self, name: str, url: str, secret: str = "", events: str = "model.created,model.deleted"
+    ) -> dict:
+        return self._post("/webhooks", json={"name": name, "url": url, "secret": secret, "events": events})
+
+    def get_webhook(self, webhook_id: str) -> dict:
+        return self._get(f"/webhooks/{webhook_id}")
+
+    def delete_webhook(self, webhook_id: str) -> dict:
+        return self._delete(f"/webhooks/{webhook_id}")
+
+    # --- Monitor ---
+    def realtime_monitor(self) -> dict:
+        return self._get("/monitor/realtime")
+
+    def model_stats(self) -> dict:
+        return self._get("/monitor/model-stats")

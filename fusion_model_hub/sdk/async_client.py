@@ -63,9 +63,15 @@ class AsyncFusionModelHubClient:
         r.raise_for_status()
         return r.json()
 
-    async def _delete(self, path: str) -> dict:
+    async def _delete(self, path: str, params: dict | None = None) -> dict:
         c = await self._get_client()
-        r = await c.delete(self._url(path))
+        r = await c.delete(self._url(path), params=params)
+        r.raise_for_status()
+        return r.json()
+
+    async def _patch(self, path: str, json: dict | None = None) -> dict:
+        c = await self._get_client()
+        r = await c.patch(self._url(path), json=json)
         r.raise_for_status()
         return r.json()
 
@@ -574,3 +580,195 @@ class AsyncFusionModelHubClient:
 
     async def delete_api_key(self, key_id: str) -> dict:
         return await self._delete(f"/auth/keys/{key_id}")
+
+    # --- Model serve lifecycle ---
+    async def publish_model(self, model_id: str) -> dict:
+        return await self._post(f"/models/{model_id}/publish")
+
+    async def serve_model(self, model_id: str, version_id: str = "", gpu: bool = True) -> dict:
+        return await self._post(f"/models/{model_id}/serve", json={"version_id": version_id, "gpu": gpu})
+
+    async def unload_model(self, model_id: str) -> dict:
+        return await self._delete(f"/models/{model_id}/serve")
+
+    async def serve_status(self, model_id: str) -> dict:
+        return await self._get(f"/models/{model_id}/serve")
+
+    async def hot_reload_model(self, model_id: str, version_id: str) -> dict:
+        return await self._post(f"/models/{model_id}/hot-reload", json={"version_id": version_id})
+
+    # --- Cache (3-level: raw → converted → quantized) ---
+    async def cache_stats(self) -> dict:
+        return await self._get("/cache")
+
+    async def cache_list_entries(self, level: str = "") -> dict:
+        return await self._get("/cache/entries", params={"level": level} if level else {})
+
+    async def cache_gc(self, max_size_gb: float = 0, max_age_days: float = 30) -> dict:
+        return await self._post("/cache/gc", params={"max_size_gb": max_size_gb, "max_age_days": max_age_days})
+
+    async def cache_validate(self, mlx_version: str = "") -> dict:
+        return await self._post("/cache/validate", params={"mlx_version": mlx_version})
+
+    async def cache_remove_model(self, model_id: str) -> dict:
+        return await self._delete(f"/cache/{model_id}")
+
+    async def cache_remove_entry(self, model_id: str, level: str, quant_bits: int = 0) -> dict:
+        return await self._delete(f"/cache/{model_id}/{level}", params={"quant_bits": quant_bits} if quant_bits else {})
+
+    # --- Deployments ---
+    async def list_deployments(self, model_id: str = "", status: str = "", page: int = 1, page_size: int = 20) -> dict:
+        return await self._get(
+            "/deployments", params={"model_id": model_id, "status": status, "page": page, "page_size": page_size}
+        )
+
+    async def create_deployment(self, data: dict) -> dict:
+        return await self._post("/deployments", json=data)
+
+    async def get_deployment(self, deployment_id: str) -> dict:
+        return await self._get(f"/deployments/{deployment_id}")
+
+    async def update_deployment(self, deployment_id: str, data: dict) -> dict:
+        return await self._patch(f"/deployments/{deployment_id}", json=data)
+
+    async def delete_deployment(self, deployment_id: str) -> dict:
+        return await self._delete(f"/deployments/{deployment_id}")
+
+    async def stop_deployment(self, deployment_id: str) -> dict:
+        return await self._post(f"/deployments/{deployment_id}/stop")
+
+    async def gray_release(self, deployment_id: str, data: dict | None = None) -> dict:
+        return await self._post(f"/deployments/{deployment_id}/gray", json=data or {})
+
+    async def stop_gray_release(self, deployment_id: str) -> dict:
+        return await self._delete(f"/deployments/{deployment_id}/gray")
+
+    async def scale_deployment(self, deployment_id: str, scale: int) -> dict:
+        return await self._post(f"/deployments/{deployment_id}/scale", json={"scale": scale})
+
+    async def deployment_metrics(self, deployment_id: str) -> dict:
+        return await self._get(f"/deployments/{deployment_id}/metrics")
+
+    # --- Downloads ---
+    async def create_download(
+        self,
+        model_id: str,
+        source_url: str,
+        version_id: str = "",
+        speed_limit_kbps: int = 0,
+        max_retries: int = 3,
+        expected_sha256: str = "",
+    ) -> dict:
+        return await self._post(
+            "/downloads",
+            json={
+                "model_id": model_id,
+                "source_url": source_url,
+                "version_id": version_id,
+                "speed_limit_kbps": speed_limit_kbps,
+                "max_retries": max_retries,
+                "expected_sha256": expected_sha256,
+            },
+        )
+
+    async def list_downloads(self, model_id: str = "", status: str = "", page: int = 1, page_size: int = 20) -> dict:
+        return await self._get(
+            "/downloads", params={"model_id": model_id, "status": status, "page": page, "page_size": page_size}
+        )
+
+    async def get_download(self, task_id: str) -> dict:
+        return await self._get(f"/downloads/{task_id}")
+
+    async def cancel_download(self, task_id: str) -> dict:
+        return await self._delete(f"/downloads/{task_id}")
+
+    # --- Evaluations ---
+    async def list_evaluations(
+        self,
+        model_id: str = "",
+        version_id: str = "",
+        benchmark_name: str = "",
+        status: str = "",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
+        return await self._get(
+            "/evaluations",
+            params={
+                "model_id": model_id,
+                "version_id": version_id,
+                "benchmark_name": benchmark_name,
+                "status": status,
+                "page": page,
+                "page_size": page_size,
+            },
+        )
+
+    async def create_evaluation(self, model_id: str, benchmark_name: str, version_id: str = "") -> dict:
+        return await self._post(
+            "/evaluations", json={"model_id": model_id, "benchmark_name": benchmark_name, "version_id": version_id}
+        )
+
+    async def compare_benchmarks(self, model_id: str = "", benchmark_name: str = "") -> dict:
+        return await self._get(
+            "/evaluations/benchmarks/compare", params={"model_id": model_id, "benchmark_name": benchmark_name}
+        )
+
+    async def get_evaluation(self, eval_id: str) -> dict:
+        return await self._get(f"/evaluations/{eval_id}")
+
+    async def update_evaluation(self, eval_id: str, data: dict) -> dict:
+        return await self._patch(f"/evaluations/{eval_id}", json=data)
+
+    async def delete_evaluation(self, eval_id: str) -> dict:
+        return await self._delete(f"/evaluations/{eval_id}")
+
+    # --- Tenants + roles ---
+    async def list_tenants(self) -> dict:
+        return await self._get("/tenants")
+
+    async def create_tenant(self, name: str, display_name: str = "") -> dict:
+        return await self._post("/tenants", json={"name": name, "display_name": display_name})
+
+    async def get_tenant(self, tenant_id: str) -> dict:
+        return await self._get(f"/tenants/{tenant_id}")
+
+    async def update_tenant(self, tenant_id: str, display_name: str = "") -> dict:
+        return await self._patch(f"/tenants/{tenant_id}", json={"display_name": display_name})
+
+    async def delete_tenant(self, tenant_id: str) -> dict:
+        return await self._delete(f"/tenants/{tenant_id}")
+
+    async def list_roles(self, tenant_id: str) -> dict:
+        return await self._get(f"/tenants/{tenant_id}/roles")
+
+    async def create_role(self, tenant_id: str, name: str, permissions: str = "read") -> dict:
+        return await self._post(f"/tenants/{tenant_id}/roles", json={"name": name, "permissions": permissions})
+
+    async def update_role(self, tenant_id: str, role_id: str, data: dict) -> dict:
+        return await self._put(f"/tenants/{tenant_id}/roles/{role_id}", json=data)
+
+    async def delete_role(self, tenant_id: str, role_id: str) -> dict:
+        return await self._delete(f"/tenants/{tenant_id}/roles/{role_id}")
+
+    # --- Webhooks ---
+    async def list_webhooks(self) -> dict:
+        return await self._get("/webhooks")
+
+    async def create_webhook(
+        self, name: str, url: str, secret: str = "", events: str = "model.created,model.deleted"
+    ) -> dict:
+        return await self._post("/webhooks", json={"name": name, "url": url, "secret": secret, "events": events})
+
+    async def get_webhook(self, webhook_id: str) -> dict:
+        return await self._get(f"/webhooks/{webhook_id}")
+
+    async def delete_webhook(self, webhook_id: str) -> dict:
+        return await self._delete(f"/webhooks/{webhook_id}")
+
+    # --- Monitor ---
+    async def realtime_monitor(self) -> dict:
+        return await self._get("/monitor/realtime")
+
+    async def model_stats(self) -> dict:
+        return await self._get("/monitor/model-stats")
