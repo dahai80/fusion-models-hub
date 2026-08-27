@@ -19,6 +19,17 @@ def _caller_tenant(request: Request) -> str:
     return getattr(request.state, "tenant_id", "") or ""
 
 
+def _mlx_headers(settings) -> dict[str, str]:
+    # fusion-mlx#646: /v1/* endpoints require Authorization: Bearer <key> when
+    # MLX enforces auth. The layered-quantize routes proxy to the SAME /v1/quantize
+    # and /v1/quantize/jobs endpoints the converter hits, so they must carry the
+    # same header or a secured MLX returns 401 while the converter path succeeds.
+    # An empty key omits the header so an unauthenticated MLX still works.
+    if settings.mlx_internal_api_key:
+        return {"Authorization": f"Bearer {settings.mlx_internal_api_key}"}
+    return {}
+
+
 class QuantizeRequest(BaseModel):
     source_version_id: str
     target_format: str = "mlx"
@@ -350,6 +361,7 @@ async def start_layered_quantize(body: LayeredQuantizeRequest, settings: Setting
             resp = await client.post(
                 f"{mlx_url}/v1/quantize",
                 json=payload,
+                headers=_mlx_headers(settings),
             )
             if resp.status_code in (200, 202):
                 data = resp.json()
@@ -390,7 +402,7 @@ async def get_layered_quantize_job(job_id: str, settings: SettingsDep):
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Upstream contract (fusion-mlx#646): MLX exposes GET
             # /v1/quantize/jobs/{job_id}, NOT /v1/quantize/layered/jobs/{id}.
-            resp = await client.get(f"{mlx_url}/v1/quantize/jobs/{job_id}")
+            resp = await client.get(f"{mlx_url}/v1/quantize/jobs/{job_id}", headers=_mlx_headers(settings))
             if resp.status_code == 200:
                 return resp.json()
             if resp.status_code == 404:
@@ -417,7 +429,7 @@ async def list_layered_quantize_jobs(settings: SettingsDep):
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Upstream contract (fusion-mlx#646): MLX exposes GET
             # /v1/quantize/jobs, NOT /v1/quantize/layered/jobs.
-            resp = await client.get(f"{mlx_url}/v1/quantize/jobs")
+            resp = await client.get(f"{mlx_url}/v1/quantize/jobs", headers=_mlx_headers(settings))
             if resp.status_code == 200:
                 return resp.json()
             logger.warning("MLX layered jobs list returned %d", resp.status_code)

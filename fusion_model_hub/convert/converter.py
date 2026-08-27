@@ -155,7 +155,12 @@ class ModelConverter:
                 # dict without a status field.
                 if not job_id:
                     job_data = data
-                    if job_data.get("status") not in ("done", "completed") and job_data.get("output_path"):
+                    # Sync-style response (legacy MLX): a missing status with an
+                    # output_path means "done". ONLY a missing status is coerced
+                    # — an explicit "failed"/"error" with a partial output_path
+                    # must NOT be flipped to completed, or a failed quantize that
+                    # left a partial file would create a corrupt ModelVersion.
+                    if not job_data.get("status") and job_data.get("output_path"):
                         job_data = {**job_data, "status": "completed"}
                 else:
                     job_data = await self._poll_quantize_job(client, job_id)
@@ -220,8 +225,7 @@ class ModelConverter:
             await asyncio.sleep(interval_s)
         return {
             "status": "failed",
-            "error": f"quantize job {job_id} timed out after {timeout_s}s",
-            **last,
+            "error": f"quantize job {job_id} timed out after {timeout_s}s (last status={last.get('status')!r})",
         }
 
     @staticmethod
