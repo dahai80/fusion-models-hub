@@ -2030,3 +2030,111 @@ class TestRecommend:
         assert by_name["rec-7b"]["params_b"] == 7.0
         assert by_name["rec-350m"]["params_b"] == 0.35
         assert by_name["rec-350m"]["task"] == "embedding"
+
+
+# =====================================================================
+# #12: per-inference DB roundtrip reduction — audit deferred + session reuse
+# =====================================================================
+
+
+class TestInferenceDbRoundtripReduction:
+    async def test_chat_defers_audit_to_background(self, client):
+        from fusion_model_hub.server.routers import inference as inf_mod
+
+        inf_mod._loaded_models.clear()
+        m = await _create_model(client, "defer-audit")
+        await _publish(client, m["id"])
+        await _create_published_version(client, m["id"])
+        inf_mod._loaded_models[m["id"]] = {
+            "version_id": "v1",
+            "model_name": m["name"],
+            "status": "loaded",
+            "loaded_at": time.time(),
+        }
+        patcher, _ = _mock_httpx_inference(
+            response_json={"id": "c1", "choices": [{"message": {"content": "hi"}}], "usage": {"total_tokens": 5}},
+        )
+        patcher.start()
+        # Patch the deferred coroutine — if the endpoint awaited it inline, the
+        # patch would have run before the response. We assert the response still
+        # returns 200 AND the audit coroutine was scheduled (background task).
+        with patch("fusion_model_hub.server.routers.inference._write_inference_audit", new=AsyncMock()) as mock_audit:
+            try:
+                resp = await client.post(
+                    f"/api/v1/inference/{m['id']}/chat",
+                    json={"messages": [{"role": "user", "content": "hi"}]},
+                )
+                assert resp.status_code == 200
+                # The audit coroutine was scheduled (fire-and-forget), not
+                # awaited inline — give the loop a tick to let it run.
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+            finally:
+                patcher.stop()
+                inf_mod._loaded_models.clear()
+        mock_audit.assert_awaited()
+        assert mock_audit.await_args.args[0] == m["id"]
+        assert mock_audit.await_args.args[1] == "chat"
+
+    async def test_chat_does_not_open_extra_session_for_module_acl(self, client):
+        # Before #12, a chat call with an X-Fusion-Module header opened a
+        # SECOND session inside _check_module_access (it did its own
+        # get_model). Now the already-fetched model is reused, so the
+        # request session is the only one.
+        from fusion_model_hub.server.routers import inference as inf_mod
+
+        inf_mod._loaded_models.clear()
+        m = await _create_model(client, "session-reuse", model_modules="code")
+        await _publish(client, m["id"])
+        await _create_published_version(client, m["id"])
+        inf_mod._loaded_models[m["id"]] = {
+            "version_id": "v1",
+            "model_name": m["name"],
+            "status": "loaded",
+            "loaded_at": time.time(),
+        }
+        patcher, _ = _mock_httpx_inference(
+            response_json={"id": "c1", "usage": {"total_tokens": 2}},
+        )
+        # Count how many NEW sessions get_session_factory hands out for the
+        # chat call. The request gets its own SessionDep session; the audit
+        # runs on a background one. _check_module_access must NOT add another.
+        sf_calls = {"n": 0}
+        orig_sf = None
+        from fusion_model_hub.server import deps as deps_mod
+
+        orig_sf = deps_mod.get_session_factory
+
+        class _CountingFactory:
+            def __call__(self):
+                return orig_sf()
+
+        real_sf = orig_sf()
+
+        class _CountingSF:
+            def __call__(self):
+                sf_calls["n"] += 1
+                return real_sf
+
+        with (
+            patch.object(deps_mod, "get_session_factory", _CountingSF()),
+            patch.object(inf_mod, "get_session_factory", _CountingSF()),
+        ):
+            patcher.start()
+            try:
+                resp = await client.post(
+                    f"/api/v1/inference/{m['id']}/chat",
+                    json={"messages": [{"role": "user", "content": "hi"}]},
+                    headers={"X-Fusion-Module": "code"},
+                )
+                assert resp.status_code == 200
+                # Drain the deferred audit background task before counting,
+                # so its session is counted too (proves audit still runs).
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+            finally:
+                patcher.stop()
+                inf_mod._loaded_models.clear()
+        # Request session (1) + deferred-audit session (1) = 2. Before #12,
+        # _check_module_access + gray resolution each opened one more = 4+.
+        assert sf_calls["n"] <= 2, sf_calls
