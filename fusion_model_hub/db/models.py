@@ -474,6 +474,11 @@ class ApprovalRequest(Base):
     status: Mapped[ApprovalStatus] = mapped_column(Enum(ApprovalStatus), default=ApprovalStatus.PENDING)
     requester: Mapped[str] = mapped_column(String(128), default="")
     approver: Mapped[str] = mapped_column(String(128), default="")
+    # R-P2/#7: L3 is a multi-approver tier. `approver` holds only the most
+    # recent approver (kept for backward-compatible reads); `approvers` records
+    # the distinct approver history as a comma-separated list so a quorum of
+    # different approvers — not one approver approving N times — is required.
+    approvers: Mapped[str] = mapped_column(Text, default="")
     comment: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

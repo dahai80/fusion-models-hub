@@ -442,7 +442,7 @@ All inference calls (chat/completions/embeddings) are logged to the audit trail 
 | POST | `/api/v1/approvals` | Submit approval request (L1 auto, L2/L3 manual) |
 | GET | `/api/v1/approvals` | List approval requests (filter by model_id, status, level) |
 | GET | `/api/v1/approvals/{req_id}` | Get approval request detail |
-| POST | `/api/v1/approvals/{req_id}/approve` | Approve a pending request |
+| POST | `/api/v1/approvals/{req_id}/approve` | Approve a pending request (L3 requires 2 distinct approvers) |
 | POST | `/api/v1/approvals/{req_id}/reject` | Reject a pending request |
 
 ### Git LFS
@@ -503,7 +503,7 @@ with a clear "upgrade fusion-mlx" message.
 | GET | `/api/v1/branches/{branch_id}` | Get branch detail |
 | PATCH | `/api/v1/branches/{branch_id}` | Update branch |
 | DELETE | `/api/v1/branches/{branch_id}` | Delete branch |
-| POST | `/api/v1/branches/{branch_id}/merge` | Merge branch (sets status to MERGED) |
+| POST | `/api/v1/branches/{branch_id}/merge` | Merge branch (promotes head into a new mainline version, sets status MERGED; requires `head_version_id`) |
 
 ### Prometheus Metrics
 

@@ -249,6 +249,60 @@ class TestApprovals:
         resp = await client.post("/api/v1/approvals/nonexistent/reject", json={"comment": ""})
         assert resp.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_l3_quorum_stays_pending_after_one_approver(self, client):
+        # R-P2/#7: L3 multi-approver — one approve must NOT flip to APPROVED.
+        model = await _create_model(client)
+        approval = await client.post("/api/v1/approvals", json={
+            "model_id": model["id"], "level": "l3", "comment": "high gate",
+        })
+        assert approval.status_code == 200
+        req_id = approval.json()["id"]
+        assert approval.json()["status"] == "pending"
+        resp = await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "alice", "comment": "ok"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "pending"
+        assert "alice" in body["approvers"]
+
+    @pytest.mark.asyncio
+    async def test_l3_quorum_approves_after_two_distinct_approvers(self, client):
+        # R-P2/#7: quorum of 2 distinct approvers — second distinct approver flips APPROVED.
+        model = await _create_model(client)
+        approval = await client.post("/api/v1/approvals", json={
+            "model_id": model["id"], "level": "l3", "comment": "high gate",
+        })
+        req_id = approval.json()["id"]
+        await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "alice", "comment": "1"})
+        resp = await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "bob", "comment": "2"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "approved"
+        assert "alice" in body["approvers"] and "bob" in body["approvers"]
+
+    @pytest.mark.asyncio
+    async def test_l3_quorum_same_approver_twice_stays_pending(self, client):
+        # R-P2/#7: one approver approving twice must NOT count as a quorum.
+        model = await _create_model(client)
+        approval = await client.post("/api/v1/approvals", json={
+            "model_id": model["id"], "level": "l3", "comment": "high gate",
+        })
+        req_id = approval.json()["id"]
+        await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "alice", "comment": "1"})
+        resp = await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "alice", "comment": "2"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_l3_approve_requires_approver_field(self, client):
+        model = await _create_model(client)
+        approval = await client.post("/api/v1/approvals", json={
+            "model_id": model["id"], "level": "l3", "comment": "high gate",
+        })
+        req_id = approval.json()["id"]
+        resp = await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "", "comment": ""})
+        assert resp.status_code == 400
+
 
 class TestGitLFS:
     @pytest.mark.asyncio

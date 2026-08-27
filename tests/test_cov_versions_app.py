@@ -751,6 +751,29 @@ class TestAuthMiddlewareDeep:
         finally:
             set_auth_enabled(False)
 
+    async def test_module_acl_fail_closed_when_header_absent(self, client):
+        # E-S15 fail-closed: a module-restricted key that omits the
+        # X-Fusion-Module header must be denied, not silently allowed. The
+        # prior code returned None (allow) on a missing header, letting a
+        # scoped key bypass its module ACL.
+        set_auth_enabled(True)
+        try:
+            admin = await self._mkkey(client, {"name": "a6", "role": "admin"})
+            scoped = await self._mkkey(
+                client,
+                {"name": "mod3", "role": "developer", "allowed_modules": "kb"},
+                {"X-API-Key": admin},
+            )
+            resp = await client.post(
+                "/api/v1/models",
+                json={"name": "mod-nohdr", "model_type": "llm"},
+                headers={"X-API-Key": scoped},
+            )
+            assert resp.status_code == 403
+            assert "X-Fusion-Module header required" in resp.json()["detail"]
+        finally:
+            set_auth_enabled(False)
+
     async def test_key_cache_hit_on_second_request(self, client):
         from fusion_model_hub.db import crud
         set_auth_enabled(True)
