@@ -218,6 +218,7 @@ class TestCacheRouter:
 
     async def test_cache_entries_after_put(self, client, cache_dir):
         from fusion_model_hub.server.deps import _cache
+
         _cache.put("router-m1", CacheLevel.QUANTIZED, _write_tmp_file(b"q"), quant_bits=4)
         resp = await client.get("/api/v1/cache/entries")
         assert resp.status_code == 200
@@ -227,6 +228,7 @@ class TestCacheRouter:
 
     async def test_cache_entries_level_filter(self, client, cache_dir):
         from fusion_model_hub.server.deps import _cache
+
         _cache.put("f1", CacheLevel.RAW, _write_tmp_file(b"r"))
         _cache.put("f2", CacheLevel.QUANTIZED, _write_tmp_file(b"q"), quant_bits=4)
         resp = await client.get("/api/v1/cache/entries?level=quantized")
@@ -269,8 +271,11 @@ class TestCacheRouter:
         sf = get_session_factory()
         async with sf() as session:
             model = await create_model(
-                session, name="del-cache-model", model_type=ModelType.LLM,
-                architecture="qwen2", params_size="7B",
+                session,
+                name="del-cache-model",
+                model_type=ModelType.LLM,
+                architecture="qwen2",
+                params_size="7B",
             )
             model_id = model.id
         # Seed a cache entry for the model.
@@ -293,8 +298,11 @@ class TestCacheRouter:
         async with sf() as session:
             for name in ("batch-del-1", "batch-del-2"):
                 model = await create_model(
-                    session, name=name, model_type=ModelType.LLM,
-                    architecture="qwen2", params_size="7B",
+                    session,
+                    name=name,
+                    model_type=ModelType.LLM,
+                    architecture="qwen2",
+                    params_size="7B",
                 )
                 model_ids.append(model.id)
         for mid in model_ids:
@@ -316,13 +324,19 @@ class TestQuantizeCacheIntegration:
         sf = get_session_factory()
         async with sf() as session:
             model = await create_model(
-                session, name="qc-model", model_type=ModelType.LLM,
-                architecture="qwen2", params_size="7B",
+                session,
+                name="qc-model",
+                model_type=ModelType.LLM,
+                architecture="qwen2",
+                params_size="7B",
             )
             src_path = _write_tmp_file(b"source weights")
             ver = await create_version(
-                session, model_id=model.id, version="1.0.0",
-                format=ModelFormat.MLX, quantization=Quantization.NONE,
+                session,
+                model_id=model.id,
+                version="1.0.0",
+                format=ModelFormat.MLX,
+                quantization=Quantization.NONE,
                 file_path=src_path,
             )
             model_id = model.id
@@ -339,7 +353,8 @@ class TestQuantizeCacheIntegration:
             new_callable=AsyncMock,
         ) as mock_q:
             task_id = await submit_quantize(
-                source_version_id=version_id, quant_bits=4,
+                source_version_id=version_id,
+                quant_bits=4,
             )
             await asyncio.sleep(0.5)
             assert mock_q.call_count == 0, "MLX quantize should be skipped on cache hit"

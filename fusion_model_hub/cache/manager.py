@@ -52,14 +52,13 @@ class CacheManager:
                 # E-R1: corrupt index must not silently wipe and pretend empty —
                 # that hides data loss. Quarantine the bad file and start fresh,
                 # but log loudly so the operator can recover the old entries.
-                corrupt_path = self._index_file.with_suffix(
-                    f".corrupt.{uuid.uuid4().hex[:8]}.json"
-                )
+                corrupt_path = self._index_file.with_suffix(f".corrupt.{uuid.uuid4().hex[:8]}.json")
                 with contextlib.suppress(OSError):
                     shutil.move(str(self._index_file), str(corrupt_path))
                 logger.error(
                     "Cache index corrupted, quarantined to %s: %s",
-                    corrupt_path, e,
+                    corrupt_path,
+                    e,
                 )
                 self._index = {}
             except Exception as e:
@@ -135,7 +134,11 @@ class CacheManager:
 
         logger.info(
             "Cached %s at level=%s quant=%d size=%.2fGB mlx=%s",
-            model_id, level.value, quant_bits, size_bytes / 1e9, mlx_version,
+            model_id,
+            level.value,
+            quant_bits,
+            size_bytes / 1e9,
+            mlx_version,
         )
         return CacheEntry(**entry_data)
 
@@ -217,10 +220,7 @@ class CacheManager:
             # deleting model "abc" also matched keys for model "abcxyz" — a
             # cross-model purge. Match only keys whose first colon-segment equals
             # model_id exactly.
-            keys_to_remove = [
-                k for k in self._index
-                if k.split(":", 1)[0] == model_id
-            ]
+            keys_to_remove = [k for k in self._index if k.split(":", 1)[0] == model_id]
             for key in keys_to_remove:
                 data = self._index.pop(key)
                 path = Path(data["path"])
@@ -258,9 +258,7 @@ class CacheManager:
         # no index entry — silently leaked forever, still eating space. Scan the
         # three level dirs and delete any file whose absolute path is not
         # referenced by any current index entry. Must run under self._lock.
-        indexed_paths = {
-            Path(d["path"]).resolve() for d in self._index.values() if d.get("path")
-        }
+        indexed_paths = {Path(d["path"]).resolve() for d in self._index.values() if d.get("path")}
         orphan_removed = 0
         for level_dir in (self.raw_dir, self.converted_dir, self.quantized_dir):
             if not level_dir.exists():
@@ -278,7 +276,8 @@ class CacheManager:
                         orphan_removed += 1
                         logger.warning(
                             "GC reconciler removed orphan cache file: %s (%d bytes)",
-                            entry_path, size,
+                            entry_path,
+                            size,
                         )
                     except OSError as e:
                         logger.warning("GC reconciler could not remove orphan %s: %s", entry_path, e)
@@ -314,9 +313,7 @@ class CacheManager:
 
             if max_size_gb > 0:
                 total_bytes = sum(
-                    Path(d["path"]).stat().st_size
-                    for d in self._index.values()
-                    if Path(d["path"]).exists()
+                    Path(d["path"]).stat().st_size for d in self._index.values() if Path(d["path"]).exists()
                 )
                 if total_bytes > max_size_gb * 1e9:
                     sorted_keys = sorted(
@@ -360,9 +357,9 @@ class CacheManager:
                     if actual != data["sha256"]:
                         hash_mismatch.append(key)
                 if current_mlx_version and data.get("mlx_version") and data["mlx_version"] != current_mlx_version:
-                        level = data.get("level", "")
-                        if level in (CacheLevel.CONVERTED.value, CacheLevel.QUANTIZED.value):
-                            version_stale.append(key)
+                    level = data.get("level", "")
+                    if level in (CacheLevel.CONVERTED.value, CacheLevel.QUANTIZED.value):
+                        version_stale.append(key)
             result = {
                 "missing": len(missing),
                 "hash_mismatch": len(hash_mismatch),

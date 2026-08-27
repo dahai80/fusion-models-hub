@@ -78,8 +78,7 @@ async def upload_object(oid: str, request: Request, store: StoreDep):
     except NotImplementedError as e:
         raise HTTPException(status_code=501, detail=str(e)) from e
     logger.info("LFS upload ok: oid=%s size=%d", oid[:16], len(data))
-    return Response(status_code=200, media_type="application/json",
-                    content=f'{{"oid":"{oid}","size":{len(data)}}}')
+    return Response(status_code=200, media_type="application/json", content=f'{{"oid":"{oid}","size":{len(data)}}}')
 
 
 @router.get("/gitlfs/objects/{oid}")
@@ -103,8 +102,7 @@ async def verify_object(body: VerifyRequest, store: StoreDep):
         raise HTTPException(status_code=404, detail="Object not found")
     actual_size = file_path.stat().st_size
     if actual_size != body.size:
-        logger.warning("LFS verify size mismatch: oid=%s expected=%d actual=%d",
-                       body.oid[:16], body.size, actual_size)
+        logger.warning("LFS verify size mismatch: oid=%s expected=%d actual=%d", body.oid[:16], body.size, actual_size)
         raise HTTPException(status_code=422, detail="Size mismatch")
     logger.info("LFS verify ok: oid=%s size=%d", body.oid[:16], body.size)
     return {"oid": body.oid, "size": actual_size}
@@ -119,11 +117,16 @@ async def create_lock(body: LockRequest, session: SessionDep):
     if existing:
         raise HTTPException(status_code=409, detail="Path already locked")
     lock = await crud.create_gitlfs_lock(
-        session, model_id=body.model_id, path=body.path, owner=body.owner,
+        session,
+        model_id=body.model_id,
+        path=body.path,
+        owner=body.owner,
     )
     return {
         "lock": {
-            "id": lock.id, "path": lock.path, "owner": lock.owner,
+            "id": lock.id,
+            "path": lock.path,
+            "owner": lock.owner,
             "locked_at": lock.created_at.isoformat() if lock.created_at else None,
         },
     }
@@ -135,7 +138,9 @@ async def list_locks(session: SessionDep, model_id: str = "", path: str = ""):
     return {
         "locks": [
             {
-                "id": l.id, "path": l.path, "owner": l.owner,
+                "id": l.id,
+                "path": l.path,
+                "owner": l.owner,
                 "locked_at": l.created_at.isoformat() if l.created_at else None,
             }
             for l in locks

@@ -50,9 +50,7 @@ async def realtime_monitor():
             }
 
             if stats.get("request_count", 0) > 0:
-                entry["avg_latency_ms"] = round(
-                    stats.get("total_latency", 0.0) / stats["request_count"], 2
-                )
+                entry["avg_latency_ms"] = round(stats.get("total_latency", 0.0) / stats["request_count"], 2)
                 last_at = stats.get("last_request_at", 0)
                 if last_at and last_at > 0:
                     elapsed = time.time() - last_at
@@ -67,16 +65,12 @@ async def realtime_monitor():
                     entry["source_module"] = source_mod
 
             if stats.get("last_request_at"):
-                entry["last_request_at"] = datetime.fromtimestamp(
-                    stats["last_request_at"], tz=UTC
-                ).isoformat()
+                entry["last_request_at"] = datetime.fromtimestamp(stats["last_request_at"], tz=UTC).isoformat()
                 if stats["last_request_at"] >= today_start:
                     total_requests_today += stats.get("request_count", 0)
 
             if is_loaded:
-                entry["loaded_since"] = datetime.fromtimestamp(
-                    info.get("loaded_at", 0), tz=UTC
-                ).isoformat()
+                entry["loaded_since"] = datetime.fromtimestamp(info.get("loaded_at", 0), tz=UTC).isoformat()
                 v = await crud.get_version(session, info.get("version_id", ""))
                 if v and v.memory_usage > 0:
                     entry["memory_usage_mb"] = v.memory_usage
@@ -116,18 +110,20 @@ async def model_stats():
                 v = await crud.get_version(session, info.get("version_id", ""))
                 if v and v.memory_usage > 0:
                     mem_mb = float(v.memory_usage)
-            stats_list.append({
-                "id": m.id,
-                "model_id": m.id,
-                "model_name": m.name,
-                "requests_per_min": rpm,
-                "avg_latency_ms": avg_lat,
-                "tokens_per_second": tps,
-                "active_sessions": active,
-                "memory_mb": mem_mb,
-                "node": "local",
-                "source": stats.get("source_module", ""),
-                "uptime": "",
-            })
+            stats_list.append(
+                {
+                    "id": m.id,
+                    "model_id": m.id,
+                    "model_name": m.name,
+                    "requests_per_min": rpm,
+                    "avg_latency_ms": avg_lat,
+                    "tokens_per_second": tps,
+                    "active_sessions": active,
+                    "memory_mb": mem_mb,
+                    "node": "local",
+                    "source": stats.get("source_module", ""),
+                    "uptime": "",
+                }
+            )
     logger.info("model-stats: %d entries", len(stats_list))
     return {"stats": stats_list}

@@ -324,9 +324,7 @@ class TestMinioStoreRelease:
 
         mock_client.get_object.side_effect = fake_get
 
-        path, file_hash, size = asyncio.run(
-            store.assemble_chunks("up2", Path("m1/v1"), "model.bin", total_chunks=3)
-        )
+        path, file_hash, size = asyncio.run(store.assemble_chunks("up2", Path("m1/v1"), "model.bin", total_chunks=3))
         assert size == expected_size
         assert file_hash == expected_hash
         assert str(path) == "m1/v1/model.bin"
@@ -347,9 +345,7 @@ class TestMinioStoreRelease:
         mock_client.get_object.side_effect = fake_get
         mock_client.remove_object.side_effect = Exception("already gone")
 
-        path, file_hash, size = asyncio.run(
-            store.assemble_chunks("up3", Path("m1/v1"), "model.bin", total_chunks=1)
-        )
+        path, file_hash, size = asyncio.run(store.assemble_chunks("up3", Path("m1/v1"), "model.bin", total_chunks=1))
         assert size == 3
         assert len(file_hash) == 64
 

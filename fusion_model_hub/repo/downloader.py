@@ -1,4 +1,5 @@
 """Model downloader — downloads and verifies Fusion-MLX models via HTTP."""
+
 from __future__ import annotations
 
 import logging
@@ -19,8 +20,7 @@ class ModelDownloader:
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
-    async def download(self, url: str, model_id: str, expected_hash: str = "",
-                       on_progress=None) -> dict[str, Any]:
+    async def download(self, url: str, model_id: str, expected_hash: str = "", on_progress=None) -> dict[str, Any]:
         """Download a model file with resume support.
 
         Supports HTTP Range header for resuming partial downloads.
@@ -37,6 +37,7 @@ class ModelDownloader:
             Dict with status, path, and verification result.
         """
         import httpx
+
         file_path = self.storage_dir / f"{model_id}.mlx"
         temp_path = self.storage_dir / f"{model_id}.mlx.part"
         resume_offset = 0
@@ -63,38 +64,42 @@ class ModelDownloader:
                 except Exception as guard_exc:
                     logger.warning(
                         "SSRF guard rejected redirect to %s: %s",
-                        request.url.host, guard_exc,
+                        request.url.host,
+                        guard_exc,
                     )
                     raise
 
-            async with httpx.AsyncClient(
-                timeout=300.0, follow_redirects=True,
-                event_hooks={"request": [_ssrf_guard]},
-            ) as client, \
-                    client.stream("GET", url, headers=headers) as resp:
-                    if resume_offset > 0 and resp.status_code not in (206, 200):
-                        logger.warning("Server does not support resume, restarting from 0")
+            async with (
+                httpx.AsyncClient(
+                    timeout=300.0,
+                    follow_redirects=True,
+                    event_hooks={"request": [_ssrf_guard]},
+                ) as client,
+                client.stream("GET", url, headers=headers) as resp,
+            ):
+                if resume_offset > 0 and resp.status_code not in (206, 200):
+                    logger.warning("Server does not support resume, restarting from 0")
+                    resume_offset = 0
+                    temp_path.unlink(missing_ok=True)
+
+                if resp.status_code == 206:
+                    total = int(resp.headers.get("content-range", "").split("/")[-1].strip())
+                else:
+                    total = int(resp.headers.get("content-length", 0))
+                    if resume_offset > 0:
                         resume_offset = 0
                         temp_path.unlink(missing_ok=True)
 
-                    if resp.status_code == 206:
-                        total = int(resp.headers.get("content-range", "").split("/")[-1].strip())
-                    else:
-                        total = int(resp.headers.get("content-length", 0))
-                        if resume_offset > 0:
-                            resume_offset = 0
-                            temp_path.unlink(missing_ok=True)
+                resp.raise_for_status()
+                downloaded = resume_offset
 
-                    resp.raise_for_status()
-                    downloaded = resume_offset
-
-                    mode = "ab" if resume_offset > 0 else "wb"
-                    with open(temp_path, mode) as f:
-                        async for chunk in resp.aiter_bytes():
-                            await anyio.to_thread.run_sync(f.write, chunk)
-                            downloaded += len(chunk)
-                            if on_progress:
-                                on_progress(downloaded, total)
+                mode = "ab" if resume_offset > 0 else "wb"
+                with open(temp_path, mode) as f:
+                    async for chunk in resp.aiter_bytes():
+                        await anyio.to_thread.run_sync(f.write, chunk)
+                        downloaded += len(chunk)
+                        if on_progress:
+                            on_progress(downloaded, total)
 
             temp_path.rename(file_path)
 

@@ -58,6 +58,7 @@ def get_engine(db_url: str = "", *, pool_size: int = 10, max_overflow: int = 20)
     with _engines_lock:
         _engines.append(engine)
     if _is_file_sqlite(db_url):
+
         @event.listens_for(engine.sync_engine, "connect")
         def _set_sqlite_pragmas(dbapi_conn, _record):
             try:
@@ -67,6 +68,7 @@ def get_engine(db_url: str = "", *, pool_size: int = 10, max_overflow: int = 20)
                 cur.close()
             except Exception as e:
                 logger.warning("Failed to set SQLite PRAGMA: %s", e)
+
         logger.info("SQLite WAL+busy_timeout enabled for %s", db_url)
     return engine
 

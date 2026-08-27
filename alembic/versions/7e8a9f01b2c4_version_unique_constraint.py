@@ -5,14 +5,15 @@ Revises: 0f2330f0ac47
 Create Date: 2026-08-25 13:00:00.000000
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = '7e8a9f01b2c4'
-down_revision: Union[str, Sequence[str], None] = '0f2330f0ac47'
+revision: str = "7e8a9f01b2c4"
+down_revision: Union[str, Sequence[str], None] = "0f2330f0ac47"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -31,7 +32,8 @@ def upgrade() -> None:
     # Collapse duplicates: for each (model_id, version) with >1 row, keep the
     # one with the smallest created_at (or smallest id as a stable tiebreaker)
     # and delete the rest. Pure SQL, dialect-agnostic.
-    bind.execute(sa.text("""
+    bind.execute(
+        sa.text("""
         DELETE FROM model_versions
         WHERE id NOT IN (
             SELECT id FROM (
@@ -44,14 +46,14 @@ def upgrade() -> None:
             ) ranked
             WHERE ranked.rn = 1
         )
-    """))
+    """)
+    )
     # batch_alter_table so SQLite (no ALTER CONSTRAINT) uses copy-and-move;
     # PG adds the constraint inline. Both produce uq_model_version.
-    with op.batch_alter_table('model_versions', schema=None) as batch_op:
-        batch_op.create_unique_constraint('uq_model_version', ['model_id', 'version'])
+    with op.batch_alter_table("model_versions", schema=None) as batch_op:
+        batch_op.create_unique_constraint("uq_model_version", ["model_id", "version"])
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('model_versions', schema=None) as batch_op:
-        batch_op.drop_constraint('uq_model_version', type_='unique')
-
+    with op.batch_alter_table("model_versions", schema=None) as batch_op:
+        batch_op.drop_constraint("uq_model_version", type_="unique")

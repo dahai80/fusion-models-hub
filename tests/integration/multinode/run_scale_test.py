@@ -17,6 +17,7 @@ Usage:
 Outputs a JSON report + human summary to stdout and a log file. Cleans up
 created model/nodes on exit (process data rule: keep only final outputs+logs).
 """
+
 import argparse
 import asyncio
 import json
@@ -59,9 +60,7 @@ class HubClient:
         return node
 
     async def heartbeat(self, client, node_id):
-        r = await client.post(
-            f"{self.base}/api/v1/cluster/nodes/{node_id}/heartbeat", timeout=10
-        )
+        r = await client.post(f"{self.base}/api/v1/cluster/nodes/{node_id}/heartbeat", timeout=10)
         r.raise_for_status()
 
     async def delete_node(self, client, node_id):
@@ -122,11 +121,15 @@ async def one_request(client, hub_url, model_id, req_idx):
         )
         dt = (time.perf_counter() - t0) * 1000
         if r.status_code != 200:
-            return {"ok": False, "status": r.status_code, "ms": dt, "routedTo": None,
-                    "error": r.text[:120]}
+            return {"ok": False, "status": r.status_code, "ms": dt, "routedTo": None, "error": r.text[:120]}
         body = r.json()
-        return {"ok": True, "status": 200, "ms": dt,
-                "routedTo": body.get("routedTo"), "content": body.get("content", "")[:40]}
+        return {
+            "ok": True,
+            "status": 200,
+            "ms": dt,
+            "routedTo": body.get("routedTo"),
+            "content": body.get("content", "")[:40],
+        }
     except Exception as e:
         dt = (time.perf_counter() - t0) * 1000
         return {"ok": False, "status": 0, "ms": dt, "routedTo": None, "error": str(e)[:120]}
@@ -198,7 +201,7 @@ async def setup(hub, client, args):
         await hub.heartbeat(client, nid)
     # Create + publish the model. hf_repo == real MLX model id so _chat sends
     # the right model_name to the real node; mocks ignore it.
-    model = await hub.create_model(client, f"scale-test-{int(time.time())%100000}", args.model_id)
+    model = await hub.create_model(client, f"scale-test-{int(time.time()) % 100000}", args.model_id)
     await hub.publish_model(client, model["id"])
     return model["id"], nodes
 
@@ -282,7 +285,9 @@ async def main_async(args):
 def _print_scenario(name, s):
     print(f"\n--- {name} ---")
     print(f"  ok={s['ok']}/{s['total']}  failed={s['failed']}  wall={s['wall_seconds']}s  rps={s['throughput_rps']}")
-    print(f"  latency ms: p50={s['latency_ms']['p50']} p95={s['latency_ms']['p95']} p99={s['latency_ms']['p99']} mean={s['latency_ms']['mean']}")
+    print(
+        f"  latency ms: p50={s['latency_ms']['p50']} p95={s['latency_ms']['p95']} p99={s['latency_ms']['p99']} mean={s['latency_ms']['mean']}"
+    )
     print(f"  node distribution: {s['node_distribution']}")
     if s["errors"]:
         print(f"  sample errors: {s['errors'][:2]}")

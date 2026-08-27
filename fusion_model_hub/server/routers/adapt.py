@@ -32,11 +32,7 @@ def _get_engine(settings: SettingsDep) -> AdaptDecisionEngine:
     # engine authenticates against the new credential. On rebuild, drop the old
     # engine's embedded HardwareDetector 5-min cache so a swapped MLX URL does
     # not keep serving the prior MLX's stale hardware profile.
-    if (
-        _engine is None
-        or _engine.mlx_url != settings.mlx_url
-        or _engine.api_key != settings.mlx_internal_api_key
-    ):
+    if _engine is None or _engine.mlx_url != settings.mlx_url or _engine.api_key != settings.mlx_internal_api_key:
         if _engine is not None:
             _engine.invalidate_cache()
         _engine = AdaptDecisionEngine(settings.mlx_url, api_key=settings.mlx_internal_api_key)
@@ -83,7 +79,10 @@ async def generate_migration_plan(request: PlanRequest, settings: SettingsDep):
     engine = _get_engine(settings)
     try:
         return await engine.assess_and_plan(
-            request.model_id, request.params_b, request.hf_repo, request.source_format,
+            request.model_id,
+            request.params_b,
+            request.hf_repo,
+            request.source_format,
         )
     except Exception as e:
         logger.error("Migration plan generation failed: %s", e)
@@ -99,7 +98,9 @@ async def execute_adaptation(request: ExecuteRequest, settings: SettingsDep):
             logger.info("Adapt execution started: id=%s model=%s", execution_id, request.model_id)
 
             adapt_result = await _get_engine(settings).assess(
-                request.model_id, request.hf_repo, request.source_format,
+                request.model_id,
+                request.hf_repo,
+                request.source_format,
             )
             if adapt_result.level == AdaptationLevel.L4:
                 logger.warning("Adapt execution aborted: model %s is L4 (unsupported)", request.model_id)
@@ -116,11 +117,11 @@ async def execute_adaptation(request: ExecuteRequest, settings: SettingsDep):
                 if convert_resp.status_code not in (200, 202):
                     logger.warning(
                         "Convert step returned %d for %s: %s",
-                        convert_resp.status_code, request.model_id, convert_resp.text,
+                        convert_resp.status_code,
+                        request.model_id,
+                        convert_resp.text,
                     )
-                    _execution_errors[execution_id] = (
-                        f"convert failed: MLX returned {convert_resp.status_code}"
-                    )
+                    _execution_errors[execution_id] = f"convert failed: MLX returned {convert_resp.status_code}"
                 else:
                     logger.info("Convert submitted for %s", request.model_id)
 
@@ -132,11 +133,11 @@ async def execute_adaptation(request: ExecuteRequest, settings: SettingsDep):
                     if quant_resp.status_code not in (200, 202):
                         logger.warning(
                             "Quantize step returned %d for %s: %s",
-                            quant_resp.status_code, request.model_id, quant_resp.text,
+                            quant_resp.status_code,
+                            request.model_id,
+                            quant_resp.text,
                         )
-                        _execution_errors[execution_id] = (
-                            f"quantize failed: MLX returned {quant_resp.status_code}"
-                        )
+                        _execution_errors[execution_id] = f"quantize failed: MLX returned {quant_resp.status_code}"
                     else:
                         logger.info("Quantize submitted for %s at %d-bit", request.model_id, request.quant_bits)
                 else:

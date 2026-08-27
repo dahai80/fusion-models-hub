@@ -36,6 +36,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -70,9 +71,14 @@ def _resp(status_code=200, json_data=None, text=""):
 
 
 async def _create_model(client, name="cov-model"):
-    resp = await client.post("/api/v1/models", json={
-        "name": name, "description": "test", "model_type": "llm",
-    })
+    resp = await client.post(
+        "/api/v1/models",
+        json={
+            "name": name,
+            "description": "test",
+            "model_type": "llm",
+        },
+    )
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -121,9 +127,11 @@ class TestMonitorRealtime:
 
     async def test_realtime_with_loaded_model_and_stats(self, client):
         from fusion_model_hub.server.routers.inference import _loaded_models, _model_stats
+
         m = await _create_model(client, "mon-model-2")
         v = await _create_published_version(client, m["id"])
         import time
+
         now = time.time()
         _loaded_models[m["id"]] = {
             "version_id": v["id"],
@@ -159,8 +167,10 @@ class TestMonitorRealtime:
 
     async def test_realtime_stats_stale_no_tps(self, client):
         from fusion_model_hub.server.routers.inference import _model_stats
+
         m = await _create_model(client, "mon-model-3")
         import time
+
         now = time.time()
         _model_stats[m["id"]] = {
             "request_count": 2,
@@ -202,9 +212,11 @@ class TestMonitorModelStats:
 
     async def test_model_stats_active_with_loaded_version(self, client):
         from fusion_model_hub.server.routers.inference import _loaded_models, _model_stats
+
         m = await _create_model(client, "stat-model-2")
         v = await _create_published_version(client, m["id"])
         import time
+
         now = time.time()
         _loaded_models[m["id"]] = {
             "version_id": v["id"],
@@ -262,6 +274,7 @@ class TestAnalyze:
 
     async def test_analyze_mlx_connect_error(self, client):
         import httpx
+
         mock_inst = _mock_httpx_client()
         mock_inst.post.side_effect = httpx.ConnectError("no connection")
         with patch("fusion_model_hub.server.routers.analyze.httpx.AsyncClient", return_value=mock_inst):
@@ -297,6 +310,7 @@ class TestBenchmarksList:
 
     async def test_list_benchmarks_connect_error(self, client):
         import httpx
+
         mock_inst = _mock_httpx_client()
         mock_inst.get.side_effect = httpx.ConnectError("down")
         with patch("fusion_model_hub.server.routers.benchmarks.httpx.AsyncClient", return_value=mock_inst):
@@ -346,6 +360,7 @@ class TestBenchmarksCompare:
 
     async def test_compare_connect_error(self, client):
         import httpx
+
         mock_inst = _mock_httpx_client()
         mock_inst.get.side_effect = httpx.ConnectError("down")
         with patch("fusion_model_hub.server.routers.benchmarks.httpx.AsyncClient", return_value=mock_inst):
@@ -385,6 +400,7 @@ class TestBenchmarksGetOne:
 
     async def test_get_benchmark_connect_error(self, client):
         import httpx
+
         mock_inst = _mock_httpx_client()
         mock_inst.get.side_effect = httpx.ConnectError("down")
         with patch("fusion_model_hub.server.routers.benchmarks.httpx.AsyncClient", return_value=mock_inst):
@@ -404,9 +420,14 @@ class TestBenchmarksTrigger:
         mock_resp = _resp(202, {"task_id": "t1"})
         mock_inst = _mock_httpx_client(post_resp=mock_resp)
         with patch("fusion_model_hub.server.routers.benchmarks.httpx.AsyncClient", return_value=mock_inst):
-            resp = await client.post("/api/v1/benchmarks/trigger", json={
-                "model_id": "m1", "suite": "full", "callback_url": "http://cb.example.com",
-            })
+            resp = await client.post(
+                "/api/v1/benchmarks/trigger",
+                json={
+                    "model_id": "m1",
+                    "suite": "full",
+                    "callback_url": "http://cb.example.com",
+                },
+            )
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "submitted"
@@ -416,9 +437,13 @@ class TestBenchmarksTrigger:
         mock_resp = _resp(201, {"task_id": "t2"})
         mock_inst = _mock_httpx_client(post_resp=mock_resp)
         with patch("fusion_model_hub.server.routers.benchmarks.httpx.AsyncClient", return_value=mock_inst):
-            resp = await client.post("/api/v1/benchmarks/trigger", json={
-                "model_id": "m1", "template": "standard",
-            })
+            resp = await client.post(
+                "/api/v1/benchmarks/trigger",
+                json={
+                    "model_id": "m1",
+                    "template": "standard",
+                },
+            )
         assert resp.status_code == 200
         sent = mock_inst.post.call_args.kwargs["json"]
         assert sent["suite"] == "standard"
@@ -432,6 +457,7 @@ class TestBenchmarksTrigger:
 
     async def test_trigger_connect_error(self, client):
         import httpx
+
         mock_inst = _mock_httpx_client()
         mock_inst.post.side_effect = httpx.ConnectError("down")
         with patch("fusion_model_hub.server.routers.benchmarks.httpx.AsyncClient", return_value=mock_inst):
@@ -462,6 +488,7 @@ class TestSystemHealth:
 
     async def test_health_mlx_offline(self, client):
         import httpx
+
         mock_inst = _mock_httpx_client()
         mock_inst.get.side_effect = httpx.ConnectError("down")
         with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
@@ -527,15 +554,24 @@ class TestSystemStorageAndAudit:
     async def test_audit_logs_with_entries(self, client):
         from fusion_model_hub.db.crud import create_audit_log
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             await create_audit_log(
-                session, api_key_id="k1", action="model.create",
-                resource_type="model", resource_id="r1", detail="created",
+                session,
+                api_key_id="k1",
+                action="model.create",
+                resource_type="model",
+                resource_id="r1",
+                detail="created",
             )
             await create_audit_log(
-                session, api_key_id="k1", action="model.update",
-                resource_type="model", resource_id="r2", detail="updated",
+                session,
+                api_key_id="k1",
+                action="model.update",
+                resource_type="model",
+                resource_id="r2",
+                detail="updated",
             )
         resp = await client.get("/api/v1/system/audit")
         assert resp.status_code == 200
@@ -546,15 +582,24 @@ class TestSystemStorageAndAudit:
     async def test_audit_logs_filter_by_action(self, client):
         from fusion_model_hub.db.crud import create_audit_log
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             await create_audit_log(
-                session, api_key_id="k1", action="model.create",
-                resource_type="model", resource_id="r1", detail="c",
+                session,
+                api_key_id="k1",
+                action="model.create",
+                resource_type="model",
+                resource_id="r1",
+                detail="c",
             )
             await create_audit_log(
-                session, api_key_id="k1", action="model.delete",
-                resource_type="model", resource_id="r2", detail="d",
+                session,
+                api_key_id="k1",
+                action="model.delete",
+                resource_type="model",
+                resource_id="r2",
+                detail="d",
             )
         resp = await client.get("/api/v1/system/audit", params={"action": "model.create"})
         assert resp.status_code == 200
@@ -642,11 +687,17 @@ class TestSystemImport:
 
     async def test_import_forbidden_when_auth_enabled_non_admin(self, client):
         from fusion_model_hub.server.auth import set_auth_enabled
+
         set_auth_enabled(True)
         try:
-            admin_resp = await client.post("/api/v1/auth/keys", json={
-                "name": "boot-admin", "role": "admin", "permissions": "read,write",
-            })
+            admin_resp = await client.post(
+                "/api/v1/auth/keys",
+                json={
+                    "name": "boot-admin",
+                    "role": "admin",
+                    "permissions": "read,write",
+                },
+            )
             assert admin_resp.status_code == 201, admin_resp.text
             admin_key = admin_resp.json()["key"]
             dev_resp = await client.post(
@@ -679,6 +730,7 @@ class TestSystemScanDuplicates:
     async def test_scan_finds_duplicates_by_hash(self, client):
         from fusion_model_hub.db.crud import update_version
         from fusion_model_hub.server.deps import get_session_factory
+
         m1 = await _create_model(client, "dup-a")
         v1 = await _create_published_version(client, m1["id"])
         m2 = await _create_model(client, "dup-b")
@@ -708,6 +760,7 @@ class TestSystemCleanup:
         from fusion_model_hub.db.crud import update_version, update_version_status
         from fusion_model_hub.db.models import VersionStatus
         from fusion_model_hub.server.deps import get_session_factory
+
         m = await _create_model(client, "clean-model-2")
         v = await _create_published_version(client, m["id"])
         sf = get_session_factory()
@@ -729,8 +782,13 @@ class TestSystemHardware:
         assert resp.status_code == 200
         data = resp.json()
         for key in (
-            "gpu_name", "gpu_memory_total_mb", "gpu_memory_used_mb",
-            "gpu_utilization", "cpu_cores", "memory_total_gb", "memory_used_gb",
+            "gpu_name",
+            "gpu_memory_total_mb",
+            "gpu_memory_used_mb",
+            "gpu_utilization",
+            "cpu_cores",
+            "memory_total_gb",
+            "memory_used_gb",
         ):
             assert key in data
         assert isinstance(data["cpu_cores"], int)
@@ -740,6 +798,7 @@ class TestSystemHardware:
 class TestQuantizePresets:
     async def test_list_presets(self, client):
         from fusion_model_hub.server.routers.quantize_presets import list_presets
+
         result = await list_presets()
         names = [p["name"] for p in result["presets"]]
         assert "chat" in names
@@ -751,6 +810,7 @@ class TestQuantizePresets:
 
         from fusion_model_hub.server.deps import get_session_factory
         from fusion_model_hub.server.routers.quantize_presets import apply_preset
+
         sf = get_session_factory()
         async with sf() as session:
             with pytest.raises(HTTPException) as exc:
@@ -762,6 +822,7 @@ class TestQuantizePresets:
 
         from fusion_model_hub.server.deps import get_session_factory
         from fusion_model_hub.server.routers.quantize_presets import apply_preset
+
         sf = get_session_factory()
         async with sf() as session:
             with pytest.raises(HTTPException) as exc:
@@ -771,13 +832,19 @@ class TestQuantizePresets:
     async def test_apply_preset_chat_success(self, client):
         from fusion_model_hub.server.deps import get_session_factory
         from fusion_model_hub.server.routers.quantize_presets import apply_preset
+
         m = await _create_model(client, "preset-model-1")
         v = await _create_published_version(client, m["id"])
         sf = get_session_factory()
         async with sf() as session:
-            with patch("fusion_model_hub.server.routers.quantize_presets.submit_quantize", new=AsyncMock(return_value="task-123")):
+            with patch(
+                "fusion_model_hub.server.routers.quantize_presets.submit_quantize",
+                new=AsyncMock(return_value="task-123"),
+            ):
                 result = await apply_preset(
-                    "chat", type("B", (), {"source_version_id": v["id"]})(), session,
+                    "chat",
+                    type("B", (), {"source_version_id": v["id"]})(),
+                    session,
                 )
         assert result["task_id"] == "task-123"
         assert result["preset"] == "chat"
@@ -787,13 +854,19 @@ class TestQuantizePresets:
     async def test_apply_preset_embedding_success(self, client):
         from fusion_model_hub.server.deps import get_session_factory
         from fusion_model_hub.server.routers.quantize_presets import apply_preset
+
         m = await _create_model(client, "preset-model-2")
         v = await _create_published_version(client, m["id"])
         sf = get_session_factory()
         async with sf() as session:
-            with patch("fusion_model_hub.server.routers.quantize_presets.submit_quantize", new=AsyncMock(return_value="task-456")):
+            with patch(
+                "fusion_model_hub.server.routers.quantize_presets.submit_quantize",
+                new=AsyncMock(return_value="task-456"),
+            ):
                 result = await apply_preset(
-                    "embedding", type("B", (), {"source_version_id": v["id"]})(), session,
+                    "embedding",
+                    type("B", (), {"source_version_id": v["id"]})(),
+                    session,
                 )
         assert result["quant_bits"] == 8
 
@@ -802,13 +875,19 @@ class TestQuantizePresets:
 
         from fusion_model_hub.server.deps import get_session_factory
         from fusion_model_hub.server.routers.quantize_presets import apply_preset
+
         m = await _create_model(client, "preset-model-3")
         v = await _create_published_version(client, m["id"])
         sf = get_session_factory()
         async with sf() as session:
-            with patch("fusion_model_hub.server.routers.quantize_presets.submit_quantize", new=AsyncMock(side_effect=RuntimeError("mlx down"))):
+            with patch(
+                "fusion_model_hub.server.routers.quantize_presets.submit_quantize",
+                new=AsyncMock(side_effect=RuntimeError("mlx down")),
+            ):
                 with pytest.raises(HTTPException) as exc:
                     await apply_preset(
-                        "chat", type("B", (), {"source_version_id": v["id"]})(), session,
+                        "chat",
+                        type("B", (), {"source_version_id": v["id"]})(),
+                        session,
                     )
             assert exc.value.status_code == 500

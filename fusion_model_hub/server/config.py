@@ -68,8 +68,10 @@ class Settings:
                     self.port = int(env_port)
                 except ValueError:
                     import logging
+
                     logging.getLogger(__name__).warning(
-                        "FMH_PORT=%r is not an int; keeping default 11444", env_port,
+                        "FMH_PORT=%r is not an int; keeping default 11444",
+                        env_port,
                     )
         if not self.log_level or self.log_level == "INFO":
             env_log = os.environ.get("FMH_LOG_LEVEL", "")
@@ -125,11 +127,10 @@ class Settings:
         # empty default; a literal "*" re-enables the legacy permissive mode.
         cors_env = os.environ.get("FMH_CORS_ORIGINS", "")
         if cors_env:
-            self.cors_origins = [
-                o.strip() for o in cors_env.split(",") if o.strip()
-            ]
+            self.cors_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
         if not self.mlx_internal_api_key:
             import logging
+
             logger = logging.getLogger(__name__)
             if os.environ.get("FUSION_MLX_API_KEY"):
                 self.mlx_internal_api_key = os.environ["FUSION_MLX_API_KEY"]
@@ -137,8 +138,7 @@ class Settings:
             elif os.environ.get("MLX_INTERNAL_API_KEY"):
                 self.mlx_internal_api_key = os.environ["MLX_INTERNAL_API_KEY"]
                 logger.warning(
-                    "MLX API key loaded from deprecated env MLX_INTERNAL_API_KEY — "
-                    "migrate to FUSION_MLX_API_KEY"
+                    "MLX API key loaded from deprecated env MLX_INTERNAL_API_KEY — migrate to FUSION_MLX_API_KEY"
                 )
         if not self.mlx_internal_api_key:
             # Env unset — fall back to the Fusion-MLX server's own settings so a
@@ -149,6 +149,7 @@ class Settings:
             # fusion-mlx/start.sh uses.
             import json
             import logging
+
             logger = logging.getLogger(__name__)
             mlx_settings = os.path.expanduser("~/.fusion-mlx/settings.json")
             try:
@@ -164,7 +165,8 @@ class Settings:
                             logger.warning(
                                 "MLX settings file %s is group/other accessible "
                                 "(mode %o); tighten to 0600 to protect the auth key",
-                                mlx_settings, mode,
+                                mlx_settings,
+                                mode,
                             )
                     except OSError:
                         pass
@@ -176,13 +178,14 @@ class Settings:
                 logger.warning("Failed to read MLX settings %s: %s", mlx_settings, e)
         if not self.mlx_internal_api_key:
             import logging
+
             logging.getLogger(__name__).warning(
-                "FUSION_MLX_API_KEY not set — "
-                "Hub→MLX requests will have no Bearer token"
+                "FUSION_MLX_API_KEY not set — Hub→MLX requests will have no Bearer token"
             )
         if not self.api_key_pepper:
             import hashlib
             import logging
+
             pepper_logger = logging.getLogger(__name__)
             env_pepper = os.environ.get("FMH_API_KEY_PEPPER", "")
             if env_pepper:

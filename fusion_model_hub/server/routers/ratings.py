@@ -34,30 +34,42 @@ def _rating_to_dict(r) -> dict:
 
 @router.post("/{model_id}/ratings", status_code=201)
 async def create_rating(
-    model_id: str, body: RatingCreate, session: SessionDep, request: Request,
+    model_id: str,
+    body: RatingCreate,
+    session: SessionDep,
+    request: Request,
 ):
     m = await crud.get_model(session, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     user_id = getattr(request.state, "tenant_id", "") or ""
     r = await crud.create_model_rating(
-        session, model_id=model_id, user_id=user_id,
-        score=body.score, comment=body.comment,
+        session,
+        model_id=model_id,
+        user_id=user_id,
+        score=body.score,
+        comment=body.comment,
     )
     return _rating_to_dict(r)
 
 
 @router.get("/{model_id}/ratings")
 async def list_ratings(
-    model_id: str, session: SessionDep,
-    user_id: str = "", page: int = 1, page_size: int = 20,
+    model_id: str,
+    session: SessionDep,
+    user_id: str = "",
+    page: int = 1,
+    page_size: int = 20,
 ):
     m = await crud.get_model(session, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     ratings, total = await crud.list_model_ratings(
-        session, model_id=model_id, user_id=user_id,
-        page=page, page_size=page_size,
+        session,
+        model_id=model_id,
+        user_id=user_id,
+        page=page,
+        page_size=page_size,
     )
     avg = await crud.get_model_avg_rating(session, model_id)
     return {

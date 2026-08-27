@@ -29,6 +29,7 @@ class MinioStore(StorageBackend):
         if self._client is None:
             try:
                 from minio import Minio
+
                 self._client = Minio(
                     self.endpoint,
                     access_key=self.access_key,
@@ -68,22 +69,32 @@ class MinioStore(StorageBackend):
         # files. The assemble step reads them back in order, writes the final
         # object, and removes the chunk objects.
         from io import BytesIO
+
         client = self._get_client()
         object_name = f"uploads/{upload_id}/{chunk_index:06d}.part"
         client.put_object(
-            self.bucket, object_name,
-            BytesIO(chunk_data), len(chunk_data),
+            self.bucket,
+            object_name,
+            BytesIO(chunk_data),
+            len(chunk_data),
         )
         logger.info(
             "Wrote MinIO chunk: upload=%s index=%d size=%d",
-            upload_id, chunk_index, len(chunk_data),
+            upload_id,
+            chunk_index,
+            len(chunk_data),
         )
         return Path(object_name)
 
     async def assemble_chunks(
-        self, upload_id: str, target_dir: Path, filename: str, total_chunks: int,
+        self,
+        upload_id: str,
+        target_dir: Path,
+        filename: str,
+        total_chunks: int,
     ) -> tuple[Path, str, int]:
         from io import BytesIO
+
         client = self._get_client()
         final_object = f"{target_dir}/{filename}"
         hasher = hashlib.sha256()
@@ -121,7 +132,10 @@ class MinioStore(StorageBackend):
         file_hash = hasher.hexdigest()
         logger.info(
             "Assembled MinIO upload: id=%s object=%s size=%d hash=%s",
-            upload_id, final_object, total_size, file_hash[:16],
+            upload_id,
+            final_object,
+            total_size,
+            file_hash[:16],
         )
         return Path(final_object), file_hash, total_size
 
@@ -129,9 +143,12 @@ class MinioStore(StorageBackend):
         client = self._get_client()
         object_name = f"{target_dir}/{filename}"
         from io import BytesIO
+
         client.put_object(
-            self.bucket, str(object_name),
-            BytesIO(data), len(data),
+            self.bucket,
+            str(object_name),
+            BytesIO(data),
+            len(data),
         )
         file_hash = hashlib.sha256(data).hexdigest()
         logger.info("Wrote file to MinIO: %s size=%d", object_name, len(data))

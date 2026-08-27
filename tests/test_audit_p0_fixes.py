@@ -16,7 +16,8 @@ from fusion_model_hub.server.deps import init_deps
 @pytest.fixture
 def settings(tmp_path):
     return Settings(
-        host="127.0.0.1", port=11444,
+        host="127.0.0.1",
+        port=11444,
         data_dir=str(tmp_path / "fmh_p0_data"),
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -31,6 +32,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -89,6 +91,7 @@ class TestApiKeyPepperHashing:
         # SHA-256 of raw is 64 hex chars; PBKDF2-SHA256 output is also 64 hex chars,
         # but the two must NOT match — pepper changes the digest.
         import hashlib
+
         bare = hashlib.sha256(raw.encode()).hexdigest()
         assert h != bare, "hash must differ from plain SHA-256 (pepper applied)"
 
@@ -98,6 +101,7 @@ class TestApiKeyPepperHashing:
         await init_db(engine)
         sf = crud  # use the same pepper wired by init_deps
         from sqlalchemy.ext.asyncio import AsyncSession
+
         async with AsyncSession(engine) as sess:
             ak, full = await crud.create_api_key(sess, name="p0-key")
             await sess.commit()
@@ -111,6 +115,7 @@ class TestCacheCorruptionHandling:
     # E-R1: corrupt index.json must be quarantined, not silently wiped.
     def test_corrupt_index_quarantined(self, tmp_path):
         from fusion_model_hub.cache.manager import CacheManager
+
         root = tmp_path / "cache"
         (root).mkdir()
         idx = root / "index.json"
@@ -124,6 +129,7 @@ class TestCacheCorruptionHandling:
 
     def test_atomic_save_no_partial_index(self, tmp_path):
         from fusion_model_hub.cache.manager import CacheManager
+
         root = tmp_path / "cache"
         cm = CacheManager(cache_root=str(root))
         cm._index["m1:raw"] = {"path": "/x", "level": "raw"}
@@ -141,6 +147,7 @@ class TestLocalStoreAtomicAssemble:
     @pytest.mark.asyncio
     async def test_assemble_atomic_on_missing_chunk(self, tmp_path):
         from fusion_model_hub.storage.local_store import LocalStore
+
         store = LocalStore(data_dir=str(tmp_path / "store"))
         target_dir = tmp_path / "models" / "m" / "v"
         target_dir.mkdir(parents=True)
@@ -154,6 +161,7 @@ class TestLocalStoreAtomicAssemble:
     @pytest.mark.asyncio
     async def test_write_file_atomic(self, tmp_path):
         from fusion_model_hub.storage.local_store import LocalStore
+
         store = LocalStore(data_dir=str(tmp_path / "store"))
         target_dir = tmp_path / "models" / "m2" / "v"
         target_dir.mkdir(parents=True)
@@ -212,35 +220,40 @@ class TestLoraMergeOutputPathGuard:
     async def test_empty_output_path_fails_task(self, client, monkeypatch):
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         create = await client.post("/api/v1/models", json={"name": "p0-lora-m"})
         mid = create.json()["id"]
         sf = get_session_factory()
         async with sf() as s:
-            base = await crud.create_version(s, model_id=mid, version="base-v",
-                                             file_path="/models/base")
-            lora = await crud.create_version(s, model_id=mid, version="lora-v",
-                                             file_path="/models/lora")
+            base = await crud.create_version(s, model_id=mid, version="base-v", file_path="/models/base")
+            lora = await crud.create_version(s, model_id=mid, version="lora-v", file_path="/models/lora")
             bid, lid = base.id, lora.id
 
         class _FakeResp:
             status_code = 200
             content = b'{"output_path": ""}'
+
             def json(self):
                 return {"output_path": ""}
+
             def raise_for_status(self):
                 pass
 
         class _FakeClient:
             def __init__(self, *a, **k):
                 pass
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
+
             async def post(self, *a, **k):
                 return _FakeResp()
 
         import fusion_model_hub.server.routers.quantize as qmod
+
         monkeypatch.setattr(qmod.httpx, "AsyncClient", _FakeClient)
 
         resp = await client.post(
@@ -275,12 +288,12 @@ class TestLoraMergeStartupReconcile:
         sf = get_session_factory()
         async with sf() as s:
             m = await crud.create_model(s, name="recon-m")
-            base = await crud.create_version(s, model_id=m.id, version="b",
-                                             file_path="/b")
-            lora = await crud.create_version(s, model_id=m.id, version="l",
-                                             file_path="/l")
+            base = await crud.create_version(s, model_id=m.id, version="b", file_path="/b")
+            lora = await crud.create_version(s, model_id=m.id, version="l", file_path="/l")
             t = await crud.create_lora_merge_task(
-                s, base_version_id=base.id, lora_version_id=lora.id,
+                s,
+                base_version_id=base.id,
+                lora_version_id=lora.id,
             )
             await crud.update_lora_merge_task(s, t.id, status=TaskStatus.RUNNING)
             tid = t.id
@@ -310,10 +323,11 @@ class TestQuantizeClaimFencing:
         sf = get_session_factory()
         async with sf() as s:
             m = await crud.create_model(s, name="claim-m")
-            base = await crud.create_version(s, model_id=m.id, version="b",
-                                             file_path="/b")
+            base = await crud.create_version(s, model_id=m.id, version="b", file_path="/b")
             t = await crud.create_quantize_task(
-                s, source_version_id=base.id, quant_bits=4,
+                s,
+                source_version_id=base.id,
+                quant_bits=4,
             )
             tid = t.id
 
@@ -334,6 +348,7 @@ class TestDownloadIntegrity:
     @pytest.mark.asyncio
     async def test_hash_mismatch_fails_task(self, client, monkeypatch):
         import hashlib
+
         create = await client.post("/api/v1/models", json={"name": "h6-dl-m"})
         mid = create.json()["id"]
         payload_bytes = b"integrity-test-bytes"
@@ -342,33 +357,40 @@ class TestDownloadIntegrity:
         class _FakeResp:
             status_code = 200
             headers = {"content-length": str(len(payload_bytes))}
+
             def aiter_bytes(self, _n):
                 async def gen():
                     yield payload_bytes
+
                 return gen()
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
 
         class _FakeClient:
             def __init__(self, *a, **k):
                 pass
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
+
             def stream(self, *a, **k):
                 return _FakeResp()
 
         import fusion_model_hub.server.routers.downloads as dmod
+
         monkeypatch.setattr(dmod.httpx, "AsyncClient", _FakeClient)
 
         # wrong expected hash -> task must end failed, not completed
         resp = await client.post(
             "/api/v1/downloads",
-            json={"model_id": mid, "source_url": "https://example.com/m.bin",
-                  "expected_sha256": "deadbeef" * 8},
+            json={"model_id": mid, "source_url": "https://example.com/m.bin", "expected_sha256": "deadbeef" * 8},
         )
         assert resp.status_code == 201
         task_id = resp.json()["task_id"]
@@ -382,6 +404,7 @@ class TestDownloadIntegrity:
     @pytest.mark.asyncio
     async def test_correct_hash_completes_with_file_hash(self, client, monkeypatch):
         import hashlib
+
         create = await client.post("/api/v1/models", json={"name": "h6-dl-ok"})
         mid = create.json()["id"]
         payload_bytes = b"good-bytes-1234"
@@ -390,32 +413,39 @@ class TestDownloadIntegrity:
         class _FakeResp:
             status_code = 200
             headers = {"content-length": str(len(payload_bytes))}
+
             def aiter_bytes(self, _n):
                 async def gen():
                     yield payload_bytes
+
                 return gen()
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
 
         class _FakeClient:
             def __init__(self, *a, **k):
                 pass
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
+
             def stream(self, *a, **k):
                 return _FakeResp()
 
         import fusion_model_hub.server.routers.downloads as dmod
+
         monkeypatch.setattr(dmod.httpx, "AsyncClient", _FakeClient)
 
         resp = await client.post(
             "/api/v1/downloads",
-            json={"model_id": mid, "source_url": "https://example.com/m.bin",
-                  "expected_sha256": real_hash},
+            json={"model_id": mid, "source_url": "https://example.com/m.bin", "expected_sha256": real_hash},
         )
         task_id = resp.json()["task_id"]
         await asyncio.sleep(0.6)
@@ -432,6 +462,7 @@ class TestDownloadCooperativeCancel:
     @pytest.mark.asyncio
     async def test_cancel_stops_worker_and_removes_part(self, client, monkeypatch):
         import os
+
         create = await client.post("/api/v1/models", json={"name": "cancel-dl-m"})
         mid = create.json()["id"]
 
@@ -440,29 +471,37 @@ class TestDownloadCooperativeCancel:
         class _FakeResp:
             status_code = 200
             headers = {"content-length": "10485760"}
+
             def aiter_bytes(self, _n):
                 async def gen():
                     for _ in range(10):
                         await asyncio.sleep(0.05)
                         yield b"x" * (1024 * 1024)
                     cancel_gate.set()
+
                 return gen()
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
 
         class _FakeClient:
             def __init__(self, *a, **k):
                 pass
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
+
             def stream(self, *a, **k):
                 return _FakeResp()
 
         import fusion_model_hub.server.routers.downloads as dmod
+
         monkeypatch.setattr(dmod.httpx, "AsyncClient", _FakeClient)
 
         resp = await client.post(
@@ -491,6 +530,7 @@ class TestDownloadCooperativeCancel:
         assert not cancel_gate.is_set(), "worker ran to completion despite cancel"
         # .part file must be gone (no disk residue from a cancelled download)
         from fusion_model_hub.server.deps import get_settings
+
         st = get_settings()
         residue = os.path.join(st.data_dir, "downloads", f"{task_id}.part")
         assert not os.path.exists(residue), "cancelled .part file not cleaned up"
@@ -499,6 +539,7 @@ class TestDownloadCooperativeCancel:
     async def test_cancel_completed_task_rejects(self, client, monkeypatch):
         # cancelling an already-completed task is a 400, not a silent re-mark.
         import hashlib
+
         create = await client.post("/api/v1/models", json={"name": "cancel-done-m"})
         mid = create.json()["id"]
         payload = b"tiny"
@@ -507,31 +548,38 @@ class TestDownloadCooperativeCancel:
         class _FakeResp:
             status_code = 200
             headers = {"content-length": str(len(payload))}
+
             def aiter_bytes(self, _n):
                 async def gen():
                     yield payload
+
                 return gen()
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
 
         class _FakeClient:
             def __init__(self, *a, **k):
                 pass
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
+
             def stream(self, *a, **k):
                 return _FakeResp()
 
         import fusion_model_hub.server.routers.downloads as dmod
+
         monkeypatch.setattr(dmod.httpx, "AsyncClient", _FakeClient)
         resp = await client.post(
             "/api/v1/downloads",
-            json={"model_id": mid, "source_url": "https://example.com/t.bin",
-                  "expected_sha256": real_hash},
+            json={"model_id": mid, "source_url": "https://example.com/t.bin", "expected_sha256": real_hash},
         )
         task_id = resp.json()["task_id"]
         await asyncio.sleep(0.5)
@@ -553,6 +601,7 @@ class TestEncryptionKeyGuard:
         mid = m.json()["id"]
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as s:
             v = await crud.create_version(s, model_id=mid, version="v1", file_path="/tmp/x")
@@ -566,6 +615,7 @@ class TestEncryptionKeyGuard:
         monkeypatch.setenv("FMH_ENCRYPTION_KEY", "test-encryption-key-32-bytes-long!!")
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory, get_store
+
         store = get_store()
         m = await client.post("/api/v1/models", json={"name": "enc-rt"})
         mid = m.json()["id"]
@@ -595,8 +645,7 @@ class TestWatermarkSecretGuard:
         monkeypatch.delenv("FMH_WATERMARK_SECRET", raising=False)
         m = await client.post("/api/v1/models", json={"name": "wm-nosec"})
         mid = m.json()["id"]
-        resp = await client.post("/api/v1/watermark/embed",
-                                 json={"model_id": mid, "payload": {"k": "v"}})
+        resp = await client.post("/api/v1/watermark/embed", json={"model_id": mid, "payload": {"k": "v"}})
         assert resp.status_code == 503
         assert "FMH_WATERMARK_SECRET" in resp.json()["detail"]
 
@@ -605,8 +654,7 @@ class TestWatermarkSecretGuard:
         monkeypatch.setenv("FMH_WATERMARK_SECRET", "a-real-high-entropy-secret")
         m = await client.post("/api/v1/models", json={"name": "wm-rt"})
         mid = m.json()["id"]
-        emb = await client.post("/api/v1/watermark/embed",
-                                json={"model_id": mid, "payload": {"trace": "abc"}})
+        emb = await client.post("/api/v1/watermark/embed", json={"model_id": mid, "payload": {"trace": "abc"}})
         assert emb.status_code == 200
         sig = emb.json()["signature"]
         assert sig  # non-empty
@@ -619,10 +667,10 @@ class TestWatermarkSecretGuard:
         monkeypatch.setenv("FMH_WATERMARK_SECRET", "a-real-high-entropy-secret")
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         m = await client.post("/api/v1/models", json={"name": "wm-tamper"})
         mid = m.json()["id"]
-        emb = await client.post("/api/v1/watermark/embed",
-                                json={"model_id": mid, "payload": {"trace": "abc"}})
+        emb = await client.post("/api/v1/watermark/embed", json={"model_id": mid, "payload": {"trace": "abc"}})
         assert emb.status_code == 200
         wm_id = emb.json()["id"]
         sf = get_session_factory()
@@ -640,8 +688,7 @@ class TestSecurityScanHonesty:
     # HF org/name repo id, not mere presence of hf_repo.
     @pytest.mark.asyncio
     async def test_scan_reports_not_scanned_for_deep_checks(self, client):
-        m = await client.post("/api/v1/models", json={"name": "sec-scan",
-                                                      "hf_repo": "org/repo-name"})
+        m = await client.post("/api/v1/models", json={"name": "sec-scan", "hf_repo": "org/repo-name"})
         mid = m.json()["id"]
         resp = await client.post("/api/v1/security/scan", json={"model_id": mid})
         assert resp.status_code == 200
@@ -652,8 +699,7 @@ class TestSecurityScanHonesty:
 
     @pytest.mark.asyncio
     async def test_scan_unverifies_bad_hf_repo(self, client):
-        m = await client.post("/api/v1/models", json={"name": "sec-badrepo",
-                                                      "hf_repo": "not-a-real-repo-id!!"})
+        m = await client.post("/api/v1/models", json={"name": "sec-badrepo", "hf_repo": "not-a-real-repo-id!!"})
         mid = m.json()["id"]
         resp = await client.post("/api/v1/security/scan", json={"model_id": mid})
         findings = resp.json()["findings"]
@@ -673,6 +719,7 @@ class TestTenantManagementRbac:
     async def test_delete_tenant_blocks_orphan_models(self, client):
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as s:
             t = await crud.create_tenant(s, name="orphan-t")
@@ -741,8 +788,7 @@ class TestVersionRollbackNoneSafe:
 
     @pytest.mark.asyncio
     async def test_deprecate_nonexistent_version_404(self, client):
-        resp = await client.post("/api/v1/versions/does-not-exist/deprecate",
-                                 json={"successor_version_id": ""})
+        resp = await client.post("/api/v1/versions/does-not-exist/deprecate", json={"successor_version_id": ""})
         assert resp.status_code == 404
 
 
@@ -754,10 +800,8 @@ class TestServePublishedVersionOrdering:
         # the sort logic by constructing versions with distinct created_at.
         from types import SimpleNamespace
 
-        v_old = SimpleNamespace(id="old", status=SimpleNamespace(value="published"),
-                                created_at=1000)
-        v_new = SimpleNamespace(id="new", status=SimpleNamespace(value="published"),
-                                created_at=2000)
+        v_old = SimpleNamespace(id="old", status=SimpleNamespace(value="published"), created_at=1000)
+        v_new = SimpleNamespace(id="new", status=SimpleNamespace(value="published"), created_at=2000)
         published = [v_old, v_new]
         published.sort(key=lambda x: x.created_at or 0, reverse=True)
         assert published[0].id == "new"
@@ -773,14 +817,15 @@ class TestUrlDownloadTaskTracking:
         class _FakeResult:
             def __init__(self, d):
                 self._d = d
+
             def get(self, k, default=None):
                 return self._d.get(k, default)
 
         async def _fake_download(self, url, model_id, expected_hash):
-            return {"status": "completed", "path": "/tmp/fake", "hash": expected_hash or "h",
-                    "size_bytes": 10}
+            return {"status": "completed", "path": "/tmp/fake", "hash": expected_hash or "h", "size_bytes": 10}
 
         import fusion_model_hub.server.routers.versions as vmod
+
         monkeypatch.setattr(vmod.ModelDownloader, "download", _fake_download)
 
         resp = await client.post(
@@ -836,6 +881,7 @@ class TestAdaptHonestFailure:
 
     async def test_quantize_non200_reports_failed(self, client, monkeypatch):
         from fusion_model_hub.server.routers import adapt as adapt_mod
+
         adapt_mod._running_executions.clear()
         adapt_mod._execution_errors.clear()
 
@@ -858,12 +904,15 @@ class TestAdaptHonestFailure:
 
         monkeypatch.setattr("fusion_model_hub.server.routers.adapt.httpx.AsyncClient", FakeClient)
 
-        resp = await client.post("/api/v1/adapt/execute", json={
-            "model_id": "adapt-fail-model",
-            "hf_repo": "owner/repo",
-            "source_format": "safetensors",
-            "quant_bits": 4,
-        })
+        resp = await client.post(
+            "/api/v1/adapt/execute",
+            json={
+                "model_id": "adapt-fail-model",
+                "hf_repo": "owner/repo",
+                "source_format": "safetensors",
+                "quant_bits": 4,
+            },
+        )
         assert resp.status_code == 202
         eid = resp.json()["execution_id"]
         # poll until done
@@ -903,14 +952,17 @@ class TestLayeredQuantizeHonestProxy:
                 return FakeResp()
 
         monkeypatch.setattr("fusion_model_hub.server.routers.quantize.httpx.AsyncClient", FakeClient)
-        resp = await client.post("/api/v1/quantize/layered", json={
-            "model": "owner/repo",
-            "default_bits": 4,
-            "layer_rules": [{"pattern": ".*", "bits": 4}],
-            "quant_group_size": 64,
-            "quant_mode": "symmetric",
-            "trust_remote_code": False,
-        })
+        resp = await client.post(
+            "/api/v1/quantize/layered",
+            json={
+                "model": "owner/repo",
+                "default_bits": 4,
+                "layer_rules": [{"pattern": ".*", "bits": 4}],
+                "quant_group_size": 64,
+                "quant_mode": "symmetric",
+                "trust_remote_code": False,
+            },
+        )
         assert resp.status_code == 202
         body = resp.json()
         assert body["hub_registered"] is False
@@ -981,6 +1033,7 @@ class TestDeploymentNodePlacement:
         # register a node, then push its heartbeat far into the past so
         # _effective_status returns "inactive" (stale > 120s).
         from datetime import UTC, datetime, timedelta
+
         node = await client.post(
             "/api/v1/cluster/nodes",
             json={"name": "stale-node", "url": "http://10.0.0.9:11434"},
@@ -988,6 +1041,7 @@ class TestDeploymentNodePlacement:
         assert node.status_code == 201
         nid = node.json()["id"]
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as s:
             n = await crud.get_cluster_node(s, nid)
@@ -1013,7 +1067,8 @@ class TestDeploymentNodePlacement:
         await client.post(f"/api/v1/cluster/nodes/{nid}/heartbeat")
 
         captured = self._capture_client(
-            monkeypatch, "fusion_model_hub.server.routers.deployments.httpx.AsyncClient",
+            monkeypatch,
+            "fusion_model_hub.server.routers.deployments.httpx.AsyncClient",
         )
         resp = await client.post(
             "/api/v1/deployments",
@@ -1037,7 +1092,8 @@ class TestDeploymentNodePlacement:
         nid = node.json()["id"]
         await client.post(f"/api/v1/cluster/nodes/{nid}/heartbeat")
         captured = self._capture_client(
-            monkeypatch, "fusion_model_hub.server.routers.deployments.httpx.AsyncClient",
+            monkeypatch,
+            "fusion_model_hub.server.routers.deployments.httpx.AsyncClient",
         )
         create = await client.post(
             "/api/v1/deployments",
@@ -1062,6 +1118,7 @@ class TestH8HttpxPooling:
 
     async def test_transport_reused_across_calls(self):
         from fusion_model_hub.server import http_client
+
         await http_client.close_all_transports()
         async with http_client.AsyncClient(base_url="http://127.0.0.1:11434", timeout=60.0) as c1:
             pass
@@ -1075,6 +1132,7 @@ class TestH8HttpxPooling:
         # Real call sites build full URLs inline (no base_url): the constructor
         # must not forward base_url=None to httpx (URL(None) -> TypeError).
         from fusion_model_hub.server import http_client
+
         await http_client.close_all_transports()
         async with http_client.AsyncClient(timeout=60.0) as c:
             assert c._transport is http_client._TRANSPORT_POOL["default"]
@@ -1085,6 +1143,7 @@ class TestH8HttpxPooling:
 
     async def test_aclose_does_not_drop_pool(self):
         from fusion_model_hub.server import http_client
+
         await http_client.close_all_transports()
         async with http_client.AsyncClient(base_url="http://127.0.0.1:11434", timeout=5.0) as c1:
             pass
@@ -1096,10 +1155,12 @@ class TestH8HttpxPooling:
     async def test_inference_alias_targets_pool_client(self):
         from fusion_model_hub.server import http_client
         from fusion_model_hub.server.routers import inference
+
         assert inference.httpx is http_client
         assert inference.httpx.AsyncClient is http_client.PoolClient
         # exception types resolve through the alias
         import httpx as real_httpx
+
         assert inference.httpx.ConnectError is real_httpx.ConnectError
         assert inference.httpx.HTTPStatusError is real_httpx.HTTPStatusError
 
@@ -1110,6 +1171,7 @@ class TestH8HttpxPooling:
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from fusion_model_hub.server.routers import inference
+
         mock_resp = MagicMock(status_code=200)
         mock_resp.raise_for_status = MagicMock()
         mock_client = AsyncMock()

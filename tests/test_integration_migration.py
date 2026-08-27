@@ -59,7 +59,21 @@ def _psql(sql: str) -> None:
     env = os.environ.copy()
     env["PGPASSWORD"] = PG_PASS
     subprocess.run(
-        ["psql", "-h", PG_HOST, "-p", str(PG_PORT), "-U", PG_USER, "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", sql],
+        [
+            "psql",
+            "-h",
+            PG_HOST,
+            "-p",
+            str(PG_PORT),
+            "-U",
+            PG_USER,
+            "-d",
+            "postgres",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-c",
+            sql,
+        ],
         check=True,
         capture_output=True,
         env=env,
@@ -97,8 +111,7 @@ def test_migration_matches_orm_schema() -> None:
             env=env,
         )
         assert result.returncode == 0, (
-            f"alembic upgrade head failed on fresh PG:\n"
-            f"stdout={result.stdout}\nstderr={result.stderr}"
+            f"alembic upgrade head failed on fresh PG:\nstdout={result.stdout}\nstderr={result.stderr}"
         )
 
         # 2. ORM path: Base.metadata.create_all against a fresh PG db
@@ -134,21 +147,17 @@ def test_migration_matches_orm_schema() -> None:
             for name in sorted(set(orm_cols) & set(mig_cols)):
                 oc, mc = orm_cols[name], mig_cols[name]
                 if str(oc["type"]).upper() != str(mc["type"]).upper():
-                    failures.append(
-                        f"[{t}.{name}] type mismatch ORM={oc['type']} migration={mc['type']}"
-                    )
+                    failures.append(f"[{t}.{name}] type mismatch ORM={oc['type']} migration={mc['type']}")
                 if bool(oc.get("nullable")) != bool(mc.get("nullable")):
                     failures.append(
                         f"[{t}.{name}] nullable mismatch ORM={oc.get('nullable')} migration={mc.get('nullable')}"
                     )
 
             orm_fks = {
-                tuple(sorted(f["constrained_columns"])): f["referred_table"]
-                for f in orm_ins.get_foreign_keys(t)
+                tuple(sorted(f["constrained_columns"])): f["referred_table"] for f in orm_ins.get_foreign_keys(t)
             }
             mig_fks = {
-                tuple(sorted(f["constrained_columns"])): f["referred_table"]
-                for f in mig_ins.get_foreign_keys(t)
+                tuple(sorted(f["constrained_columns"])): f["referred_table"] for f in mig_ins.get_foreign_keys(t)
             }
             if orm_fks != mig_fks:
                 failures.append(f"[{t}] FK mismatch ORM={orm_fks} migration={mig_fks}")
@@ -162,6 +171,5 @@ def test_migration_matches_orm_schema() -> None:
         mig_engine.dispose()
 
         assert not failures, (
-            "Migration schema diverges from ORM schema (single-source-of-truth broken):\n  - "
-            + "\n  - ".join(failures)
+            "Migration schema diverges from ORM schema (single-source-of-truth broken):\n  - " + "\n  - ".join(failures)
         )

@@ -147,9 +147,7 @@ class TestMinioStore:
         mock_client = MagicMock()
         store._client = mock_client
 
-        path, file_hash, size = asyncio.run(
-            store.write_file(Path("m1/v1"), "model.bin", b"hello")
-        )
+        path, file_hash, size = asyncio.run(store.write_file(Path("m1/v1"), "model.bin", b"hello"))
         assert size == 5
         mock_client.put_object.assert_called_once()
 
@@ -245,10 +243,12 @@ class TestAppCreation:
         from fusion_model_hub.server.app import create_app
         from fusion_model_hub.server.deps import Settings
 
-        app = create_app(Settings(
-            db_url="sqlite+aiosqlite:///:memory:",
-            data_dir="/tmp/fmh_app_test",
-        ))
+        app = create_app(
+            Settings(
+                db_url="sqlite+aiosqlite:///:memory:",
+                data_dir="/tmp/fmh_app_test",
+            )
+        )
         assert app.title == "Fusion Model Hub"
 
     @pytest.mark.asyncio
@@ -256,11 +256,13 @@ class TestAppCreation:
         from fusion_model_hub.server.app import create_app
         from fusion_model_hub.server.deps import Settings
 
-        app = create_app(Settings(
-            db_url="sqlite+aiosqlite:///:memory:",
-            data_dir="/tmp/fmh_cors_test",
-            cors_origins=["*"],
-        ))
+        app = create_app(
+            Settings(
+                db_url="sqlite+aiosqlite:///:memory:",
+                data_dir="/tmp/fmh_cors_test",
+                cors_origins=["*"],
+            )
+        )
         assert app.title == "Fusion Model Hub"
 
 
@@ -284,9 +286,7 @@ class TestLocalStoreExtended:
             asyncio.run(store.write_chunk(upload_id, 1, chunk2))
 
             target_dir = store.model_version_dir("m1", "v1")
-            path, file_hash, size = asyncio.run(
-                store.assemble_chunks(upload_id, target_dir, "model.bin", 2)
-            )
+            path, file_hash, size = asyncio.run(store.assemble_chunks(upload_id, target_dir, "model.bin", 2))
             assert path.exists()
             assert size == len(chunk1) + len(chunk2)
             assert len(file_hash) == 64
@@ -299,9 +299,7 @@ class TestLocalStoreExtended:
             upload_id = "test-upload-missing"
 
             with pytest.raises(FileNotFoundError):
-                asyncio.run(
-                    store.assemble_chunks(upload_id, Path(tmp), "model.bin", 1)
-                )
+                asyncio.run(store.assemble_chunks(upload_id, Path(tmp), "model.bin", 1))
 
     def test_is_path_within_store(self):
         from fusion_model_hub.storage.local_store import LocalStore
@@ -333,6 +331,7 @@ class TestLocalStoreExtended:
             test_file = Path(tmp) / "hash_test.bin"
             test_file.write_bytes(b"test content")
             import hashlib
+
             expected = hashlib.sha256(b"test content").hexdigest()
             assert LocalStore.verify_hash(test_file, expected)
             assert not LocalStore.verify_hash(test_file, "wronghash")
@@ -354,9 +353,7 @@ class TestLocalStoreExtended:
         with tempfile.TemporaryDirectory() as tmp:
             store = LocalStore(data_dir=tmp)
             target = store.model_version_dir("m2", "v1")
-            path, file_hash, size = asyncio.run(
-                store.write_file(target, "test.bin", b"data")
-            )
+            path, file_hash, size = asyncio.run(store.write_file(target, "test.bin", b"data"))
             assert path.exists()
             assert size == 4
 
@@ -365,7 +362,8 @@ class TestCRUDExtended:
     @pytest.fixture(autouse=True)
     async def _init_deps(self):
         settings = Settings(
-            host="127.0.0.1", port=11444,
+            host="127.0.0.1",
+            port=11444,
             data_dir="/tmp/fmh_test_cov_ext",
             db_url="sqlite+aiosqlite:///:memory:",
             log_level="WARNING",
@@ -375,6 +373,7 @@ class TestCRUDExtended:
         init_deps(settings, engine)
         yield
         import shutil
+
         shutil.rmtree("/tmp/fmh_test_cov_ext", ignore_errors=True)
 
     @pytest.mark.asyncio
@@ -386,12 +385,18 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             m = await crud.create_model(
-                session, name="filter-test-model", model_type=ModelType.LLM,
-                architecture="qwen2", tenant_id="t1",
+                session,
+                name="filter-test-model",
+                model_type=ModelType.LLM,
+                architecture="qwen2",
+                tenant_id="t1",
             )
             models, total = await crud.list_models(
-                session, keyword="filter-test", model_type="llm",
-                architecture="qwen2", tenant_id="t1",
+                session,
+                keyword="filter-test",
+                model_type="llm",
+                architecture="qwen2",
+                tenant_id="t1",
             )
             assert total >= 1
 
@@ -416,7 +421,10 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             t = await crud.create_quantize_task(
-                session, source_version_id="v1", target_format="mlx", quant_bits=4,
+                session,
+                source_version_id="v1",
+                target_format="mlx",
+                quant_bits=4,
             )
             assert t.id
             fetched = await crud.get_quantize_task(session, t.id)
@@ -483,11 +491,17 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             await crud.create_audit_log(
-                session, action="test_action", resource_type="model",
-                resource_id="m1", api_key_id="ak1", detail="test",
+                session,
+                action="test_action",
+                resource_type="model",
+                resource_id="m1",
+                api_key_id="ak1",
+                detail="test",
             )
             logs, total = await crud.list_audit_logs(
-                session, resource_type="model", action="test_action",
+                session,
+                resource_type="model",
+                action="test_action",
             )
             assert total >= 1
 
@@ -521,8 +535,11 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             w = await crud.create_webhook(
-                session, name="test-hook", url="http://example.com/hook",
-                events="model.created", tenant_id="t1",
+                session,
+                name="test-hook",
+                url="http://example.com/hook",
+                events="model.created",
+                tenant_id="t1",
             )
             assert w.id
 
@@ -543,8 +560,12 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             d = await crud.create_deployment(
-                session, model_id="m1", name="deploy-1",
-                version_id="v1", replicas=1, tenant_id="t1",
+                session,
+                model_id="m1",
+                name="deploy-1",
+                version_id="v1",
+                replicas=1,
+                tenant_id="t1",
             )
             assert d.id
 
@@ -568,8 +589,11 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             e = await crud.create_evaluation(
-                session, model_id="m1", benchmark_name="mmlu",
-                tenant_id="t1", version_id="v1",
+                session,
+                model_id="m1",
+                benchmark_name="mmlu",
+                tenant_id="t1",
+                version_id="v1",
             )
             assert e.id
 
@@ -577,13 +601,18 @@ class TestCRUDExtended:
             assert fetched is not None
 
             evals, total = await crud.list_evaluations(
-                session, model_id="m1", version_id="v1",
+                session,
+                model_id="m1",
+                version_id="v1",
                 benchmark_name="mmlu",
             )
             assert total >= 1
 
             updated = await crud.update_evaluation(
-                session, e.id, score=85.5, status="completed",
+                session,
+                e.id,
+                score=85.5,
+                status="completed",
             )
             assert updated is not None
 
@@ -604,7 +633,9 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             n = await crud.create_cluster_node(
-                session, name="node-ext-1", url="http://node1:11444",
+                session,
+                name="node-ext-1",
+                url="http://node1:11444",
                 capabilities="inference",
             )
             assert n.id
@@ -626,8 +657,11 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             t = await crud.create_lora_merge_task(
-                session, base_version_id="v1", lora_version_id="v2",
-                target_format="mlx", quant_bits=4,
+                session,
+                base_version_id="v1",
+                lora_version_id="v2",
+                target_format="mlx",
+                quant_bits=4,
             )
             assert t.id
 
@@ -650,8 +684,11 @@ class TestCRUDExtended:
         async with sf() as session:
             m = await crud.create_model(session, name="transition-model")
             v = await crud.create_version(
-                session, model_id=m.id, version="1.0.0",
-                format="mlx", quantization="4bit",
+                session,
+                model_id=m.id,
+                version="1.0.0",
+                format="mlx",
+                quantization="4bit",
             )
             assert v.status == VersionStatus.DRAFT
 
@@ -672,8 +709,11 @@ class TestCRUDExtended:
         async with sf() as session:
             m = await crud.create_model(session, name="invalid-trans-model")
             v = await crud.create_version(
-                session, model_id=m.id, version="1.0.0",
-                format="mlx", quantization="4bit",
+                session,
+                model_id=m.id,
+                version="1.0.0",
+                format="mlx",
+                quantization="4bit",
             )
             v = await crud.update_version_status(session, v.id, VersionStatus.RETIRED)
             with pytest.raises(crud.InvalidTransition):
@@ -713,7 +753,10 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             deps = await crud.list_deployments(
-                session, tenant_id="t1", model_id="m1", status="running",
+                session,
+                tenant_id="t1",
+                model_id="m1",
+                status="running",
             )
             assert isinstance(deps, list)
 
@@ -726,16 +769,25 @@ class TestCRUDExtended:
         async with sf() as session:
             m = await crud.create_model(session, name="whitelist-model")
             v = await crud.create_version(
-                session, model_id=m.id, version="1.0.0",
-                format="mlx", quantization="4bit",
+                session,
+                model_id=m.id,
+                version="1.0.0",
+                format="mlx",
+                quantization="4bit",
             )
             updated = await crud.update_version(
-                session, v.id,
-                file_path="/new/path", file_hash="abc123",
-                file_size=1024, release_notes="updated",
-                benchmark_score=85.0, inference_latency=12.3,
-                throughput=45.6, memory_usage=2048,
-                context_length=4096, encrypted=True,
+                session,
+                v.id,
+                file_path="/new/path",
+                file_hash="abc123",
+                file_size=1024,
+                release_notes="updated",
+                benchmark_score=85.0,
+                inference_latency=12.3,
+                throughput=45.6,
+                memory_usage=2048,
+                context_length=4096,
+                encrypted=True,
             )
             assert updated is not None
             assert updated.encrypted is True
@@ -758,7 +810,9 @@ class TestCRUDExtended:
         sf = get_session_factory()
         async with sf() as session:
             t = await crud.create_distributed_task(
-                session, model_id="m1", version_id="v1",
+                session,
+                model_id="m1",
+                version_id="v1",
                 target_nodes='["node1"]',
             )
             updated = await crud.update_distributed_task(session, t.id, status="completed", progress=100)

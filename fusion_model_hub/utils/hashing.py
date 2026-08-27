@@ -50,6 +50,8 @@ def verify_sha256(file_path: str | Path, expected_hash: str, *, chunk_size: int 
     if not ok:
         logger.warning(
             "Hash mismatch: file=%s expected=%s actual=%s",
-            path, expected_hash[:16], actual[:16],
+            path,
+            expected_hash[:16],
+            actual[:16],
         )
     return ok

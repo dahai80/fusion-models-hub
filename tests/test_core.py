@@ -1,4 +1,5 @@
 """Tests for Fusion-Model-Hub core modules."""
+
 from __future__ import annotations
 
 import json
@@ -23,6 +24,7 @@ from fusion_model_hub.repo.registry import ModelRegistry
 
 # ── ModelInfo ──
 
+
 class TestModelInfo:
     def test_defaults(self):
         m = ModelInfo(id="test", name="Test Model")
@@ -38,6 +40,7 @@ class TestModelInfo:
 
 
 # ── ModelRegistry ──
+
 
 class TestModelRegistry:
     def setup_method(self):
@@ -99,6 +102,7 @@ class TestModelRegistry:
 
 # ── ModelDownloader ──
 
+
 class TestModelDownloader:
     @pytest.mark.asyncio
     async def test_download_invalid_url(self):
@@ -115,6 +119,7 @@ class TestModelDownloader:
             hash_ok = ModelDownloader._verify_hash(f, "invalid_hash")
             assert hash_ok is False
             import hashlib
+
             h = hashlib.sha256(b"hello").hexdigest()
             hash_ok = ModelDownloader._verify_hash(f, h)
             assert hash_ok is True
@@ -131,6 +136,7 @@ class TestModelDownloader:
 
 
 # ── ModelConverter ──
+
 
 class TestModelConverter:
     @pytest.mark.asyncio
@@ -161,7 +167,9 @@ class TestModelConverter:
     async def test_convert_api_error(self):
         c = ModelConverter()
         with patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post:
-            mock_post.side_effect = httpx.HTTPStatusError("error", request=MagicMock(), response=MagicMock(status_code=400))
+            mock_post.side_effect = httpx.HTTPStatusError(
+                "error", request=MagicMock(), response=MagicMock(status_code=400)
+            )
             with tempfile.NamedTemporaryFile(suffix=".bin") as f:
                 result = await c.convert(f.name)
                 assert result["status"] == "failed"
@@ -178,8 +186,10 @@ class TestModelConverter:
         # async job {job_id, status:queued}; poll GET /v1/quantize/jobs/{id}
         # until status=="done".
         c = ModelConverter()
-        with patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post, \
-             patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get:
+        with (
+            patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post,
+            patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get,
+        ):
             post_resp = MagicMock()
             post_resp.status_code = 200
             post_resp.json.return_value = {"job_id": "job-1", "status": "queued"}
@@ -220,8 +230,10 @@ class TestModelConverter:
     @pytest.mark.asyncio
     async def test_quantize_job_failed(self):
         c = ModelConverter()
-        with patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post, \
-             patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get:
+        with (
+            patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post,
+            patch("httpx.AsyncClient.get", new=AsyncMock()) as mock_get,
+        ):
             post_resp = MagicMock()
             post_resp.status_code = 200
             post_resp.json.return_value = {"job_id": "job-2", "status": "queued"}
@@ -277,6 +289,7 @@ class TestModelConverter:
 
 
 # ── LocalModelManager ──
+
 
 class TestLocalModelManager:
     def test_register_and_list(self):
@@ -347,6 +360,7 @@ class TestLocalModelManager:
 
 
 # ── FusionMLXBase ──
+
 
 class TestFusionMLXBase:
     @pytest.mark.asyncio

@@ -19,7 +19,6 @@ def download_hf(
 ):
     import json
 
-
     result = asyncio.run(_download_hf(model_id, mirror, storage_dir, expected_hash))
     typer.echo(json.dumps(result, indent=2))
 
@@ -42,7 +41,6 @@ def download_url(
     expected_hash: str = typer.Option("", "--hash", help="Expected SHA256 hash for verification"),
 ):
     import json
-
 
     result = asyncio.run(_download_url(url, model_id, storage_dir, expected_hash))
     typer.echo(json.dumps(result, indent=2))

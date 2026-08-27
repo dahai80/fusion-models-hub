@@ -821,11 +821,13 @@ class TestMainImport:
         from fusion_model_hub.server.__main__ import _run_import
 
         input_data = {
-            "models": [{
-                "name": "tagged-model",
-                "model_type": "llm",
-                "tags": [{"key": "family", "value": "qwen"}],
-            }],
+            "models": [
+                {
+                    "name": "tagged-model",
+                    "model_type": "llm",
+                    "tags": [{"key": "family", "value": "qwen"}],
+                }
+            ],
             "tenants": [],
             "webhooks": [],
         }
@@ -929,25 +931,29 @@ class TestMainRestore:
 
         backup_file = tmp_path / "backup.json"
         backup_data = {
-            "models": [{
-                "id": "restored-m1",
-                "name": "Restored Model",
-                "model_type": "llm",
-                "architecture": "qwen2",
-                "params_size": "7B",
-                "license": "apache-2.0",
-            }],
-            "versions": [{
-                "id": "restored-v1",
-                "model_id": "restored-m1",
-                "version": "1.0.0",
-                "format": "mlx",
-                "quantization": "4bit",
-                "status": "published",
-                "file_hash": "abc123",
-                "file_size": 1024,
-                "benchmark_score": 85.0,
-            }],
+            "models": [
+                {
+                    "id": "restored-m1",
+                    "name": "Restored Model",
+                    "model_type": "llm",
+                    "architecture": "qwen2",
+                    "params_size": "7B",
+                    "license": "apache-2.0",
+                }
+            ],
+            "versions": [
+                {
+                    "id": "restored-v1",
+                    "model_id": "restored-m1",
+                    "version": "1.0.0",
+                    "format": "mlx",
+                    "quantization": "4bit",
+                    "status": "published",
+                    "file_hash": "abc123",
+                    "file_size": 1024,
+                    "benchmark_score": 85.0,
+                }
+            ],
         }
         backup_file.write_text(json.dumps(backup_data))
 
@@ -976,19 +982,23 @@ class TestMainRestore:
 
         backup_file = tmp_path / "bad_enum.json"
         backup_data = {
-            "models": [{
-                "id": "m-enum",
-                "name": "Enum Model",
-                "model_type": "not_valid",
-            }],
-            "versions": [{
-                "id": "v-enum",
-                "model_id": "m-enum",
-                "version": "1.0.0",
-                "format": "not_a_format",
-                "quantization": "not_a_quant",
-                "status": "not_a_status",
-            }],
+            "models": [
+                {
+                    "id": "m-enum",
+                    "name": "Enum Model",
+                    "model_type": "not_valid",
+                }
+            ],
+            "versions": [
+                {
+                    "id": "v-enum",
+                    "model_id": "m-enum",
+                    "version": "1.0.0",
+                    "format": "not_a_format",
+                    "quantization": "not_a_quant",
+                    "status": "not_a_status",
+                }
+            ],
         }
         backup_file.write_text(json.dumps(backup_data))
 
@@ -1031,11 +1041,14 @@ class TestMainMigrate:
         alembic_mod = MagicMock()
         alembic_mod.command = mock_command
 
-        with patch.dict(sys.modules, {
-            "alembic": alembic_mod,
-            "alembic.config": MagicMock(Config=mock_config),
-            "alembic.command": mock_command,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "alembic": alembic_mod,
+                "alembic.config": MagicMock(Config=mock_config),
+                "alembic.command": mock_command,
+            },
+        ):
             _run_migrate(Args())
             mock_command.upgrade.assert_called_once()
 
@@ -1051,11 +1064,14 @@ class TestMainMigrate:
         alembic_mod = MagicMock()
         alembic_mod.command = mock_command
 
-        with patch.dict(sys.modules, {
-            "alembic": alembic_mod,
-            "alembic.config": MagicMock(Config=mock_config),
-            "alembic.command": mock_command,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "alembic": alembic_mod,
+                "alembic.config": MagicMock(Config=mock_config),
+                "alembic.command": mock_command,
+            },
+        ):
             _run_migrate(Args())
             mock_command.upgrade.assert_called_once_with(mock_config.return_value, "abc123")
 
@@ -1064,12 +1080,21 @@ class TestMainServeDispatch:
     def test_main_serve_with_tls(self):
         from fusion_model_hub.server.__main__ import main
 
-        with patch("sys.argv", [
-            "fusion-model-hub", "serve",
-            "--host", "127.0.0.1", "--port", "9998",
-            "--tls-certfile", "/tmp/cert.pem",
-            "--tls-keyfile", "/tmp/key.pem",
-        ]):
+        with patch(
+            "sys.argv",
+            [
+                "fusion-model-hub",
+                "serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "9998",
+                "--tls-certfile",
+                "/tmp/cert.pem",
+                "--tls-keyfile",
+                "/tmp/key.pem",
+            ],
+        ):
             with patch("uvicorn.run") as mock_run:
                 main()
                 mock_run.assert_called_once()
@@ -1081,12 +1106,19 @@ class TestMainServeDispatch:
         from fusion_model_hub.server.__main__ import main
 
         out_file = str(tmp_path / "dispatch_export.json")
-        with patch("sys.argv", [
-            "fusion-model-hub", "export",
-            "--data-dir", str(tmp_path / "dispatch_data"),
-            "--db-url", "sqlite+aiosqlite:///:memory:",
-            "--output", out_file,
-        ]):
+        with patch(
+            "sys.argv",
+            [
+                "fusion-model-hub",
+                "export",
+                "--data-dir",
+                str(tmp_path / "dispatch_data"),
+                "--db-url",
+                "sqlite+aiosqlite:///:memory:",
+                "--output",
+                out_file,
+            ],
+        ):
             main()
         assert os.path.exists(out_file)
 
@@ -1094,16 +1126,28 @@ class TestMainServeDispatch:
         from fusion_model_hub.server.__main__ import main
 
         input_file = tmp_path / "dispatch_import.json"
-        input_file.write_text(json.dumps({
-            "models": [{"name": "dispatch-model", "model_type": "llm"}],
-            "tenants": [], "webhooks": [],
-        }))
-        with patch("sys.argv", [
-            "fusion-model-hub", "import",
-            "--data-dir", str(tmp_path / "dispatch_import_dir"),
-            "--db-url", "sqlite+aiosqlite:///:memory:",
-            "--input", str(input_file),
-        ]):
+        input_file.write_text(
+            json.dumps(
+                {
+                    "models": [{"name": "dispatch-model", "model_type": "llm"}],
+                    "tenants": [],
+                    "webhooks": [],
+                }
+            )
+        )
+        with patch(
+            "sys.argv",
+            [
+                "fusion-model-hub",
+                "import",
+                "--data-dir",
+                str(tmp_path / "dispatch_import_dir"),
+                "--db-url",
+                "sqlite+aiosqlite:///:memory:",
+                "--input",
+                str(input_file),
+            ],
+        ):
             main()
 
     def test_main_migrate_dispatch(self):
@@ -1114,11 +1158,14 @@ class TestMainServeDispatch:
             mock_command = MagicMock()
             alembic_mod = MagicMock()
             alembic_mod.command = mock_command
-            with patch.dict(sys.modules, {
-                "alembic": alembic_mod,
-                "alembic.config": MagicMock(Config=mock_config),
-                "alembic.command": mock_command,
-            }):
+            with patch.dict(
+                sys.modules,
+                {
+                    "alembic": alembic_mod,
+                    "alembic.config": MagicMock(Config=mock_config),
+                    "alembic.command": mock_command,
+                },
+            ):
                 main()
                 mock_command.upgrade.assert_called_once()
 
@@ -1126,14 +1173,25 @@ class TestMainServeDispatch:
         from fusion_model_hub.server.__main__ import main
 
         backup_file = tmp_path / "dispatch_backup.json"
-        backup_file.write_text(json.dumps({
-            "models": [{"id": "dm1", "name": "Dispatch Model", "model_type": "llm"}],
-            "versions": [],
-        }))
-        with patch("sys.argv", [
-            "fusion-model-hub", "restore",
-            "--data-dir", str(tmp_path / "dispatch_restore_dir"),
-            "--db-url", "sqlite+aiosqlite:///:memory:",
-            "--input", str(backup_file),
-        ]):
+        backup_file.write_text(
+            json.dumps(
+                {
+                    "models": [{"id": "dm1", "name": "Dispatch Model", "model_type": "llm"}],
+                    "versions": [],
+                }
+            )
+        )
+        with patch(
+            "sys.argv",
+            [
+                "fusion-model-hub",
+                "restore",
+                "--data-dir",
+                str(tmp_path / "dispatch_restore_dir"),
+                "--db-url",
+                "sqlite+aiosqlite:///:memory:",
+                "--input",
+                str(backup_file),
+            ],
+        ):
             main()

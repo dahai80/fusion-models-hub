@@ -17,6 +17,7 @@ def _require_admin(request: Request) -> None:
     # any developer-role key could create/rename tenants and even delete one
     # (the prior code had no RBAC at all on these endpoints).
     from ..auth import _is_auth_enabled
+
     if not _is_auth_enabled():
         return
     role = getattr(request.state, "user_role", "")
@@ -92,15 +93,13 @@ async def delete_tenant(tenant_id: str, session: SessionDep, request: Request):
     if owned:
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot delete tenant: {owned} model(s) still assigned. "
-                   "Reassign or delete them first.",
+            detail=f"Cannot delete tenant: {owned} model(s) still assigned. Reassign or delete them first.",
         )
     keys = await crud.count_api_keys_for_tenant(session, tenant_id=tenant_id)
     if keys:
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot delete tenant: {keys} API key(s) still active. "
-                   "Deactivate them first.",
+            detail=f"Cannot delete tenant: {keys} API key(s) still active. Deactivate them first.",
         )
     ok = await crud.delete_tenant(session, tenant_id)
     if not ok:
@@ -159,7 +158,10 @@ async def create_role(tenant_id: str, body: RoleCreate, session: SessionDep, req
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
     r = await crud.create_role(
-        session, tenant_id=tenant_id, name=body.name, permissions=body.permissions,
+        session,
+        tenant_id=tenant_id,
+        name=body.name,
+        permissions=body.permissions,
     )
     return _role_to_dict(r)
 
@@ -171,8 +173,11 @@ async def update_role(tenant_id: str, role_id: str, body: RoleUpdate, session: S
     if not r or r.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Role not found")
     r = await crud.update_role(
-        session, role_id,
-        name=body.name, permissions=body.permissions, is_active=body.is_active,
+        session,
+        role_id,
+        name=body.name,
+        permissions=body.permissions,
+        is_active=body.is_active,
     )
     return _role_to_dict(r)
 

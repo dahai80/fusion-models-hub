@@ -10,7 +10,8 @@ from fusion_model_hub.server.deps import init_deps
 @pytest.fixture
 def settings():
     return Settings(
-        host="127.0.0.1", port=11444,
+        host="127.0.0.1",
+        port=11444,
         data_dir="/tmp/fmh_studio_compat",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -25,6 +26,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -35,9 +37,14 @@ async def client(app, settings):
 
 
 async def _make_model(client, name="test-model"):
-    resp = await client.post("/api/v1/models", json={
-        "name": name, "model_type": "llm", "hf_repo": "test/" + name,
-    })
+    resp = await client.post(
+        "/api/v1/models",
+        json={
+            "name": name,
+            "model_type": "llm",
+            "hf_repo": "test/" + name,
+        },
+    )
     return resp.json()
 
 
@@ -92,9 +99,14 @@ class TestDeploymentStudioContract:
     async def test_create_without_name_uses_scale_alias(self, client):
         model = await _make_model(client, "dep-studio")
         # studio createDeployment sends {model_id, scale, canary_percent} with NO name
-        resp = await client.post("/api/v1/deployments", json={
-            "model_id": model["id"], "scale": 3, "canary_percent": 20,
-        })
+        resp = await client.post(
+            "/api/v1/deployments",
+            json={
+                "model_id": model["id"],
+                "scale": 3,
+                "canary_percent": 20,
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["replicas"] == 3
@@ -140,8 +152,14 @@ class TestDeploymentMetricsStudioContract:
         resp = await client.get(f"/api/v1/deployments/{did}/metrics")
         assert resp.status_code == 200
         data = resp.json()
-        for key in ("deploymentId", "requestsPerSecond", "avgLatencyMs",
-                    "errorRate", "tokensPerSecond", "activeConnections"):
+        for key in (
+            "deploymentId",
+            "requestsPerSecond",
+            "avgLatencyMs",
+            "errorRate",
+            "tokensPerSecond",
+            "activeConnections",
+        ):
             assert key in data, f"missing studio metrics key: {key}"
         assert data["deploymentId"] == did
 
@@ -153,6 +171,7 @@ class TestDeploymentMetricsStudioContract:
         # active_requests, avg_generation_tps). /v1/models/status gives load
         # state into mlx_metrics. Pins the PR #541 consumer wiring.
         from unittest.mock import AsyncMock, MagicMock, patch
+
         model = await _make_model(client, "dep-live-metrics")
         # MLX /load POST returns 200 so the deployment becomes RUNNING.
         load_resp = MagicMock()
@@ -177,7 +196,8 @@ class TestDeploymentMetricsStudioContract:
         mock_ctx.get = AsyncMock(side_effect=[status_resp, metrics_resp])
         with patch("httpx.AsyncClient", return_value=mock_ctx):
             create = await client.post(
-                "/api/v1/deployments", json={"model_id": model["id"], "name": "live"},
+                "/api/v1/deployments",
+                json={"model_id": model["id"], "name": "live"},
             )
             did = create.json()["id"]
             resp = await client.get(f"/api/v1/deployments/{did}/metrics")
@@ -194,6 +214,7 @@ class TestDeploymentMetricsStudioContract:
         # Pre PR #541 merge: MLX /v1/metrics/json 404 -> live 4 fields null,
         # shape stable. /v1/models/status still 200 so mlx_metrics populated.
         from unittest.mock import AsyncMock, MagicMock, patch
+
         model = await _make_model(client, "dep-404-metrics")
         load_resp = MagicMock()
         load_resp.status_code = 200
@@ -209,7 +230,8 @@ class TestDeploymentMetricsStudioContract:
         mock_ctx.get = AsyncMock(side_effect=[status_resp, not_found_resp])
         with patch("httpx.AsyncClient", return_value=mock_ctx):
             create = await client.post(
-                "/api/v1/deployments", json={"model_id": model["id"], "name": "nf"},
+                "/api/v1/deployments",
+                json={"model_id": model["id"], "name": "nf"},
             )
             did = create.json()["id"]
             resp = await client.get(f"/api/v1/deployments/{did}/metrics")
@@ -228,6 +250,7 @@ class TestBenchTriggerStudioContract:
         # studio triggerBenchmark posts {model_id, template: "general"}.
         # Hub must forward `suite` (Fusion-Bench's field), mapping template -> suite.
         from unittest.mock import AsyncMock, MagicMock, patch
+
         mock_resp = MagicMock()
         mock_resp.status_code = 202
         mock_resp.json.return_value = {"task_id": "bt-template"}
@@ -236,9 +259,13 @@ class TestBenchTriggerStudioContract:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         mock_ctx.post = AsyncMock(return_value=mock_resp)
         with patch("httpx.AsyncClient", return_value=mock_ctx):
-            resp = await client.post("/api/v1/benchmarks/trigger", json={
-                "model_id": "t-model", "template": "speed",
-            })
+            resp = await client.post(
+                "/api/v1/benchmarks/trigger",
+                json={
+                    "model_id": "t-model",
+                    "template": "speed",
+                },
+            )
         assert resp.status_code == 200
         forwarded = mock_ctx.post.call_args.kwargs["json"]
         assert forwarded["suite"] == "speed"

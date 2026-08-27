@@ -15,7 +15,8 @@ from fusion_model_hub.server.rate_limit import check_rate_limit, reset_rate_limi
 @pytest.fixture
 def settings():
     return Settings(
-        host="127.0.0.1", port=11444,
+        host="127.0.0.1",
+        port=11444,
         data_dir="/tmp/fmh_test_data",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -30,6 +31,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -49,6 +51,7 @@ def _mock_httpx_client(response_status=200, response_json=None, side_effect=None
     # alias `http_client.AsyncClient` so the MLX-hot-path modules see the mock.
     # Returns a context manager (ExitStack) usable as `with _mock_httpx_client():`.
     import contextlib
+
     mock_resp = MagicMock()
     mock_resp.status_code = response_status
     mock_resp.json.return_value = response_json or {}
@@ -65,9 +68,10 @@ def _mock_httpx_client(response_status=200, response_json=None, side_effect=None
 
     @contextlib.contextmanager
     def _ctx():
-        with patch("httpx.AsyncClient", return_value=mock_ctx), \
-             patch("fusion_model_hub.server.http_client.AsyncClient",
-                   return_value=mock_ctx):
+        with (
+            patch("httpx.AsyncClient", return_value=mock_ctx),
+            patch("fusion_model_hub.server.http_client.AsyncClient", return_value=mock_ctx),
+        ):
             yield
 
     return _ctx()
@@ -111,11 +115,14 @@ class TestRateLimiter:
 class TestModelModules:
     @pytest.mark.asyncio
     async def test_create_model_with_modules(self, client):
-        resp = await client.post("/api/v1/models", json={
-            "name": "mod-model-1",
-            "model_modules": "chat,code",
-            "idle_timeout_minutes": 30,
-        })
+        resp = await client.post(
+            "/api/v1/models",
+            json={
+                "name": "mod-model-1",
+                "model_modules": "chat,code",
+                "idle_timeout_minutes": 30,
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["model_modules"] == "chat,code"
@@ -155,10 +162,13 @@ class TestModelModules:
 class TestApiKeyQps:
     @pytest.mark.asyncio
     async def test_create_key_with_qps_limit(self, client):
-        resp = await client.post("/api/v1/auth/keys", json={
-            "name": "qps-key",
-            "qps_limit": 10,
-        })
+        resp = await client.post(
+            "/api/v1/auth/keys",
+            json={
+                "name": "qps-key",
+                "qps_limit": 10,
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["qps_limit"] == 10
@@ -182,10 +192,13 @@ class TestMarketSearch:
     @pytest.mark.asyncio
     async def test_market_search_local_only(self, client):
         await client.post("/api/v1/models", json={"name": "local-search-model"})
-        resp = await client.get("/api/v1/models/market/search", params={
-            "keyword": "local-search",
-            "source": "local",
-        })
+        resp = await client.get(
+            "/api/v1/models/market/search",
+            params={
+                "keyword": "local-search",
+                "source": "local",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert "local" in data
@@ -194,16 +207,26 @@ class TestMarketSearch:
     @pytest.mark.asyncio
     async def test_market_search_all_sources(self, client):
         await client.post("/api/v1/models", json={"name": "all-search-model"})
-        with _mock_httpx_client(response_json=[{"id": "Qwen/Qwen2.5-7B", "pipeline_tag": "text-generation", "downloads": 1000}]):
-            with patch("fusion_model_hub.repo.modelscope_search.search_modelscope", new=AsyncMock(return_value={
-                "items": [{"name": "qwen-ms", "id": "ms-1"}],
-                "total": 1,
-                "source": "modelscope",
-            })):
-                resp = await client.get("/api/v1/models/market/search", params={
-                    "keyword": "qwen",
-                    "source": "all",
-                })
+        with _mock_httpx_client(
+            response_json=[{"id": "Qwen/Qwen2.5-7B", "pipeline_tag": "text-generation", "downloads": 1000}]
+        ):
+            with patch(
+                "fusion_model_hub.repo.modelscope_search.search_modelscope",
+                new=AsyncMock(
+                    return_value={
+                        "items": [{"name": "qwen-ms", "id": "ms-1"}],
+                        "total": 1,
+                        "source": "modelscope",
+                    }
+                ),
+            ):
+                resp = await client.get(
+                    "/api/v1/models/market/search",
+                    params={
+                        "keyword": "qwen",
+                        "source": "all",
+                    },
+                )
                 assert resp.status_code == 200
                 data = resp.json()
                 assert "local" in data
@@ -212,15 +235,23 @@ class TestMarketSearch:
 
     @pytest.mark.asyncio
     async def test_market_search_modelscope_mock(self, client):
-        with patch("fusion_model_hub.repo.modelscope_search.search_modelscope", new=AsyncMock(return_value={
-            "items": [{"name": "qwen-test", "id": "ms-1"}],
-            "total": 1,
-            "source": "modelscope",
-        })) as mock_ms:
-            resp = await client.get("/api/v1/models/market/search", params={
-                "keyword": "qwen",
-                "source": "modelscope",
-            })
+        with patch(
+            "fusion_model_hub.repo.modelscope_search.search_modelscope",
+            new=AsyncMock(
+                return_value={
+                    "items": [{"name": "qwen-test", "id": "ms-1"}],
+                    "total": 1,
+                    "source": "modelscope",
+                }
+            ),
+        ) as mock_ms:
+            resp = await client.get(
+                "/api/v1/models/market/search",
+                params={
+                    "keyword": "qwen",
+                    "source": "modelscope",
+                },
+            )
             assert resp.status_code == 200
             data = resp.json()
             assert len(data["modelscope"]) >= 1
@@ -228,11 +259,16 @@ class TestMarketSearch:
 
     @pytest.mark.asyncio
     async def test_market_search_huggingface_mock(self, client):
-        with _mock_httpx_client(response_json=[{"id": "Qwen/Qwen2.5-7B", "pipeline_tag": "text-generation", "downloads": 1000}]):
-            resp = await client.get("/api/v1/models/market/search", params={
-                "keyword": "qwen",
-                "source": "huggingface",
-            })
+        with _mock_httpx_client(
+            response_json=[{"id": "Qwen/Qwen2.5-7B", "pipeline_tag": "text-generation", "downloads": 1000}]
+        ):
+            resp = await client.get(
+                "/api/v1/models/market/search",
+                params={
+                    "keyword": "qwen",
+                    "source": "huggingface",
+                },
+            )
             assert resp.status_code == 200
             data = resp.json()
             assert len(data["huggingface"]) >= 1
@@ -242,19 +278,25 @@ class TestBenchTrigger:
     @pytest.mark.asyncio
     async def test_bench_trigger_bench_unavailable(self, client):
         with _mock_httpx_client(side_effect=httpx.ConnectError("refused")):
-            resp = await client.post("/api/v1/benchmarks/trigger", json={
-                "model_id": "any-model",
-                "suite": "general",
-            })
+            resp = await client.post(
+                "/api/v1/benchmarks/trigger",
+                json={
+                    "model_id": "any-model",
+                    "suite": "general",
+                },
+            )
             assert resp.status_code == 503
 
     @pytest.mark.asyncio
     async def test_bench_trigger_success_mock(self, client):
         with _mock_httpx_client(response_status=202, response_json={"task_id": "bt-1"}):
-            resp = await client.post("/api/v1/benchmarks/trigger", json={
-                "model_id": "test-model",
-                "suite": "general",
-            })
+            resp = await client.post(
+                "/api/v1/benchmarks/trigger",
+                json={
+                    "model_id": "test-model",
+                    "suite": "general",
+                },
+            )
             assert resp.status_code == 200
             assert resp.json()["status"] == "submitted"
 
@@ -262,18 +304,24 @@ class TestBenchTrigger:
 class TestClusterSyncModel:
     @pytest.mark.asyncio
     async def test_sync_model_not_found(self, client):
-        resp = await client.post("/api/v1/cluster/sync-model", json={
-            "model_id": "nonexistent",
-        })
+        resp = await client.post(
+            "/api/v1/cluster/sync-model",
+            json={
+                "model_id": "nonexistent",
+            },
+        )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_sync_model_no_nodes(self, client):
         model = await client.post("/api/v1/models", json={"name": "sync-no-node"})
         mid = model.json()["id"]
-        resp = await client.post("/api/v1/cluster/sync-model", json={
-            "model_id": mid,
-        })
+        resp = await client.post(
+            "/api/v1/cluster/sync-model",
+            json={
+                "model_id": mid,
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["model_id"] == mid
@@ -284,13 +332,20 @@ class TestClusterSyncModel:
     async def test_sync_model_to_nodes_mock(self, client):
         model = await client.post("/api/v1/models", json={"name": "sync-mock"})
         mid = model.json()["id"]
-        await client.post("/api/v1/cluster/nodes", json={
-            "name": "sync-node", "url": "http://sync-node:11444",
-        })
+        await client.post(
+            "/api/v1/cluster/nodes",
+            json={
+                "name": "sync-node",
+                "url": "http://sync-node:11444",
+            },
+        )
         with _mock_httpx_client(response_status=200, response_json={"ok": True}):
-            resp = await client.post("/api/v1/cluster/sync-model", json={
-                "model_id": mid,
-            })
+            resp = await client.post(
+                "/api/v1/cluster/sync-model",
+                json={
+                    "model_id": mid,
+                },
+            )
             assert resp.status_code == 200
             data = resp.json()
             assert data["success"] is True
@@ -300,23 +355,32 @@ class TestClusterSyncModel:
 class TestClusterRouteInference:
     @pytest.mark.asyncio
     async def test_route_inference_model_not_found(self, client):
-        resp = await client.post("/api/v1/cluster/route-inference", json={
-            "model_id": "nonexistent",
-        })
+        resp = await client.post(
+            "/api/v1/cluster/route-inference",
+            json={
+                "model_id": "nonexistent",
+            },
+        )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_route_inference_local_available(self, client):
         model = await client.post("/api/v1/models", json={"name": "route-local"})
         mid = model.json()["id"]
-        chat_resp = {"id": "chat-1", "model": "route-local", "choices": [
-            {"message": {"role": "assistant", "content": "hi"}}],
-            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}}
+        chat_resp = {
+            "id": "chat-1",
+            "model": "route-local",
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+        }
         with _mock_httpx_client(response_status=200, response_json=chat_resp):
-            resp = await client.post("/api/v1/cluster/route-inference", json={
-                "model_id": mid,
-                "messages": [{"role": "user", "content": "ping"}],
-            })
+            resp = await client.post(
+                "/api/v1/cluster/route-inference",
+                json={
+                    "model_id": mid,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
             assert resp.status_code == 200
             data = resp.json()
             assert data["routedTo"] == "local"
@@ -327,10 +391,13 @@ class TestClusterRouteInference:
         model = await client.post("/api/v1/models", json={"name": "route-no-node"})
         mid = model.json()["id"]
         with _mock_httpx_client(side_effect=Exception("fail")):
-            resp = await client.post("/api/v1/cluster/route-inference", json={
-                "model_id": mid,
-                "messages": [{"role": "user", "content": "ping"}],
-            })
+            resp = await client.post(
+                "/api/v1/cluster/route-inference",
+                json={
+                    "model_id": mid,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
             assert resp.status_code == 503
 
     @pytest.mark.asyncio
@@ -342,36 +409,49 @@ class TestClusterRouteInference:
         # and mock _chat to echo the node URL so the response records which
         # node served each call. The module counter is reset for determinism.
         import fusion_model_hub.server.routers.cluster as cmod
+
         cmod._round_robin_counter = __import__("itertools").count()
 
         model = await client.post("/api/v1/models", json={"name": "rr-model"})
         mid = model.json()["id"]
 
         for i in range(3):
-            await client.post("/api/v1/cluster/nodes", json={
-                "name": f"node-{i}",
-                "url": f"http://10.0.0.{10+i}:11434",
-            })
+            await client.post(
+                "/api/v1/cluster/nodes",
+                json={
+                    "name": f"node-{i}",
+                    "url": f"http://10.0.0.{10 + i}:11434",
+                },
+            )
 
         async def _fake_chat(url, settings, model_name, messages):
-            return {"id": f"chat-{url}", "model": model_name,
-                    "choices": [{"message": {"role": "assistant", "content": url}}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+            return {
+                "id": f"chat-{url}",
+                "model": model_name,
+                "choices": [{"message": {"role": "assistant", "content": url}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
 
         routed = []
-        with patch.object(cmod, "_check_alive", new=AsyncMock(return_value=False)), \
-             patch.object(cmod, "_chat", new=_fake_chat):
+        with (
+            patch.object(cmod, "_check_alive", new=AsyncMock(return_value=False)),
+            patch.object(cmod, "_chat", new=_fake_chat),
+        ):
             for _ in range(6):
-                resp = await client.post("/api/v1/cluster/route-inference", json={
-                    "model_id": mid,
-                    "mode": "cluster",
-                    "messages": [{"role": "user", "content": "ping"}],
-                })
+                resp = await client.post(
+                    "/api/v1/cluster/route-inference",
+                    json={
+                        "model_id": mid,
+                        "mode": "cluster",
+                        "messages": [{"role": "user", "content": "ping"}],
+                    },
+                )
                 assert resp.status_code == 200, resp.text
                 routed.append(resp.json()["routedTo"])
 
         # 3 nodes, 6 calls -> exactly 2 per node (round-robin, not failover).
         from collections import Counter
+
         counts = Counter(routed)
         assert len(counts) == 3, f"load not spread across all 3 nodes: {counts}"
         assert set(counts.values()) == {2}, f"uneven distribution: {counts}"
@@ -383,29 +463,36 @@ class TestClusterRouteInference:
         # preserved within a single call). Register 2 nodes; make the
         # round-robin start node's _chat raise so the second node must serve.
         import fusion_model_hub.server.routers.cluster as cmod
+
         cmod._round_robin_counter = __import__("itertools").count()
 
         model = await client.post("/api/v1/models", json={"name": "fo-model"})
         mid = model.json()["id"]
-        await client.post("/api/v1/cluster/nodes", json={
-            "name": "node-0", "url": "http://10.0.0.20:11434"})
-        await client.post("/api/v1/cluster/nodes", json={
-            "name": "node-1", "url": "http://10.0.0.21:11434"})
+        await client.post("/api/v1/cluster/nodes", json={"name": "node-0", "url": "http://10.0.0.20:11434"})
+        await client.post("/api/v1/cluster/nodes", json={"name": "node-1", "url": "http://10.0.0.21:11434"})
 
         async def _fake_chat(url, settings, model_name, messages):
             if url.endswith(".20:11434"):
                 raise RuntimeError("node-0 down")
-            return {"id": "chat-ok", "model": model_name,
-                    "choices": [{"message": {"role": "assistant", "content": "ok"}}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+            return {
+                "id": "chat-ok",
+                "model": model_name,
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
 
-        with patch.object(cmod, "_check_alive", new=AsyncMock(return_value=False)), \
-             patch.object(cmod, "_chat", new=_fake_chat):
-            resp = await client.post("/api/v1/cluster/route-inference", json={
-                "model_id": mid,
-                "mode": "cluster",
-                "messages": [{"role": "user", "content": "ping"}],
-            })
+        with (
+            patch.object(cmod, "_check_alive", new=AsyncMock(return_value=False)),
+            patch.object(cmod, "_chat", new=_fake_chat),
+        ):
+            resp = await client.post(
+                "/api/v1/cluster/route-inference",
+                json={
+                    "model_id": mid,
+                    "mode": "cluster",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
             assert resp.status_code == 200, resp.text
             assert resp.json()["content"] == "ok"
 
@@ -413,6 +500,7 @@ class TestClusterRouteInference:
 class TestModelsourceEnum:
     def test_modelscope_in_enum(self):
         from fusion_model_hub.db.models import ModelSource
+
         assert hasattr(ModelSource, "MODELSCOPE")
         assert ModelSource.MODELSCOPE.value == "modelscope"
 
@@ -421,17 +509,22 @@ class TestModelscopeSearch:
     @pytest.mark.asyncio
     async def test_search_modelscope_success(self):
         from fusion_model_hub.repo.modelscope_search import search_modelscope
-        with _mock_httpx_client(response_json={
-            "Data": {
-                "Models": [{
-                    "Name": "qwen-test",
-                    "Id": "ms-1",
-                    "Task": "text-generation",
-                    "ModelScopeId": "qwen/qwen-test",
-                }],
-                "TotalCount": 1,
-            },
-        }):
+
+        with _mock_httpx_client(
+            response_json={
+                "Data": {
+                    "Models": [
+                        {
+                            "Name": "qwen-test",
+                            "Id": "ms-1",
+                            "Task": "text-generation",
+                            "ModelScopeId": "qwen/qwen-test",
+                        }
+                    ],
+                    "TotalCount": 1,
+                },
+            }
+        ):
             result = await search_modelscope("qwen")
             assert result["source"] == "modelscope"
             assert result["total"] == 1
@@ -440,6 +533,7 @@ class TestModelscopeSearch:
     @pytest.mark.asyncio
     async def test_search_modelscope_error(self):
         from fusion_model_hub.repo.modelscope_search import search_modelscope
+
         with _mock_httpx_client(side_effect=Exception("fail")):
             result = await search_modelscope("qwen")
             assert result["source"] == "modelscope"
@@ -465,10 +559,12 @@ async def _authed_client(settings_overrides: dict | None = None, auth_on: bool =
     # cleanup in a finally block.
     from fusion_model_hub.server.auth import set_auth_enabled
     from fusion_model_hub.server.deps import init_deps
+
     set_auth_enabled(auth_on)
     overrides = settings_overrides or {}
     s = Settings(
-        host="127.0.0.1", port=11444,
+        host="127.0.0.1",
+        port=11444,
         data_dir="/tmp/fmh_test_audit",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -516,6 +612,7 @@ class TestBootstrapGuardE6:
             await c.aclose()
         finally:
             from fusion_model_hub.server.auth import set_auth_enabled
+
             set_auth_enabled(False)
             reset_rate_limits()
 
@@ -531,6 +628,7 @@ class TestBootstrapGuardE6:
             await c.aclose()
         finally:
             from fusion_model_hub.server.auth import set_auth_enabled
+
             set_auth_enabled(False)
             reset_rate_limits()
 
@@ -546,6 +644,7 @@ class TestBootstrapGuardE6:
         try:
             c, _ = await _authed_client({"auth_bootstrap_token": "t"})
             from fusion_model_hub.server.routers import auth as auth_router
+
             with patch.object(auth_router, "_client_ip", return_value="10.0.0.9"):
                 # Drain the 10/min bucket for the pinned IP.
                 for _ in range(10):
@@ -562,6 +661,7 @@ class TestBootstrapGuardE6:
             await c.aclose()
         finally:
             from fusion_model_hub.server.auth import set_auth_enabled
+
             set_auth_enabled(False)
             reset_rate_limits()
 
@@ -601,6 +701,7 @@ class TestBootstrapGuardE6:
             await c.aclose()
         finally:
             from fusion_model_hub.server.auth import set_auth_enabled
+
             set_auth_enabled(False)
             reset_rate_limits()
 
@@ -622,6 +723,7 @@ class TestPerKeyUsageE7:
             _model_stats,
             _update_model_stats,
         )
+
         reset_rate_limits()
         try:
             c, _ = await _authed_client({"auth_bootstrap_token": "boot"}, auth_on=False)
@@ -675,6 +777,7 @@ class TestSanitizedErrorDetailE5:
         # raise an exception whose message contains a sensitive marker; assert
         # the marker never reaches the client.
         from fusion_model_hub.server.auth import set_auth_enabled
+
         reset_rate_limits()
         try:
             c, _ = await _authed_client({}, auth_on=False)

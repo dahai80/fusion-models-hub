@@ -138,15 +138,21 @@ class AsyncFusionModelHubClient:
 
     # --- Quantize ---
     async def start_quantize(
-        self, source_version_id: str, target_format: str = "mlx",
-        quant_bits: int = 4, calibration_dataset: str = "",
+        self,
+        source_version_id: str,
+        target_format: str = "mlx",
+        quant_bits: int = 4,
+        calibration_dataset: str = "",
     ) -> dict:
-        return await self._post("/quantize", json={
-            "source_version_id": source_version_id,
-            "target_format": target_format,
-            "quant_bits": quant_bits,
-            "calibration_dataset": calibration_dataset,
-        })
+        return await self._post(
+            "/quantize",
+            json={
+                "source_version_id": source_version_id,
+                "target_format": target_format,
+                "quant_bits": quant_bits,
+                "calibration_dataset": calibration_dataset,
+            },
+        )
 
     async def list_quantize_tasks(self, **params: Any) -> dict:
         return await self._get("/quantize", params=params)
@@ -155,29 +161,41 @@ class AsyncFusionModelHubClient:
         return await self._get(f"/quantize/{task_id}")
 
     async def start_lora_merge(
-        self, base_version_id: str, lora_version_id: str,
-        target_format: str = "mlx", quant_bits: int = 4,
+        self,
+        base_version_id: str,
+        lora_version_id: str,
+        target_format: str = "mlx",
+        quant_bits: int = 4,
     ) -> dict:
-        return await self._post("/quantize/lora-merge", json={
-            "base_version_id": base_version_id,
-            "lora_version_id": lora_version_id,
-            "target_format": target_format,
-            "quant_bits": quant_bits,
-        })
+        return await self._post(
+            "/quantize/lora-merge",
+            json={
+                "base_version_id": base_version_id,
+                "lora_version_id": lora_version_id,
+                "target_format": target_format,
+                "quant_bits": quant_bits,
+            },
+        )
 
     async def get_lora_merge_status(self, task_id: str) -> dict:
         return await self._get(f"/quantize/lora-merge/{task_id}")
 
     async def start_layered_quantize(
-        self, model: str, default_bits: int = 4,
-        layer_rules: list[dict] | None = None, output_path: str = "",
+        self,
+        model: str,
+        default_bits: int = 4,
+        layer_rules: list[dict] | None = None,
+        output_path: str = "",
     ) -> dict:
-        return await self._post("/quantize/layered", json={
-            "model": model,
-            "default_bits": default_bits,
-            "layer_rules": layer_rules or [],
-            "output_path": output_path,
-        })
+        return await self._post(
+            "/quantize/layered",
+            json={
+                "model": model,
+                "default_bits": default_bits,
+                "layer_rules": layer_rules or [],
+                "output_path": output_path,
+            },
+        )
 
     async def get_layered_quantize_job(self, job_id: str) -> dict:
         return await self._get(f"/quantize/layered/jobs/{job_id}")
@@ -186,35 +204,60 @@ class AsyncFusionModelHubClient:
         return await self._get("/quantize/layered/jobs")
 
     async def evaluate_quantize(
-        self, source_version_id: str, quant_bits: int = 4, sample_size: int = 128,
+        self,
+        source_version_id: str,
+        quant_bits: int = 4,
+        sample_size: int = 128,
     ) -> dict:
-        return await self._post("/quantize/evaluate", json={
-            "source_version_id": source_version_id,
-            "quant_bits": quant_bits,
-            "sample_size": sample_size,
-        })
+        return await self._post(
+            "/quantize/evaluate",
+            json={
+                "source_version_id": source_version_id,
+                "quant_bits": quant_bits,
+                "sample_size": sample_size,
+            },
+        )
 
     # --- Inference ---
     async def chat_completions(self, model: str, messages: list[dict], **kwargs: Any) -> dict:
-        return await self._post("/inference/chat/completions", json={
-            "model": model, "messages": messages, **kwargs,
-        })
+        return await self._post(
+            "/inference/chat/completions",
+            json={
+                "model": model,
+                "messages": messages,
+                **kwargs,
+            },
+        )
 
     async def completions(self, model: str, prompt: str, **kwargs: Any) -> dict:
-        return await self._post("/inference/completions", json={
-            "model": model, "prompt": prompt, **kwargs,
-        })
+        return await self._post(
+            "/inference/completions",
+            json={
+                "model": model,
+                "prompt": prompt,
+                **kwargs,
+            },
+        )
 
     async def embeddings(self, model: str, input: str | list[str], **kwargs: Any) -> dict:
-        return await self._post("/inference/embeddings", json={
-            "model": model, "input": input, **kwargs,
-        })
+        return await self._post(
+            "/inference/embeddings",
+            json={
+                "model": model,
+                "input": input,
+                **kwargs,
+            },
+        )
 
     # --- Security ---
     async def start_security_scan(self, version_id: str, scan_type: str = "full") -> dict:
-        return await self._post("/security/scan", json={
-            "version_id": version_id, "scan_type": scan_type,
-        })
+        return await self._post(
+            "/security/scan",
+            json={
+                "version_id": version_id,
+                "scan_type": scan_type,
+            },
+        )
 
     async def get_security_scan(self, scan_id: str) -> dict:
         return await self._get(f"/security/scan/{scan_id}")
@@ -224,9 +267,13 @@ class AsyncFusionModelHubClient:
 
     # --- Watermark ---
     async def embed_watermark(self, version_id: str, metadata: str = "{}") -> dict:
-        return await self._post("/watermark/embed", json={
-            "version_id": version_id, "metadata": metadata,
-        })
+        return await self._post(
+            "/watermark/embed",
+            json={
+                "version_id": version_id,
+                "metadata": metadata,
+            },
+        )
 
     async def verify_watermark(self, version_id: str) -> dict:
         return await self._post("/watermark/verify", json={"version_id": version_id})
@@ -246,9 +293,14 @@ class AsyncFusionModelHubClient:
 
     # --- Approvals ---
     async def create_approval(self, version_id: str, level: str = "L2", reason: str = "") -> dict:
-        return await self._post("/approvals", json={
-            "version_id": version_id, "level": level, "reason": reason,
-        })
+        return await self._post(
+            "/approvals",
+            json={
+                "version_id": version_id,
+                "level": level,
+                "reason": reason,
+            },
+        )
 
     async def list_approvals(self, **params: Any) -> dict:
         return await self._get("/approvals", params=params)
@@ -264,9 +316,13 @@ class AsyncFusionModelHubClient:
 
     # --- Git LFS ---
     async def gitlfs_batch(self, operation: str, objects: list[dict]) -> dict:
-        return await self._post("/gitlfs/objects/batch", json={
-            "operation": operation, "objects": objects,
-        })
+        return await self._post(
+            "/gitlfs/objects/batch",
+            json={
+                "operation": operation,
+                "objects": objects,
+            },
+        )
 
     async def create_gitlfs_lock(self, path: str) -> dict:
         return await self._post("/gitlfs/locks", json={"path": path})
@@ -282,9 +338,14 @@ class AsyncFusionModelHubClient:
         return await self._get("/cluster/nodes")
 
     async def add_node(self, name: str, url: str, capabilities: str = "inference,quantize") -> dict:
-        return await self._post("/cluster/nodes", json={
-            "name": name, "url": url, "capabilities": capabilities,
-        })
+        return await self._post(
+            "/cluster/nodes",
+            json={
+                "name": name,
+                "url": url,
+                "capabilities": capabilities,
+            },
+        )
 
     async def get_node(self, node_id: str) -> dict:
         return await self._get(f"/cluster/nodes/{node_id}")
@@ -293,8 +354,11 @@ class AsyncFusionModelHubClient:
         return await self._delete(f"/cluster/nodes/{node_id}")
 
     async def submit_distributed_task(
-        self, task_type: str, model_version_id: str,
-        target_node_ids: list[str] | None = None, config: str = "{}",
+        self,
+        task_type: str,
+        model_version_id: str,
+        target_node_ids: list[str] | None = None,
+        config: str = "{}",
     ) -> dict:
         body: dict[str, Any] = {
             "task_type": task_type,
@@ -310,9 +374,13 @@ class AsyncFusionModelHubClient:
 
     # --- Ratings ---
     async def create_rating(self, model_id: str, score: int, comment: str = "") -> dict:
-        return await self._post(f"/models/{model_id}/ratings", json={
-            "score": score, "comment": comment,
-        })
+        return await self._post(
+            f"/models/{model_id}/ratings",
+            json={
+                "score": score,
+                "comment": comment,
+            },
+        )
 
     async def list_ratings(self, model_id: str, **params: Any) -> dict:
         return await self._get(f"/models/{model_id}/ratings", params=params)
@@ -338,9 +406,14 @@ class AsyncFusionModelHubClient:
 
     # --- Branches ---
     async def create_branch(self, model_id: str, name: str, base_version_id: str = "", description: str = "") -> dict:
-        return await self._post(f"/models/{model_id}/branches", json={
-            "name": name, "base_version_id": base_version_id, "description": description,
-        })
+        return await self._post(
+            f"/models/{model_id}/branches",
+            json={
+                "name": name,
+                "base_version_id": base_version_id,
+                "description": description,
+            },
+        )
 
     async def list_branches(self, model_id: str, status: str = "") -> dict:
         return await self._get(f"/models/{model_id}/branches", params={"status": status} if status else {})
@@ -366,20 +439,32 @@ class AsyncFusionModelHubClient:
 
     # --- Recommend ---
     async def recommend_models(
-        self, task: str = "llm", preference: str = "balanced",
-        max_results: int = 10, min_params: float = 0, max_params: float = 1000,
+        self,
+        task: str = "llm",
+        preference: str = "balanced",
+        max_results: int = 10,
+        min_params: float = 0,
+        max_params: float = 1000,
     ) -> dict:
-        return await self._post("/recommend", json={
-            "task": task, "preference": preference,
-            "max_results": max_results, "min_params_b": min_params, "max_params_b": max_params,
-        })
+        return await self._post(
+            "/recommend",
+            json={
+                "task": task,
+                "preference": preference,
+                "max_results": max_results,
+                "min_params_b": min_params,
+                "max_params_b": max_params,
+            },
+        )
 
     async def quick_recommend(self, task: str = "llm", preference: str = "balanced") -> dict:
         return await self._get("/recommend/quick", params={"task": task, "preference": preference})
 
     # --- Adapt ---
     async def assess_model(
-        self, model_id: str, hf_repo: str | None = None,
+        self,
+        model_id: str,
+        hf_repo: str | None = None,
         source_format: str | None = None,
     ) -> dict:
         body: dict[str, Any] = {"model_id": model_id}
@@ -390,8 +475,11 @@ class AsyncFusionModelHubClient:
         return await self._post("/adapt/assess", json=body)
 
     async def plan_migration(
-        self, model_id: str, params_b: float = 0,
-        hf_repo: str | None = None, source_format: str | None = None,
+        self,
+        model_id: str,
+        params_b: float = 0,
+        hf_repo: str | None = None,
+        source_format: str | None = None,
     ) -> dict:
         body: dict[str, Any] = {"model_id": model_id, "params_b": params_b}
         if hf_repo:
@@ -401,12 +489,17 @@ class AsyncFusionModelHubClient:
         return await self._post("/adapt/plan", json=body)
 
     async def execute_adaptation(
-        self, model_id: str, hf_repo: str | None = None,
-        source_format: str | None = None, quant_bits: int = 4,
+        self,
+        model_id: str,
+        hf_repo: str | None = None,
+        source_format: str | None = None,
+        quant_bits: int = 4,
         params_b: float = 0,
     ) -> dict:
         body: dict[str, Any] = {
-            "model_id": model_id, "quant_bits": quant_bits, "params_b": params_b,
+            "model_id": model_id,
+            "quant_bits": quant_bits,
+            "params_b": params_b,
         }
         if hf_repo:
             body["hf_repo"] = hf_repo
@@ -419,7 +512,9 @@ class AsyncFusionModelHubClient:
 
     # --- Benchmarks ---
     async def list_benchmarks(
-        self, chip: str | None = None, model_id: str | None = None,
+        self,
+        chip: str | None = None,
+        model_id: str | None = None,
         quant: str | None = None,
     ) -> dict:
         params: dict[str, Any] = {}
@@ -432,7 +527,10 @@ class AsyncFusionModelHubClient:
         return await self._get("/benchmarks", params=params)
 
     async def get_benchmark(
-        self, model_id: str, chip: str | None = None, quant: str | None = None,
+        self,
+        model_id: str,
+        chip: str | None = None,
+        quant: str | None = None,
     ) -> dict:
         params: dict[str, Any] = {}
         if chip:
@@ -443,7 +541,9 @@ class AsyncFusionModelHubClient:
 
     # --- Analyze ---
     async def analyze_model(
-        self, model_path: str | None = None, hf_repo: str | None = None,
+        self,
+        model_path: str | None = None,
+        hf_repo: str | None = None,
     ) -> dict:
         body: dict[str, Any] = {}
         if model_path:

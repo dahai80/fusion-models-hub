@@ -40,7 +40,11 @@ def _sign_payload(payload: bytes, secret: str) -> str:
 
 
 async def _send_webhook_with_retry(
-    url: str, payload_bytes: bytes, headers: dict, webhook_id: str, event: str,
+    url: str,
+    payload_bytes: bytes,
+    headers: dict,
+    webhook_id: str,
+    event: str,
 ) -> None:
     for attempt in range(1, _WEBHOOK_MAX_RETRIES + 1):
         try:
@@ -49,12 +53,17 @@ async def _send_webhook_with_retry(
                 if resp.status_code < 500:
                     logger.info(
                         "Webhook dispatched: id=%s event=%s status=%d attempt=%d",
-                        webhook_id, event, resp.status_code, attempt,
+                        webhook_id,
+                        event,
+                        resp.status_code,
+                        attempt,
                     )
                     return
                 logger.warning(
                     "Webhook server error: id=%s status=%d attempt=%d",
-                    webhook_id, resp.status_code, attempt,
+                    webhook_id,
+                    resp.status_code,
+                    attempt,
                 )
         except Exception:
             logger.warning("Webhook dispatch failed: id=%s url=%s attempt=%d", webhook_id, url, attempt)
@@ -63,12 +72,16 @@ async def _send_webhook_with_retry(
             await asyncio.sleep(delay)
     logger.error(
         "Webhook gave up after %d retries: id=%s url=%s event=%s",
-        _WEBHOOK_MAX_RETRIES, webhook_id, url, event,
+        _WEBHOOK_MAX_RETRIES,
+        webhook_id,
+        url,
+        event,
     )
 
 
 async def dispatch_webhook_event(event: str, data: dict, tenant_id: str = "") -> None:
     from .deps import get_session_factory
+
     sf = get_session_factory()
     # E-E4: the outer try/except must NOT wrap the per-webhook for-loop. A prior
     # version put the whole loop inside one try, so a single webhook raising an
@@ -117,7 +130,11 @@ async def dispatch_webhook_event(event: str, data: dict, tenant_id: str = "") ->
 
 
 async def _deliver_one_webhook(
-    url: str, payload_bytes: bytes, headers: dict, webhook_id: str, event: str,
+    url: str,
+    payload_bytes: bytes,
+    headers: dict,
+    webhook_id: str,
+    event: str,
 ) -> None:
     # P1-16: per-subscriber delivery coroutine, gated by the concurrency
     # semaphore so a burst does not open dozens of httpx clients at once.
@@ -130,5 +147,7 @@ async def _deliver_one_webhook(
     except Exception:
         logger.exception(
             "dispatch_webhook_event: subscriber id=%s url=%s raised, skipping (event=%s)",
-            webhook_id, url, event,
+            webhook_id,
+            url,
+            event,
         )

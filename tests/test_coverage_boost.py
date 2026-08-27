@@ -35,6 +35,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -45,9 +46,14 @@ async def client(app, settings):
 
 
 async def _create_model(client, name="cov-model"):
-    resp = await client.post("/api/v1/models", json={
-        "name": name, "description": "test", "model_type": "llm",
-    })
+    resp = await client.post(
+        "/api/v1/models",
+        json={
+            "name": name,
+            "description": "test",
+            "model_type": "llm",
+        },
+    )
     assert resp.status_code == 201
     return resp.json()
 
@@ -67,18 +73,25 @@ async def _create_published_version(client, model_id, version="1.0.0"):
 class TestBranches:
     async def test_create_branch(self, client):
         m = await _create_model(client, "branch-model")
-        resp = await client.post(f"/api/v1/models/{m['id']}/branches", json={
-            "name": "feature-x", "description": "test branch",
-        })
+        resp = await client.post(
+            f"/api/v1/models/{m['id']}/branches",
+            json={
+                "name": "feature-x",
+                "description": "test branch",
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["name"] == "feature-x"
         assert data["model_id"] == m["id"]
 
     async def test_create_branch_model_not_found(self, client):
-        resp = await client.post("/api/v1/models/nonexistent/branches", json={
-            "name": "feature-x",
-        })
+        resp = await client.post(
+            "/api/v1/models/nonexistent/branches",
+            json={
+                "name": "feature-x",
+            },
+        )
         assert resp.status_code == 404
 
     async def test_list_branches(self, client):
@@ -109,9 +122,12 @@ class TestBranches:
         m = await _create_model(client, "branch-upd-model")
         cr = await client.post(f"/api/v1/models/{m['id']}/branches", json={"name": "b1"})
         bid = cr.json()["id"]
-        resp = await client.patch(f"/api/v1/models/branches/{bid}", json={
-            "description": "updated desc",
-        })
+        resp = await client.patch(
+            f"/api/v1/models/branches/{bid}",
+            json={
+                "description": "updated desc",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["description"] == "updated desc"
 
@@ -119,9 +135,12 @@ class TestBranches:
         m = await _create_model(client, "branch-status-model")
         cr = await client.post(f"/api/v1/models/{m['id']}/branches", json={"name": "b1"})
         bid = cr.json()["id"]
-        resp = await client.patch(f"/api/v1/models/branches/{bid}", json={
-            "status": "merged",
-        })
+        resp = await client.patch(
+            f"/api/v1/models/branches/{bid}",
+            json={
+                "status": "merged",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["status"] == "merged"
 
@@ -129,9 +148,12 @@ class TestBranches:
         m = await _create_model(client, "branch-inv-status")
         cr = await client.post(f"/api/v1/models/{m['id']}/branches", json={"name": "b1"})
         bid = cr.json()["id"]
-        resp = await client.patch(f"/api/v1/models/branches/{bid}", json={
-            "status": "invalid_status",
-        })
+        resp = await client.patch(
+            f"/api/v1/models/branches/{bid}",
+            json={
+                "status": "invalid_status",
+            },
+        )
         assert resp.status_code == 400
 
     async def test_update_branch_no_fields(self, client):
@@ -142,9 +164,12 @@ class TestBranches:
         assert resp.status_code == 400
 
     async def test_update_branch_not_found(self, client):
-        resp = await client.patch("/api/v1/models/branches/nonexistent", json={
-            "description": "x",
-        })
+        resp = await client.patch(
+            "/api/v1/models/branches/nonexistent",
+            json={
+                "description": "x",
+            },
+        )
         assert resp.status_code == 404
 
     async def test_delete_branch(self, client):
@@ -271,23 +296,33 @@ class TestFavorites:
 class TestRatings:
     async def test_create_rating(self, client):
         m = await _create_model(client, "rate-model")
-        resp = await client.post(f"/api/v1/models/{m['id']}/ratings", json={
-            "score": 5, "comment": "excellent",
-        })
+        resp = await client.post(
+            f"/api/v1/models/{m['id']}/ratings",
+            json={
+                "score": 5,
+                "comment": "excellent",
+            },
+        )
         assert resp.status_code == 201
         assert resp.json()["score"] == 5
 
     async def test_create_rating_model_not_found(self, client):
-        resp = await client.post("/api/v1/models/nonexistent/ratings", json={
-            "score": 3,
-        })
+        resp = await client.post(
+            "/api/v1/models/nonexistent/ratings",
+            json={
+                "score": 3,
+            },
+        )
         assert resp.status_code == 404
 
     async def test_create_rating_invalid_score(self, client):
         m = await _create_model(client, "rate-inv-model")
-        resp = await client.post(f"/api/v1/models/{m['id']}/ratings", json={
-            "score": 0,
-        })
+        resp = await client.post(
+            f"/api/v1/models/{m['id']}/ratings",
+            json={
+                "score": 0,
+            },
+        )
         assert resp.status_code == 422
 
     async def test_list_ratings(self, client):
@@ -333,6 +368,7 @@ class TestBackup:
     @pytest.mark.asyncio
     async def test_start_and_stop_scheduler(self):
         from fusion_model_hub.server import backup
+
         backup._backup_task = None
         mock_settings = MagicMock()
         mock_settings.backup_dir = "/tmp/fmh_backup_test"
@@ -346,6 +382,7 @@ class TestBackup:
 
     def test_stop_scheduler_noop_if_none(self):
         from fusion_model_hub.server import backup
+
         backup._backup_task = None
         backup.stop_backup_scheduler()
         assert backup._backup_task is None
@@ -359,11 +396,13 @@ class TestBackup:
 
             from fusion_model_hub.db import crud
             from fusion_model_hub.server.deps import get_session_factory
+
             sf = get_session_factory()
             async with sf() as session:
                 await crud.create_model(session, name="backup-model")
 
             from fusion_model_hub.server.backup import _perform_backup
+
             await _perform_backup(tmpdir)
 
             files = os.listdir(tmpdir)
@@ -378,6 +417,7 @@ class TestBackup:
     @pytest.mark.asyncio
     async def test_run_backup_loop_no_dir(self):
         from fusion_model_hub.server.backup import _run_backup_loop
+
         mock_settings = MagicMock()
         mock_settings.backup_dir = ""
         mock_settings.backup_interval_seconds = 3600
@@ -395,29 +435,46 @@ class TestBackup:
             await init_db(engine)
             init_deps(settings, engine)
             from fusion_model_hub.server.deps import get_session_factory
+
             sf = get_session_factory()
             backup_file = os.path.join(tmpdir, "backup_test.json")
             payload = {
                 "timestamp": "20260101_000000",
                 "models": [
-                    {"id": "m-restore-1", "name": "restored-model", "description": "d",
-                     "model_type": "llm", "architecture": "qwen", "params_size": "7B",
-                     "license": "apache-2.0"},
+                    {
+                        "id": "m-restore-1",
+                        "name": "restored-model",
+                        "description": "d",
+                        "model_type": "llm",
+                        "architecture": "qwen",
+                        "params_size": "7B",
+                        "license": "apache-2.0",
+                    },
                 ],
                 "versions": [
-                    {"id": "v-restore-1", "model_id": "m-restore-1", "version": "1.0.0",
-                     "format": "mlx", "quantization": "4bit", "status": "published",
-                     "file_hash": "abc", "file_size": 1024, "benchmark_score": 0.9},
+                    {
+                        "id": "v-restore-1",
+                        "model_id": "m-restore-1",
+                        "version": "1.0.0",
+                        "format": "mlx",
+                        "quantization": "4bit",
+                        "status": "published",
+                        "file_hash": "abc",
+                        "file_size": 1024,
+                        "benchmark_score": 0.9,
+                    },
                 ],
             }
             with open(backup_file, "w") as f:
                 json.dump(payload, f)
             from fusion_model_hub.server.backup import restore_from_backup
+
             result = await restore_from_backup(backup_file)
             assert result["models_restored"] == 1
             assert result["versions_restored"] == 1
             async with sf() as session:
                 from fusion_model_hub.db.crud import get_model, get_version
+
                 m = await get_model(session, "m-restore-1")
                 assert m is not None and m.name == "restored-model"
                 v = await get_version(session, "v-restore-1")
@@ -438,12 +495,14 @@ class TestBackup:
             with open(backup_file, "w") as f:
                 json.dump({"timestamp": "x", "models": [], "versions": []}, f)
             from fusion_model_hub.server.backup import restore_from_backup
+
             result = await restore_from_backup(backup_file)
             assert result == {"models_restored": 0, "versions_restored": 0, "skipped": 0}
 
     @pytest.mark.asyncio
     async def test_run_backup_loop_cancelled(self):
         from fusion_model_hub.server.backup import _run_backup_loop
+
         mock_settings = MagicMock()
         mock_settings.backup_dir = "/tmp/test_backup"
         mock_settings.backup_interval_seconds = 3600
@@ -456,6 +515,7 @@ class TestBackup:
 class TestMetrics:
     def test_normalize_path_ids(self):
         from fusion_model_hub.server.metrics import _normalize_path
+
         assert _normalize_path("/api/v1/models/abc123def456ghi789jkl012mno345") == "/api/v1/models/:id"
         assert _normalize_path("/api/v1/models/12345") == "/api/v1/models/:id"
         assert _normalize_path("/api/v1/models") == "/api/v1/models"
@@ -463,6 +523,7 @@ class TestMetrics:
 
     def test_metrics_response(self):
         from fusion_model_hub.server.metrics import metrics_response
+
         resp = metrics_response()
         assert "text/plain" in resp.media_type
         assert len(resp.body) > 0
@@ -492,6 +553,7 @@ class TestMetrics:
         init_deps(settings, engine)
         from fusion_model_hub.server.deps import get_session_factory
         from fusion_model_hub.server.metrics import update_resource_metrics
+
         sf = get_session_factory()
         async with sf() as session:
             await update_resource_metrics(session)
@@ -502,10 +564,15 @@ class TestLoraMerge:
         m = await _create_model(client, "lora-merge-model")
         v1 = await _create_published_version(client, m["id"], "1.0.0")
         v2 = await _create_published_version(client, m["id"], "1.1.0")
-        resp = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": v1, "lora_version_id": v2,
-            "target_format": "mlx", "quant_bits": 4,
-        })
+        resp = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": v1,
+                "lora_version_id": v2,
+                "target_format": "mlx",
+                "quant_bits": 4,
+            },
+        )
         assert resp.status_code == 202
         data = resp.json()
         assert "task_id" in data
@@ -515,34 +582,54 @@ class TestLoraMerge:
         m = await _create_model(client, "lora-bits-model")
         v1 = await _create_published_version(client, m["id"], "1.0.0")
         v2 = await _create_published_version(client, m["id"], "1.1.0")
-        resp = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": v1, "lora_version_id": v2, "quant_bits": 3,
-        })
+        resp = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": v1,
+                "lora_version_id": v2,
+                "quant_bits": 3,
+            },
+        )
         assert resp.status_code == 400
 
     async def test_start_lora_merge_base_not_found(self, client):
         m = await _create_model(client, "lora-nf-model")
         v2 = await _create_published_version(client, m["id"], "1.0.0")
-        resp = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": "nonexistent", "lora_version_id": v2, "quant_bits": 4,
-        })
+        resp = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": "nonexistent",
+                "lora_version_id": v2,
+                "quant_bits": 4,
+            },
+        )
         assert resp.status_code == 404
 
     async def test_start_lora_merge_lora_not_found(self, client):
         m = await _create_model(client, "lora-nf2-model")
         v1 = await _create_published_version(client, m["id"], "1.0.0")
-        resp = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": v1, "lora_version_id": "nonexistent", "quant_bits": 4,
-        })
+        resp = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": v1,
+                "lora_version_id": "nonexistent",
+                "quant_bits": 4,
+            },
+        )
         assert resp.status_code == 404
 
     async def test_get_lora_merge_status(self, client):
         m = await _create_model(client, "lora-status-model")
         v1 = await _create_published_version(client, m["id"], "1.0.0")
         v2 = await _create_published_version(client, m["id"], "1.1.0")
-        cr = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": v1, "lora_version_id": v2, "quant_bits": 4,
-        })
+        cr = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": v1,
+                "lora_version_id": v2,
+                "quant_bits": 4,
+            },
+        )
         task_id = cr.json()["task_id"]
         await asyncio.sleep(0.3)
         resp = await client.get(f"/api/v1/quantize/lora-merge/{task_id}")

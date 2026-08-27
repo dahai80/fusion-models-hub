@@ -36,6 +36,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -46,10 +47,16 @@ async def client(app, settings):
 
 
 async def _create_model(client, name="deep-model"):
-    resp = await client.post("/api/v1/models", json={
-        "name": name, "description": "deep test",
-        "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
-    })
+    resp = await client.post(
+        "/api/v1/models",
+        json={
+            "name": name,
+            "description": "deep test",
+            "model_type": "llm",
+            "architecture": "qwen2",
+            "params_size": "7B",
+        },
+    )
     assert resp.status_code == 201
     return resp.json()
 
@@ -128,7 +135,7 @@ class TestChunkUploadDeep:
         model = await _create_model(client, "chunk-multi-deep")
         content = b"chunk-upload-test-data-for-deep-coverage"
         chunk_size = len(content) // 3
-        chunks = [content[:chunk_size], content[chunk_size:2*chunk_size], content[2*chunk_size:]]
+        chunks = [content[:chunk_size], content[chunk_size : 2 * chunk_size], content[2 * chunk_size :]]
         for i, chunk_data in enumerate(chunks):
             resp = await client.post(
                 f"/api/v1/models/{model['id']}/versions/chunk-upload",
@@ -168,7 +175,6 @@ class TestChunkUploadDeep:
                 files={"chunk": ("chunk.bin", b"data", "application/octet-stream")},
             )
             assert resp.status_code == 400, f"{bad_name!r} should be rejected, got {resp.status_code}"
-
 
 
 class TestVersionListDeep:
@@ -218,7 +224,9 @@ class TestVersionRollbackDeep:
         ver = await _create_version(client, model["id"])
         await client.put(f"/api/v1/versions/{ver['id']}/status", json={"target_status": "testing"})
         await client.put(f"/api/v1/versions/{ver['id']}/metrics", json={"benchmark_score": 90.0})
-        await client.put(f"/api/v1/versions/{ver['id']}/status", json={"target_status": "published", "approval_level": "l1"})
+        await client.put(
+            f"/api/v1/versions/{ver['id']}/status", json={"target_status": "published", "approval_level": "l1"}
+        )
         await client.put(f"/api/v1/versions/{ver['id']}/status", json={"target_status": "deprecated"})
         resp = await client.post(f"/api/v1/versions/{ver['id']}/rollback")
         assert resp.status_code == 200
@@ -238,7 +246,9 @@ class TestDeprecateDeep:
         v2 = await _create_version(client, model["id"], "2.0.0")
         await client.put(f"/api/v1/versions/{v1['id']}/status", json={"target_status": "testing"})
         await client.put(f"/api/v1/versions/{v1['id']}/metrics", json={"benchmark_score": 90.0})
-        await client.put(f"/api/v1/versions/{v1['id']}/status", json={"target_status": "published", "approval_level": "l1"})
+        await client.put(
+            f"/api/v1/versions/{v1['id']}/status", json={"target_status": "published", "approval_level": "l1"}
+        )
         resp = await client.post(
             f"/api/v1/versions/{v1['id']}/deprecate",
             json={"successor_version_id": v2["id"], "remark": "superseded by v2"},
@@ -254,7 +264,9 @@ class TestDeprecateDeep:
         ver = await _create_version(client, model["id"])
         await client.put(f"/api/v1/versions/{ver['id']}/status", json={"target_status": "testing"})
         await client.put(f"/api/v1/versions/{ver['id']}/metrics", json={"benchmark_score": 90.0})
-        await client.put(f"/api/v1/versions/{ver['id']}/status", json={"target_status": "published", "approval_level": "l1"})
+        await client.put(
+            f"/api/v1/versions/{ver['id']}/status", json={"target_status": "published", "approval_level": "l1"}
+        )
         resp = await client.post(
             f"/api/v1/versions/{ver['id']}/deprecate",
             json={"successor_version_id": "", "remark": "old version"},
@@ -280,7 +292,9 @@ class TestRetireDeep:
         ver = await _create_version(client, model["id"])
         await client.put(f"/api/v1/versions/{ver['id']}/status", json={"target_status": "testing"})
         await client.put(f"/api/v1/versions/{ver['id']}/metrics", json={"benchmark_score": 90.0})
-        await client.put(f"/api/v1/versions/{ver['id']}/status", json={"target_status": "published", "approval_level": "l1"})
+        await client.put(
+            f"/api/v1/versions/{ver['id']}/status", json={"target_status": "published", "approval_level": "l1"}
+        )
         await client.put(f"/api/v1/versions/{ver['id']}/status", json={"target_status": "deprecated"})
         resp = await client.post(f"/api/v1/versions/{ver['id']}/retire")
         assert resp.status_code == 200
@@ -523,7 +537,14 @@ class TestImportModelTar:
                 "hf_repo": "",
             },
             "versions": [
-                {"id": "v1", "version": "1.0.0", "format": "mlx", "quantization": "4bit", "file_hash": "abc", "file_size": 100},
+                {
+                    "id": "v1",
+                    "version": "1.0.0",
+                    "format": "mlx",
+                    "quantization": "4bit",
+                    "file_hash": "abc",
+                    "file_size": 100,
+                },
             ],
         }
         buf = io.BytesIO()
@@ -787,9 +808,13 @@ class TestModelSyncDeep:
 class TestModelSearchDeep:
     @pytest.mark.asyncio
     async def test_search_with_params_size(self, client):
-        await client.post("/api/v1/models", json={
-            "name": "search-ps-deep", "params_size": "7B",
-        })
+        await client.post(
+            "/api/v1/models",
+            json={
+                "name": "search-ps-deep",
+                "params_size": "7B",
+            },
+        )
         resp = await client.get("/api/v1/models/search", params={"params_size": "7B"})
         assert resp.status_code == 200
         assert resp.json()["total"] >= 1
@@ -820,18 +845,26 @@ class TestModelRecommendDeep:
     # params_size/task_types/download_count columns (was hardcoded zeros).
     @pytest.mark.asyncio
     async def test_recommend_with_task_type(self, client):
-        await client.post("/api/v1/models", json={
-            "name": "rec-task-deep", "task_types": "text-generation",
-        })
+        await client.post(
+            "/api/v1/models",
+            json={
+                "name": "rec-task-deep",
+                "task_types": "text-generation",
+            },
+        )
         resp = await client.post("/api/v1/recommend", json={"task": "text-generation"})
         assert resp.status_code == 200
         assert "recommendations" in resp.json()
 
     @pytest.mark.asyncio
     async def test_recommend_with_max_params(self, client):
-        await client.post("/api/v1/models", json={
-            "name": "rec-params-deep", "params_size": "7B",
-        })
+        await client.post(
+            "/api/v1/models",
+            json={
+                "name": "rec-params-deep",
+                "params_size": "7B",
+            },
+        )
         resp = await client.post("/api/v1/recommend", json={"max_params_b": 10})
         assert resp.status_code == 200
 
@@ -840,9 +873,13 @@ class TestModelRecommendDeep:
         # E-E3 regression: with real params_size wired, min_params_b>0 must keep
         # candidates (previously params_b was hardcoded 0 so any min_params_b>0
         # filtered everything out).
-        await client.post("/api/v1/models", json={
-            "name": "rec-min-deep", "params_size": "7B",
-        })
+        await client.post(
+            "/api/v1/models",
+            json={
+                "name": "rec-min-deep",
+                "params_size": "7B",
+            },
+        )
         resp = await client.post("/api/v1/recommend", json={"min_params_b": 5, "max_params_b": 10})
         assert resp.status_code == 200
         names = [r["name"] for r in resp.json()["recommendations"]]
@@ -1175,7 +1212,9 @@ class TestCompareBenchmarks:
         create2 = await client.post("/api/v1/evaluations", json={"model_id": model["id"], "benchmark_name": "mmlu"})
         await client.patch(f"/api/v1/evaluations/{create1.json()['id']}", json={"status": "completed", "score": 80.0})
         await client.patch(f"/api/v1/evaluations/{create2.json()['id']}", json={"status": "completed", "score": 90.0})
-        resp = await client.get("/api/v1/evaluations/benchmarks/compare", params={"model_id": model["id"], "benchmark_name": "mmlu"})
+        resp = await client.get(
+            "/api/v1/evaluations/benchmarks/compare", params={"model_id": model["id"], "benchmark_name": "mmlu"}
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["best_score"] == 90.0
@@ -1190,7 +1229,9 @@ class TestCompareBenchmarks:
     async def test_compare_benchmarks_no_completed(self, client):
         model = await _create_model(client, "cmp-nocomp-deep")
         await client.post("/api/v1/evaluations", json={"model_id": model["id"], "benchmark_name": "nop"})
-        resp = await client.get("/api/v1/evaluations/benchmarks/compare", params={"model_id": model["id"], "benchmark_name": "nop"})
+        resp = await client.get(
+            "/api/v1/evaluations/benchmarks/compare", params={"model_id": model["id"], "benchmark_name": "nop"}
+        )
         assert resp.status_code == 404
 
 
@@ -1283,7 +1324,12 @@ class TestWebhookCRUDDeep:
     async def test_create_webhook_with_secret(self, client):
         resp = await client.post(
             "/api/v1/webhooks",
-            json={"name": "wh-secret", "url": "https://example.com/hook", "secret": "mysecret", "events": "model.created"},
+            json={
+                "name": "wh-secret",
+                "url": "https://example.com/hook",
+                "secret": "mysecret",
+                "events": "model.created",
+            },
         )
         assert resp.status_code == 201
         data = resp.json()
@@ -1308,7 +1354,12 @@ class TestWebhookDispatch:
         with patch("fusion_model_hub.server.events._send_webhook_with_retry", new_callable=AsyncMock) as mock_send:
             await client.post(
                 "/api/v1/webhooks",
-                json={"name": "dispatch-wh", "url": "https://example.com/hook", "events": "model.created", "secret": "s3cret"},
+                json={
+                    "name": "dispatch-wh",
+                    "url": "https://example.com/hook",
+                    "events": "model.created",
+                    "secret": "s3cret",
+                },
             )
             await client.post("/api/v1/models", json={"name": "dispatch-model"})
             await asyncio.sleep(0.1)
@@ -1359,12 +1410,14 @@ class TestWebhookDispatch:
 class TestWebhookSignPayload:
     def test_sign_payload(self):
         from fusion_model_hub.server.routers.webhooks import _sign_payload
+
         result = _sign_payload(b"test payload", "secret")
         assert isinstance(result, str)
         assert len(result) == 64
 
     def test_sign_payload_empty_secret(self):
         from fusion_model_hub.server.routers.webhooks import _sign_payload
+
         result = _sign_payload(b"test payload", "")
         assert isinstance(result, str)
 
@@ -1374,6 +1427,7 @@ class TestWebhookSendWithRetry:
     async def test_send_webhook_success(self, client):
         # H11: dispatch moved to server/events.py; patch the owning module.
         from fusion_model_hub.server.events import _send_webhook_with_retry
+
         with patch("fusion_model_hub.server.events.httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
             mock_resp = MagicMock()
@@ -1393,6 +1447,7 @@ class TestWebhookSendWithRetry:
     @pytest.mark.asyncio
     async def test_send_webhook_server_error_retry(self, client):
         from fusion_model_hub.server.events import _send_webhook_with_retry
+
         with patch("fusion_model_hub.server.events.httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
             mock_resp = MagicMock()
@@ -1414,6 +1469,7 @@ class TestWebhookSendWithRetry:
     @pytest.mark.asyncio
     async def test_send_webhook_connection_error(self, client):
         from fusion_model_hub.server.events import _send_webhook_with_retry
+
         with patch("fusion_model_hub.server.events.httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
             mock_instance.post = AsyncMock(side_effect=Exception("connection error"))
@@ -1435,6 +1491,7 @@ class TestDispatchWebhookEvent:
     @pytest.mark.asyncio
     async def test_dispatch_with_inactive_webhook(self, client):
         from fusion_model_hub.server.routers.webhooks import dispatch_webhook_event
+
         wh = await client.post(
             "/api/v1/webhooks",
             json={"name": "inactive-wh", "url": "https://example.com/hook", "events": "model.created"},
@@ -1447,6 +1504,7 @@ class TestDispatchWebhookEvent:
     @pytest.mark.asyncio
     async def test_dispatch_event_not_matching(self, client):
         from fusion_model_hub.server.routers.webhooks import dispatch_webhook_event
+
         await client.post(
             "/api/v1/webhooks",
             json={"name": "mismatch-wh", "url": "https://example.com/hook", "events": "model.deleted"},

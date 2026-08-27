@@ -56,9 +56,7 @@ async def _perform_backup(backup_dir: str) -> None:
         # in memory; models stay paginated only because list_models enforces
         # MAX_PAGE_SIZE and tenant scoping we do not want to re-implement here.
         all_versions: list[ModelVersion] = list(
-            (await session.execute(
-                select(ModelVersion).order_by(ModelVersion.created_at.desc())
-            )).scalars().all()
+            (await session.execute(select(ModelVersion).order_by(ModelVersion.created_at.desc()))).scalars().all()
         )
         versions_by_model: dict[str, list[ModelVersion]] = {}
         for v in all_versions:
@@ -70,27 +68,43 @@ async def _perform_backup(backup_dir: str) -> None:
             if not models:
                 break
             for m in models:
-                data["models"].append({
-                    "id": m.id, "name": m.name, "description": m.description,
-                    "model_type": m.model_type.value, "architecture": m.architecture,
-                    "params_size": m.params_size, "license": m.license,
-                })
+                data["models"].append(
+                    {
+                        "id": m.id,
+                        "name": m.name,
+                        "description": m.description,
+                        "model_type": m.model_type.value,
+                        "architecture": m.architecture,
+                        "params_size": m.params_size,
+                        "license": m.license,
+                    }
+                )
                 for v in versions_by_model.get(m.id, []):
-                    data["versions"].append({
-                        "id": v.id, "model_id": v.model_id, "version": v.version,
-                        "format": v.format.value, "quantization": v.quantization.value,
-                        "status": v.status.value, "file_hash": v.file_hash,
-                        "file_size": v.file_size, "benchmark_score": v.benchmark_score,
-                    })
+                    data["versions"].append(
+                        {
+                            "id": v.id,
+                            "model_id": v.model_id,
+                            "version": v.version,
+                            "format": v.format.value,
+                            "quantization": v.quantization.value,
+                            "status": v.status.value,
+                            "file_hash": v.file_hash,
+                            "file_size": v.file_size,
+                            "benchmark_score": v.benchmark_score,
+                        }
+                    )
             if page * _BACKUP_PAGE_SIZE >= total:
                 break
             page += 1
     import anyio
+
     await anyio.to_thread.run_sync(_write_backup_sync, backup_file, data)
     _rotate_backups(backup_dir)
     logger.info(
         "Auto-backup completed: file=%s models=%d versions=%d",
-        backup_file, len(data["models"]), len(data["versions"]),
+        backup_file,
+        len(data["models"]),
+        len(data["versions"]),
     )
 
 
@@ -168,11 +182,17 @@ async def restore_from_backup(backup_file: str) -> dict:
                 mt = ModelType(m.get("model_type", "llm"))
             except ValueError:
                 mt = ModelType.LLM
-            session.add(Model(
-                id=mid, name=m.get("name", ""), description=m.get("description", ""),
-                model_type=mt, architecture=m.get("architecture", ""),
-                params_size=m.get("params_size", ""), license=m.get("license", ""),
-            ))
+            session.add(
+                Model(
+                    id=mid,
+                    name=m.get("name", ""),
+                    description=m.get("description", ""),
+                    model_type=mt,
+                    architecture=m.get("architecture", ""),
+                    params_size=m.get("params_size", ""),
+                    license=m.get("license", ""),
+                )
+            )
             existing_model_ids.add(mid)
             restored_models += 1
         for v in versions_in:
@@ -192,17 +212,27 @@ async def restore_from_backup(backup_file: str) -> dict:
                 status = ModelStatus(v.get("status", "draft"))
             except ValueError:
                 status = ModelStatus.DRAFT
-            session.add(ModelVersion(
-                id=vid, model_id=v.get("model_id", ""), version=v.get("version", ""),
-                format=fmt, quantization=quant, status=status,
-                file_hash=v.get("file_hash", ""), file_size=v.get("file_size", 0),
-                benchmark_score=v.get("benchmark_score", 0),
-            ))
+            session.add(
+                ModelVersion(
+                    id=vid,
+                    model_id=v.get("model_id", ""),
+                    version=v.get("version", ""),
+                    format=fmt,
+                    quantization=quant,
+                    status=status,
+                    file_hash=v.get("file_hash", ""),
+                    file_size=v.get("file_size", 0),
+                    benchmark_score=v.get("benchmark_score", 0),
+                )
+            )
             existing_version_ids.add(vid)
             restored_versions += 1
         await session.commit()
     logger.info(
         "Restore from backup=%s: models=%d versions=%d skipped=%d",
-        backup_file, restored_models, restored_versions, skipped,
+        backup_file,
+        restored_models,
+        restored_versions,
+        skipped,
     )
     return {"models_restored": restored_models, "versions_restored": restored_versions, "skipped": skipped}

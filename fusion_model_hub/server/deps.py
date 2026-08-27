@@ -19,11 +19,13 @@ _start_ts: float | None = None
 def init_deps(settings: Settings, engine) -> None:
     global _settings, _session_factory, _store, _cache, _start_ts
     import time as _time
+
     _settings = settings
     _session_factory = _make_session_factory(engine)
     _start_ts = _time.time()
     if settings.storage_type == "minio" and settings.minio_endpoint:
         from ..storage.minio_store import MinioStore
+
         _store = MinioStore(
             endpoint=settings.minio_endpoint,
             access_key=settings.minio_access_key,
@@ -34,8 +36,10 @@ def init_deps(settings: Settings, engine) -> None:
     else:
         _store = LocalStore(data_dir=settings.data_dir)
     from ..cache.manager import CacheManager
+
     _cache = CacheManager(cache_root=settings.cache_dir)
     from ..db import crud as _crud
+
     _crud.set_api_key_pepper(settings.api_key_pepper)
 
 

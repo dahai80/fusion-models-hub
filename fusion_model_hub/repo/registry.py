@@ -1,4 +1,5 @@
 """Model registry — supports all model formats with MLX as primary target."""
+
 from __future__ import annotations
 
 import json
@@ -24,9 +25,15 @@ class ModelRegistry:
         return cls._models.get(model_id)
 
     @classmethod
-    def list(cls, model_type: str = "", model_format: str = "",
-             quant: str = "", device: str = "", search: str = "",
-             mlx_only: bool = False) -> list[dict[str, Any]]:
+    def list(
+        cls,
+        model_type: str = "",
+        model_format: str = "",
+        quant: str = "",
+        device: str = "",
+        search: str = "",
+        mlx_only: bool = False,
+    ) -> list[dict[str, Any]]:
         """List models with optional filters."""
         results = []
         for m in cls._models.values():
@@ -58,58 +65,106 @@ class ModelRegistry:
             # engine ranked nonexistent models. Replaced with real, fetchable
             # models; speeds are representative Apple-Silicon ballpark, not
             # measured claims.
-            ModelInfo(id="qwen2.5-7b-instruct-mlx-4bit", name="Qwen2.5-7B-Instruct (MLX 4bit)",
-                      description="Alibaba Qwen2.5 7B Instruct, native MLX 4bit",
-                      model_type=ModelType.CHAT, format=ModelFormat.MLX,
-                      quantization=Quantization.Q4, parameters="7B",
-                      speed_tok_s=35.0, min_memory_gb=8, file_size_gb=4.4,
-                      mlx_version=">=0.5.0",
-                      download_url="https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit"),
-            ModelInfo(id="qwen2.5-7b-instruct-mlx-8bit", name="Qwen2.5-7B-Instruct (MLX 8bit)",
-                      description="Alibaba Qwen2.5 7B Instruct, native MLX 8bit",
-                      model_type=ModelType.CHAT, format=ModelFormat.MLX,
-                      quantization=Quantization.Q8, parameters="7B",
-                      speed_tok_s=25.0, min_memory_gb=12, file_size_gb=8.1,
-                      mlx_version=">=0.5.0",
-                      download_url="https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-8bit"),
+            ModelInfo(
+                id="qwen2.5-7b-instruct-mlx-4bit",
+                name="Qwen2.5-7B-Instruct (MLX 4bit)",
+                description="Alibaba Qwen2.5 7B Instruct, native MLX 4bit",
+                model_type=ModelType.CHAT,
+                format=ModelFormat.MLX,
+                quantization=Quantization.Q4,
+                parameters="7B",
+                speed_tok_s=35.0,
+                min_memory_gb=8,
+                file_size_gb=4.4,
+                mlx_version=">=0.5.0",
+                download_url="https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit",
+            ),
+            ModelInfo(
+                id="qwen2.5-7b-instruct-mlx-8bit",
+                name="Qwen2.5-7B-Instruct (MLX 8bit)",
+                description="Alibaba Qwen2.5 7B Instruct, native MLX 8bit",
+                model_type=ModelType.CHAT,
+                format=ModelFormat.MLX,
+                quantization=Quantization.Q8,
+                parameters="7B",
+                speed_tok_s=25.0,
+                min_memory_gb=12,
+                file_size_gb=8.1,
+                mlx_version=">=0.5.0",
+                download_url="https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-8bit",
+            ),
             # GGUF format
-            ModelInfo(id="qwen2.5-7b-instruct-gguf-q4", name="Qwen2.5-7B-Instruct (GGUF Q4_K_M)",
-                      description="Qwen2.5 7B Instruct in GGUF format, compatible with Ollama/llama.cpp",
-                      model_type=ModelType.CHAT, format=ModelFormat.GGUF,
-                      quantization=Quantization.Q4, parameters="7B",
-                      min_memory_gb=8, file_size_gb=4.7,
-                      hf_repo="Qwen/Qwen2.5-7B-Instruct-GGUF"),
+            ModelInfo(
+                id="qwen2.5-7b-instruct-gguf-q4",
+                name="Qwen2.5-7B-Instruct (GGUF Q4_K_M)",
+                description="Qwen2.5 7B Instruct in GGUF format, compatible with Ollama/llama.cpp",
+                model_type=ModelType.CHAT,
+                format=ModelFormat.GGUF,
+                quantization=Quantization.Q4,
+                parameters="7B",
+                min_memory_gb=8,
+                file_size_gb=4.7,
+                hf_repo="Qwen/Qwen2.5-7B-Instruct-GGUF",
+            ),
             # HuggingFace format
-            ModelInfo(id="qwen2.5-7b-instruct-hf", name="Qwen2.5-7B-Instruct (HuggingFace)",
-                      description="Qwen2.5 7B Instruct original HuggingFace format, needs conversion to MLX",
-                      model_type=ModelType.CHAT, format=ModelFormat.SAFETENSORS,
-                      quantization=Quantization.NONE, parameters="7B",
-                      source=ModelSource.HUGGINGFACE, min_memory_gb=16, file_size_gb=15.0,
-                      hf_repo="Qwen/Qwen2.5-7B-Instruct"),
+            ModelInfo(
+                id="qwen2.5-7b-instruct-hf",
+                name="Qwen2.5-7B-Instruct (HuggingFace)",
+                description="Qwen2.5 7B Instruct original HuggingFace format, needs conversion to MLX",
+                model_type=ModelType.CHAT,
+                format=ModelFormat.SAFETENSORS,
+                quantization=Quantization.NONE,
+                parameters="7B",
+                source=ModelSource.HUGGINGFACE,
+                min_memory_gb=16,
+                file_size_gb=15.0,
+                hf_repo="Qwen/Qwen2.5-7B-Instruct",
+            ),
             # Embedding
-            ModelInfo(id="bge-m3-embedding", name="BGE-M3 Embedding (MLX)",
-                      description="BAAI BGE-M3, MLX format for Fusion-KB",
-                      model_type=ModelType.EMBEDDING, format=ModelFormat.MLX,
-                      quantization=Quantization.Q8, parameters="568M",
-                      speed_tok_s=500.0, min_memory_gb=2, file_size_gb=1.1,
-                      mlx_version=">=0.5.0",
-                      download_url="https://huggingface.co/mlx-community/bge-m3-mlx"),
+            ModelInfo(
+                id="bge-m3-embedding",
+                name="BGE-M3 Embedding (MLX)",
+                description="BAAI BGE-M3, MLX format for Fusion-KB",
+                model_type=ModelType.EMBEDDING,
+                format=ModelFormat.MLX,
+                quantization=Quantization.Q8,
+                parameters="568M",
+                speed_tok_s=500.0,
+                min_memory_gb=2,
+                file_size_gb=1.1,
+                mlx_version=">=0.5.0",
+                download_url="https://huggingface.co/mlx-community/bge-m3-mlx",
+            ),
             # Multimodal
-            ModelInfo(id="qwen2-vl-7b-instruct-mlx-4bit", name="Qwen2-VL-7B-Instruct (MLX 4bit)",
-                      description="Qwen2 Vision-Language 7B Instruct, MLX 4bit",
-                      model_type=ModelType.MULTIMODAL, format=ModelFormat.MLX,
-                      quantization=Quantization.Q4, parameters="7B",
-                      speed_tok_s=30.0, min_memory_gb=8, file_size_gb=4.0,
-                      mlx_version=">=0.5.0",
-                      download_url="https://huggingface.co/mlx-community/Qwen2-VL-7B-Instruct-4bit"),
+            ModelInfo(
+                id="qwen2-vl-7b-instruct-mlx-4bit",
+                name="Qwen2-VL-7B-Instruct (MLX 4bit)",
+                description="Qwen2 Vision-Language 7B Instruct, MLX 4bit",
+                model_type=ModelType.MULTIMODAL,
+                format=ModelFormat.MLX,
+                quantization=Quantization.Q4,
+                parameters="7B",
+                speed_tok_s=30.0,
+                min_memory_gb=8,
+                file_size_gb=4.0,
+                mlx_version=">=0.5.0",
+                download_url="https://huggingface.co/mlx-community/Qwen2-VL-7B-Instruct-4bit",
+            ),
             # Phi-3.5 mini MLX (replaces fabricated DeepSeek-V4-Flash)
-            ModelInfo(id="phi-3.5-mini-instruct-mlx-4bit", name="Phi-3.5-Mini-Instruct (MLX 4bit)",
-                      description="Microsoft Phi-3.5 Mini 3.8B Instruct, MLX 4bit",
-                      model_type=ModelType.CHAT, format=ModelFormat.MLX,
-                      quantization=Quantization.Q4, parameters="3.8B",
-                      speed_tok_s=45.0, min_memory_gb=4, file_size_gb=2.2,
-                      mlx_version=">=0.5.0",
-                      download_url="https://huggingface.co/mlx-community/Phi-3.5-mini-instruct-4bit"),
+            ModelInfo(
+                id="phi-3.5-mini-instruct-mlx-4bit",
+                name="Phi-3.5-Mini-Instruct (MLX 4bit)",
+                description="Microsoft Phi-3.5 Mini 3.8B Instruct, MLX 4bit",
+                model_type=ModelType.CHAT,
+                format=ModelFormat.MLX,
+                quantization=Quantization.Q4,
+                parameters="3.8B",
+                speed_tok_s=45.0,
+                min_memory_gb=4,
+                file_size_gb=2.2,
+                mlx_version=">=0.5.0",
+                download_url="https://huggingface.co/mlx-community/Phi-3.5-mini-instruct-4bit",
+            ),
         ]
         for m in defaults:
             cls.register(m)

@@ -21,9 +21,11 @@ def _run_export(args):
         await init_db(engine)
         init_deps(settings, engine)
         from .deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             from ..db import crud
+
             model_ids = [x.strip() for x in args.models.split(",") if x.strip()] if args.models else []
             models, _ = await crud.list_models(session, page=1, page_size=10000)
             if model_ids:
@@ -34,19 +36,24 @@ def _run_export(args):
                 "version": "1.0",
                 "models": [
                     {
-                        "id": m.id, "name": m.name, "tenant_id": m.tenant_id,
-                        "description": m.description, "model_type": m.model_type.value,
-                        "architecture": m.architecture, "params_size": m.params_size,
-                        "license": m.license, "author": m.author, "language": m.language,
-                        "task_types": m.task_types, "owner": m.owner, "hf_repo": m.hf_repo,
+                        "id": m.id,
+                        "name": m.name,
+                        "tenant_id": m.tenant_id,
+                        "description": m.description,
+                        "model_type": m.model_type.value,
+                        "architecture": m.architecture,
+                        "params_size": m.params_size,
+                        "license": m.license,
+                        "author": m.author,
+                        "language": m.language,
+                        "task_types": m.task_types,
+                        "owner": m.owner,
+                        "hf_repo": m.hf_repo,
                         "tags": [{"key": t.key, "value": t.value} for t in m.tags],
                     }
                     for m in models
                 ],
-                "tenants": [
-                    {"id": t.id, "name": t.name, "display_name": t.display_name}
-                    for t in tenants
-                ],
+                "tenants": [{"id": t.id, "name": t.name, "display_name": t.display_name} for t in tenants],
                 "webhooks": [
                     {"id": w.id, "name": w.name, "url": w.url, "events": w.events, "tenant_id": w.tenant_id}
                     for w in webhooks
@@ -61,7 +68,10 @@ def _run_export(args):
                 f.write(content)
             logger.info(
                 "Exported %d models, %d tenants, %d webhooks to %s",
-                len(models), len(tenants), len(webhooks), output,
+                len(models),
+                len(tenants),
+                len(webhooks),
+                output,
             )
 
     asyncio.run(_do_export())
@@ -81,6 +91,7 @@ def _run_import(args):
         await init_db(engine)
         init_deps(settings, engine)
         from .deps import get_session_factory
+
         sf = get_session_factory()
         input_file = args.input or "-"
         if input_file == "-":
@@ -104,12 +115,19 @@ def _run_import(args):
                     except ValueError:
                         mt = ModelType.LLM
                     new_m = await crud.create_model(
-                        session, name=m["name"], tenant_id=m.get("tenant_id", ""),
-                        description=m.get("description", ""), model_type=mt,
-                        architecture=m.get("architecture", ""), params_size=m.get("params_size", ""),
-                        license=m.get("license", ""), author=m.get("author", ""),
-                        language=m.get("language", ""), task_types=m.get("task_types", ""),
-                        owner=m.get("owner", ""), hf_repo=m.get("hf_repo", ""),
+                        session,
+                        name=m["name"],
+                        tenant_id=m.get("tenant_id", ""),
+                        description=m.get("description", ""),
+                        model_type=mt,
+                        architecture=m.get("architecture", ""),
+                        params_size=m.get("params_size", ""),
+                        license=m.get("license", ""),
+                        author=m.get("author", ""),
+                        language=m.get("language", ""),
+                        task_types=m.get("task_types", ""),
+                        owner=m.get("owner", ""),
+                        hf_repo=m.get("hf_repo", ""),
                     )
                     tags = m.get("tags", [])
                     if tags:
@@ -117,8 +135,11 @@ def _run_import(args):
                     count += 1
             for w in data.get("webhooks", []):
                 await crud.create_webhook(
-                    session, name=w["name"], url=w["url"],
-                    events=w.get("events", ""), tenant_id=w.get("tenant_id", ""),
+                    session,
+                    name=w["name"],
+                    url=w["url"],
+                    events=w.get("events", ""),
+                    tenant_id=w.get("tenant_id", ""),
                 )
                 count += 1
         logger.info("Imported %d items", count)
@@ -160,7 +181,9 @@ def _run_restore(args):
         result = await restore_from_backup(args.input)
         logger.info(
             "Restore result: models=%d versions=%d skipped=%d",
-            result["models_restored"], result["versions_restored"], result["skipped"],
+            result["models_restored"],
+            result["versions_restored"],
+            result["skipped"],
         )
         print(json.dumps(result, indent=2))
 
@@ -219,11 +242,16 @@ def main():
 
     if command == "serve":
         from .config import Settings
+
         settings = Settings(
-            host=args.host, port=args.port,
-            data_dir=args.data_dir, db_url=args.db_url,
-            mlx_url=args.mlx_url, log_level=args.log_level,
-            tls_certfile=args.tls_certfile, tls_keyfile=args.tls_keyfile,
+            host=args.host,
+            port=args.port,
+            data_dir=args.data_dir,
+            db_url=args.db_url,
+            mlx_url=args.mlx_url,
+            log_level=args.log_level,
+            tls_certfile=args.tls_certfile,
+            tls_keyfile=args.tls_keyfile,
         )
         ssl_kwargs = {}
         if settings.tls_certfile and settings.tls_keyfile:

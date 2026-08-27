@@ -38,17 +38,19 @@ async def cache_list_entries(
     for key, data in cache._index.items():
         if level and data.get("level") != level:
             continue
-        entries.append({
-            "key": key,
-            "model_id": data.get("model_id"),
-            "level": data.get("level"),
-            "path": data.get("path"),
-            "size_bytes": data.get("size_bytes", 0),
-            "quant_bits": data.get("quant_bits", 0),
-            "mlx_version": data.get("mlx_version", ""),
-            "created_at": data.get("created_at", 0),
-            "last_accessed": data.get("last_accessed", 0),
-        })
+        entries.append(
+            {
+                "key": key,
+                "model_id": data.get("model_id"),
+                "level": data.get("level"),
+                "path": data.get("path"),
+                "size_bytes": data.get("size_bytes", 0),
+                "quant_bits": data.get("quant_bits", 0),
+                "mlx_version": data.get("mlx_version", ""),
+                "created_at": data.get("created_at", 0),
+                "last_accessed": data.get("last_accessed", 0),
+            }
+        )
     return {"entries": entries, "count": len(entries)}
 
 

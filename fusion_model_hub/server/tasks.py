@@ -145,7 +145,9 @@ async def _run_quantize(
                     if entry and entry.path:
                         logger.info(
                             "Cache hit for quantize: model=%s bits=%d ver=%s",
-                            model_id, quant_bits, source_ver.id,
+                            model_id,
+                            quant_bits,
+                            source_ver.id,
                         )
                         result = {
                             "status": "completed",
@@ -178,7 +180,9 @@ async def _run_quantize(
                         )
                         logger.info(
                             "Cached quantize output: model=%s bits=%d ver=%s",
-                            model_id, quant_bits, source_ver.id,
+                            model_id,
+                            quant_bits,
+                            source_ver.id,
                         )
                     except Exception:
                         logger.exception("Cache put failed for quantize: model=%s", model_id)

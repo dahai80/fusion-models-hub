@@ -31,7 +31,7 @@ def _resolve_wm_secret() -> str:
         raise HTTPException(
             status_code=503,
             detail="Watermark disabled: set a non-default FMH_WATERMARK_SECRET env "
-                   "(high entropy) before embedding/verifying watermarks",
+            "(high entropy) before embedding/verifying watermarks",
         )
     return secret
 
@@ -51,8 +51,11 @@ class WatermarkVerifyRequest(BaseModel):
 
 def _wm_to_dict(w) -> dict:
     return {
-        "id": w.id, "model_id": w.model_id, "version_id": w.version_id,
-        "watermark_type": w.watermark_type, "payload": json.loads(w.payload) if w.payload else {},
+        "id": w.id,
+        "model_id": w.model_id,
+        "version_id": w.version_id,
+        "watermark_type": w.watermark_type,
+        "payload": json.loads(w.payload) if w.payload else {},
         "signature": w.signature,
         "created_at": w.created_at.isoformat() if w.created_at else None,
     }
@@ -77,9 +80,12 @@ async def embed_watermark(body: WatermarkEmbedRequest, session: SessionDep, requ
     payload["owner"] = getattr(request.state, "tenant_id", "") or model.tenant_id or ""
     signature = _sign_payload(payload, body.model_id, body.version_id, secret)
     wm = await crud.create_watermark(
-        session, model_id=body.model_id, version_id=body.version_id,
+        session,
+        model_id=body.model_id,
+        version_id=body.version_id,
         watermark_type=body.watermark_type,
-        payload=json.dumps(payload), signature=signature,
+        payload=json.dumps(payload),
+        signature=signature,
     )
     logger.info("Watermark embedded: id=%s model=%s", wm.id, body.model_id)
     return _wm_to_dict(wm)

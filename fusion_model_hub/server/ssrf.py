@@ -53,14 +53,7 @@ def _reject(msg: str = _BLOCKED_DETAIL) -> None:
 
 
 def _check_ip(ip: _IPAddress) -> None:
-    if (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    ):
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
         _reject()
     for net in _BLOCKED_NETWORKS:
         if ip in net:

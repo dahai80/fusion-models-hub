@@ -34,9 +34,13 @@ class ApprovalActionRequest(BaseModel):
 
 def _approval_to_dict(a) -> dict:
     return {
-        "id": a.id, "model_id": a.model_id, "version_id": a.version_id,
-        "level": a.level.value, "status": a.status.value,
-        "requester": a.requester, "approver": a.approver,
+        "id": a.id,
+        "model_id": a.model_id,
+        "version_id": a.version_id,
+        "level": a.level.value,
+        "status": a.status.value,
+        "requester": a.requester,
+        "approver": a.approver,
         "approvers": a.approvers or "",
         "comment": a.comment,
         "created_at": a.created_at.isoformat() if a.created_at else None,
@@ -50,12 +54,16 @@ async def submit_approval(body: ApprovalSubmitRequest, session: SessionDep):
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     ar = await crud.create_approval_request(
-        session, model_id=body.model_id, version_id=body.version_id,
-        level=body.level, requester=body.requester,
+        session,
+        model_id=body.model_id,
+        version_id=body.version_id,
+        level=body.level,
+        requester=body.requester,
     )
     if body.level == "l1":
         ar = await crud.update_approval_request(
-            session, ar.id,
+            session,
+            ar.id,
             status=ApprovalStatus.APPROVED,
             approver="system",
             comment="L1 auto-approved: integrity check passed",
@@ -67,16 +75,25 @@ async def submit_approval(body: ApprovalSubmitRequest, session: SessionDep):
 @router.get("/approvals")
 async def list_approvals(
     session: SessionDep,
-    model_id: str = "", status: str = "", level: str = "",
-    page: int = 1, page_size: int = 20,
+    model_id: str = "",
+    status: str = "",
+    level: str = "",
+    page: int = 1,
+    page_size: int = 20,
 ):
     items, total = await crud.list_approval_requests(
-        session, model_id=model_id, status=status, level=level,
-        page=page, page_size=page_size,
+        session,
+        model_id=model_id,
+        status=status,
+        level=level,
+        page=page,
+        page_size=page_size,
     )
     return {
         "items": [_approval_to_dict(a) for a in items],
-        "total": total, "page": page, "page_size": page_size,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
 
@@ -112,7 +129,8 @@ async def approve_request(req_id: str, body: ApprovalActionRequest, session: Ses
         approvers_csv = ",".join(sorted(existing))
         if len(existing) >= APPROVAL_L3_QUORUM:
             ar = await crud.update_approval_request(
-                session, req_id,
+                session,
+                req_id,
                 status=ApprovalStatus.APPROVED,
                 approver=approver,
                 approvers=approvers_csv,
@@ -121,18 +139,22 @@ async def approve_request(req_id: str, body: ApprovalActionRequest, session: Ses
             logger.info("L3 approved (quorum met): id=%s approvers=%s", req_id, approvers_csv)
         else:
             ar = await crud.update_approval_request(
-                session, req_id,
+                session,
+                req_id,
                 approver=approver,
                 approvers=approvers_csv,
                 comment=body.comment,
             )
             logger.info(
                 "L3 approval recorded, quorum pending: id=%s approvers=%s need=%d",
-                req_id, approvers_csv, APPROVAL_L3_QUORUM,
+                req_id,
+                approvers_csv,
+                APPROVAL_L3_QUORUM,
             )
         return _approval_to_dict(ar)
     ar = await crud.update_approval_request(
-        session, req_id,
+        session,
+        req_id,
         status=ApprovalStatus.APPROVED,
         approver=body.approver,
         comment=body.comment,
@@ -149,7 +171,8 @@ async def reject_request(req_id: str, body: ApprovalActionRequest, session: Sess
     if ar.status != ApprovalStatus.PENDING:
         raise HTTPException(status_code=409, detail=f"Request is {ar.status.value}, not pending")
     ar = await crud.update_approval_request(
-        session, req_id,
+        session,
+        req_id,
         status=ApprovalStatus.REJECTED,
         approver=body.approver,
         comment=body.comment,

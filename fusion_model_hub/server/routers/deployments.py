@@ -39,7 +39,8 @@ async def _load_model_via_mlx(settings, model_name: str, node_url: str | None = 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                f"{base_url}/v1/models/{model_name}/load", headers=headers,
+                f"{base_url}/v1/models/{model_name}/load",
+                headers=headers,
             )
             if resp.status_code in (200, 409):
                 return True
@@ -86,26 +87,26 @@ async def _fetch_mlx_inference_metrics(settings, model_name: str, node_url: str 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
-                f"{base_url}/v1/metrics/json", headers=headers,
+                f"{base_url}/v1/metrics/json",
+                headers=headers,
             )
             if resp.status_code == 404:
                 logger.info(
-                    "MLX /v1/metrics/json 404 for %s (PR #541 not merged); "
-                    "deployment metrics 4 fields stay null",
+                    "MLX /v1/metrics/json 404 for %s (PR #541 not merged); deployment metrics 4 fields stay null",
                     model_name,
                 )
                 return {}
             if resp.status_code != 200:
                 logger.warning(
-                    "MLX /v1/metrics/json returned %d for %s", resp.status_code, model_name,
+                    "MLX /v1/metrics/json returned %d for %s",
+                    resp.status_code,
+                    model_name,
                 )
                 return {}
             data = resp.json()
             if not isinstance(data, dict):
                 return {}
-            stats = data.get("model_stats", {}).get(model_name) if isinstance(
-                data.get("model_stats"), dict
-            ) else None
+            stats = data.get("model_stats", {}).get(model_name) if isinstance(data.get("model_stats"), dict) else None
             source = stats or data
             total = float(source.get("total_requests") or 0)
             failed = float(source.get("failed_requests") or 0)
@@ -118,7 +119,11 @@ async def _fetch_mlx_inference_metrics(settings, model_name: str, node_url: str 
             active_conn = int(active) if active is not None else None
             logger.info(
                 "MLX inference metrics for %s: rps=%s err=%s active=%s tps=%s",
-                model_name, rps, error_rate, active_conn, tokens_per_sec,
+                model_name,
+                rps,
+                error_rate,
+                active_conn,
+                tokens_per_sec,
             )
             return {
                 "requestsPerSecond": rps,
@@ -131,7 +136,6 @@ async def _fetch_mlx_inference_metrics(settings, model_name: str, node_url: str 
     except Exception as e:
         logger.warning("MLX metrics call failed for %s: %s", model_name, e)
     return {}
-
 
 
 class DeploymentCreate(BaseModel):
@@ -233,8 +237,12 @@ async def create_deployment(body: DeploymentCreate, session: SessionDep, request
     mlx_loaded = await _load_model_via_mlx(settings, model_name, node_url)
     dep_name = body.effective_name(model_name)
     d = await crud.create_deployment(
-        session, model_id=body.model_id, name=dep_name,
-        tenant_id=tenant_id, version_id=body.version_id, replicas=body.effective_replicas,
+        session,
+        model_id=body.model_id,
+        name=dep_name,
+        tenant_id=tenant_id,
+        version_id=body.version_id,
+        replicas=body.effective_replicas,
         node_id=node_id,
     )
     initial_status = DeploymentStatus.RUNNING if mlx_loaded else DeploymentStatus.PENDING
@@ -349,7 +357,8 @@ async def stop_deployment(deployment_id: str, session: SessionDep, settings: Set
 @router.post("/{deployment_id}/gray")
 async def enable_gray_release(deployment_id: str, body: GrayReleaseRequest, session: SessionDep):
     d = await crud.update_deployment(
-        session, deployment_id,
+        session,
+        deployment_id,
         gray_enabled=True,
         gray_version_id=body.gray_version_id,
         gray_traffic_ratio=body.gray_traffic_ratio,
@@ -358,7 +367,9 @@ async def enable_gray_release(deployment_id: str, body: GrayReleaseRequest, sess
         raise HTTPException(status_code=404, detail="Deployment not found")
     logger.info(
         "Gray release enabled: deployment=%s gray_ver=%s ratio=%d",
-        deployment_id, body.gray_version_id, body.gray_traffic_ratio,
+        deployment_id,
+        body.gray_version_id,
+        body.gray_traffic_ratio,
     )
     m = await crud.get_model(session, d.model_id)
     return _deployment_to_response(d, (m.hf_repo or m.name) if m else "")
@@ -367,7 +378,8 @@ async def enable_gray_release(deployment_id: str, body: GrayReleaseRequest, sess
 @router.delete("/{deployment_id}/gray")
 async def disable_gray_release(deployment_id: str, session: SessionDep):
     d = await crud.update_deployment(
-        session, deployment_id,
+        session,
+        deployment_id,
         gray_enabled=False,
         gray_version_id="",
         gray_traffic_ratio=0,
@@ -470,8 +482,6 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
         "requestsPerSecond": inference_fields.get("requestsPerSecond"),
         "avgLatencyMs": round(avg_latency, 2) if avg_latency > 0 else None,
         "errorRate": inference_fields.get("errorRate"),
-        "tokensPerSecond": live_tps if live_tps is not None else (
-            round(ver_tps, 2) if ver_tps > 0 else None
-        ),
+        "tokensPerSecond": live_tps if live_tps is not None else (round(ver_tps, 2) if ver_tps > 0 else None),
         "activeConnections": inference_fields.get("activeConnections"),
     }

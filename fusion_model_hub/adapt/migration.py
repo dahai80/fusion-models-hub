@@ -93,22 +93,26 @@ def _suggest_quant(params_b: float, hw: HardwareProfile) -> QuantizeSuggestion:
 
     if fp16_vram <= vram * 0.7:
         return QuantizeSuggestion(
-            bits=16, reason="Sufficient VRAM for FP16 — best quality",
+            bits=16,
+            reason="Sufficient VRAM for FP16 — best quality",
             vram_estimate_gb=round(fp16_vram, 2),
         )
     if q8_vram <= vram * 0.7:
         return QuantizeSuggestion(
-            bits=8, reason="Good VRAM for Q8 — high quality",
+            bits=8,
+            reason="Good VRAM for Q8 — high quality",
             vram_estimate_gb=round(q8_vram, 2),
         )
     if q4_vram <= vram * 0.7:
         return QuantizeSuggestion(
-            bits=4, reason="Q4 recommended — fits available VRAM",
+            bits=4,
+            reason="Q4 recommended — fits available VRAM",
             vram_estimate_gb=round(q4_vram, 2),
         )
 
     return QuantizeSuggestion(
-        bits=4, reason="Q4 minimum — model may be tight on VRAM",
+        bits=4,
+        reason="Q4 minimum — model may be tight on VRAM",
         vram_estimate_gb=round(q4_vram, 2),
     )
 

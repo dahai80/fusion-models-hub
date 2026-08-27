@@ -30,7 +30,10 @@ def safe_http_error(
     if exc is not None:
         logger.error(
             "safe_http_error%s trace_id=%s: %s: %s",
-            where, trace_id, type(exc).__name__, exc,
+            where,
+            trace_id,
+            type(exc).__name__,
+            exc,
         )
         logger.debug("safe_http_error%s detail trace_id=%s: %r", where, trace_id, exc)
     else:
