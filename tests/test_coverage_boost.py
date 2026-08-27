@@ -160,16 +160,53 @@ class TestBranches:
 
     async def test_merge_branch(self, client):
         m = await _create_model(client, "branch-merge-model")
+        head_vid = await _create_published_version(client, m["id"], "1.0.0")
+        cr = await client.post(f"/api/v1/models/{m['id']}/branches", json={"name": "b1"})
+        bid = cr.json()["id"]
+        # R-P2/#5: merge requires a head_version_id; set it before merging.
+        await client.patch(f"/api/v1/models/branches/{bid}", json={"head_version_id": head_vid})
+        resp = await client.post(f"/api/v1/models/branches/{bid}/merge")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "merged"
+        # merge must promote a new mainline version, not just flip status.
+        assert body.get("merged_version_id")
+        # the promoted version exists on the model's version list.
+        vresp = await client.get(f"/api/v1/models/{m['id']}/versions")
+        labels = [v["version"] for v in vresp.json().get("items", vresp.json())]
+        assert any(l.startswith("1.0.0-merge-b1") for l in labels)
+
+    async def test_merge_branch_no_head_rejected(self, client):
+        # R-P2/#5: a branch with no head_version_id must not silently merge nothing.
+        m = await _create_model(client, "branch-merge-nohead")
         cr = await client.post(f"/api/v1/models/{m['id']}/branches", json={"name": "b1"})
         bid = cr.json()["id"]
         resp = await client.post(f"/api/v1/models/branches/{bid}/merge")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "merged"
+        assert resp.status_code == 400
+        assert "head_version_id" in resp.json()["detail"]
+
+    async def test_merge_branch_idempotent(self, client):
+        # R-P2/#5: re-merging after a manual status reset returns 200 with the
+        # already-promoted version (VersionConflictError is swallowed).
+        m = await _create_model(client, "branch-merge-idem")
+        head_vid = await _create_published_version(client, m["id"], "2.0.0")
+        cr = await client.post(f"/api/v1/models/{m['id']}/branches", json={"name": "b1"})
+        bid = cr.json()["id"]
+        await client.patch(f"/api/v1/models/branches/{bid}", json={"head_version_id": head_vid})
+        first = await client.post(f"/api/v1/models/branches/{bid}/merge")
+        assert first.status_code == 200
+        # reset branch to active to allow a second merge of the same label.
+        await client.patch(f"/api/v1/models/branches/{bid}", json={"status": "active"})
+        second = await client.post(f"/api/v1/models/branches/{bid}/merge")
+        assert second.status_code == 200
+        assert second.json().get("merged_version_id") == first.json().get("merged_version_id")
 
     async def test_merge_branch_not_active(self, client):
         m = await _create_model(client, "branch-merge-inactive")
+        head_vid = await _create_published_version(client, m["id"], "1.0.0")
         cr = await client.post(f"/api/v1/models/{m['id']}/branches", json={"name": "b1"})
         bid = cr.json()["id"]
+        await client.patch(f"/api/v1/models/branches/{bid}", json={"head_version_id": head_vid})
         await client.patch(f"/api/v1/models/branches/{bid}", json={"status": "merged"})
         resp = await client.post(f"/api/v1/models/branches/{bid}/merge")
         assert resp.status_code == 400

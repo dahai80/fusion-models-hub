@@ -131,8 +131,15 @@ def _check_module_access(ak: ApiKey, request: Request) -> JSONResponse | None:
     if not allowed_set:
         return None
     module = request.headers.get("X-Fusion-Module", "")
+    # Fail-closed: a module-restricted key that omits X-Fusion-Module must NOT
+    # be allowed through. The prior code returned None (allow) when the header
+    # was absent, so a scoped key bypassed its module ACL simply by not sending
+    # the header — a privilege escalation. Restricted key + no header = deny.
     if not module:
-        return None
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "X-Fusion-Module header required for module-scoped API keys"},
+        )
     module = module.lower().strip()
     if module not in allowed_set:
         return JSONResponse(status_code=403, content={"detail": f"Module '{module}' not allowed for this API key"})

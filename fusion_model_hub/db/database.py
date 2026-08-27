@@ -1,4 +1,5 @@
 import logging
+import threading
 from pathlib import Path
 
 from sqlalchemy import event
@@ -14,6 +15,12 @@ logger = logging.getLogger(__name__)
 # closes and raises `RuntimeError: Event loop is closed`. This registry lets
 # tests (conftest) and the server lifespan dispose all engines before teardown.
 _engines: list = []
+# R-P2/#10: guard the engine registry. aiosqlite worker threads + concurrent
+# get_engine calls (tests spinning many sessions in parallel) raced on append;
+# dispose_all_engines reassigned the list mid-append, losing an engine that then
+# never got disposed — `RuntimeError: Event loop is closed` at teardown. One
+# process-wide lock makes append + drain atomic.
+_engines_lock = threading.Lock()
 
 # R9: SQLite default journal mode is DELETE — readers block the single writer
 # and a contended write fails immediately with "database is locked". WAL allows
@@ -48,7 +55,8 @@ def get_engine(db_url: str = "", *, pool_size: int = 10, max_overflow: int = 20)
         engine_kwargs["pool_size"] = pool_size
         engine_kwargs["max_overflow"] = max_overflow
     engine = create_async_engine(db_url, **engine_kwargs)
-    _engines.append(engine)
+    with _engines_lock:
+        _engines.append(engine)
     if _is_file_sqlite(db_url):
         @event.listens_for(engine.sync_engine, "connect")
         def _set_sqlite_pragmas(dbapi_conn, _record):
@@ -78,8 +86,9 @@ async def init_db(engine) -> None:
 
 async def dispose_all_engines() -> None:
     global _engines
-    pending = _engines
-    _engines = []
+    with _engines_lock:
+        pending = _engines
+        _engines = []
     for engine in pending:
         try:
             await engine.dispose()

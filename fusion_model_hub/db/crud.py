@@ -278,6 +278,16 @@ async def get_version(session: AsyncSession, version_id: str) -> ModelVersion | 
     return result.scalar_one_or_none()
 
 
+async def get_version_by_label(session: AsyncSession, model_id: str, version: str) -> ModelVersion | None:
+    # R-P2/#5: idempotent branch merge re-fetches the already-promoted version
+    # by its (model_id, version) label so a repeated /merge returns 200 with the
+    # existing row instead of raising the VersionConflictError.
+    result = await session.execute(
+        select(ModelVersion).where(ModelVersion.model_id == model_id, ModelVersion.version == version)
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_versions(
     session: AsyncSession,
     model_id: str,
@@ -1268,7 +1278,7 @@ async def list_watermarks(
 
 # ApprovalRequest CRUD
 
-_APPROVAL_UPDATABLE = {"status", "approver", "comment", "updated_at"}
+_APPROVAL_UPDATABLE = {"status", "approver", "approvers", "comment", "updated_at"}
 
 
 async def create_approval_request(

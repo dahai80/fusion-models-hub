@@ -4,8 +4,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ...db import crud
+from ...db.crud import VersionConflictError
 from ...db.models import BranchStatus
-from ..deps import SessionDep
+from ..deps import SessionDep, get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +104,72 @@ async def merge_branch(branch_id: str, session: SessionDep):
         raise HTTPException(status_code=404, detail="Branch not found")
     if b.status != BranchStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Only active branches can be merged")
+    # R-P2/#5: a merge must promote the branch head into the model's mainline
+    # version history, not merely flip the branch status. Before, merge left no
+    # new version row — the head's work was invisible to the version list, so
+    # inference never served it and a "merged" branch pointed at nothing. Now
+    # the head version (required) is copied into a new mainline version with a
+    # merge-suffixed label, and the branch flips to MERGED. The branch stays
+    # head-less-safe: a branch never given a head_version_id is rejected with a
+    # clear 400 instead of silently merging nothing.
+    head_id = (b.head_version_id or "").strip()
+    if not head_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Branch has no head_version_id — set a head before merging",
+        )
+    head = await crud.get_version(session, head_id)
+    if not head:
+        raise HTTPException(status_code=404, detail="Branch head version not found")
+    # Snapshot the head's immutable scalar fields BEFORE any version create, so
+    # a create_version rollback (on a duplicate-label conflict) cannot expire
+    # the head object and trigger a lazy refresh outside an async context
+    # (MissingGreenlet). Reading them now, while the session is healthy, keeps
+    # the merge logic independent of the create session's transaction state.
+    head_model_id = head.model_id
+    head_version_label = head.version
+    head_format = head.format
+    head_quantization = head.quantization
+    head_file_path = head.file_path
+    head_file_hash = head.file_hash
+    head_file_size = head.file_size
+    branch_name = b.name
+    merge_label = f"{head_version_label}-merge-{branch_name}"[:32]
+    # R-P2/#5: do the version create in its OWN session so a duplicate-label
+    # conflict (idempotent re-merge) rolls back only that throwaway session,
+    # never the router's main session. Before, the conflict rollback poisoned
+    # the shared session and the follow-up update_model_branch raised
+    # MissingGreenlet -> 500 on every re-merge.
+    promoted_id = ""
+    factory = get_session_factory()
+    try:
+        async with factory() as vsession:
+            promoted = await crud.create_version(
+                vsession,
+                model_id=head_model_id,
+                version=merge_label,
+                format=head_format,
+                quantization=head_quantization,
+                file_path=head_file_path,
+                file_hash=head_file_hash,
+                file_size=head_file_size,
+                release_notes=f"Merged from branch {branch_name!r} (head {head_version_label})",
+            )
+            promoted_id = promoted.id if promoted else ""
+    except VersionConflictError:
+        # Idempotent re-merge: the merge label already exists. Re-fetch it on a
+        # fresh session so a repeated merge call still returns 200 with the
+        # existing version id.
+        async with factory() as vsession:
+            existing = await crud.get_version_by_label(vsession, head_model_id, merge_label)
+            promoted_id = existing.id if existing else ""
+        logger.info("Branch re-merge (version existed): id=%s label=%s", branch_id, merge_label)
+    if not promoted_id:
+        raise HTTPException(status_code=500, detail="Failed to promote merged version")
     b = await crud.update_model_branch(
         session, branch_id, status=BranchStatus.MERGED,
     )
-    logger.info("Merged branch: id=%s name=%s", branch_id, b.name)
-    return _branch_to_dict(b)
+    logger.info("Merged branch: id=%s name=%s promoted_version=%s", branch_id, b.name, promoted_id)
+    result = _branch_to_dict(b)
+    result["merged_version_id"] = promoted_id
+    return result

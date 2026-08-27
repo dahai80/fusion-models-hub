@@ -70,6 +70,41 @@ class TestDatabaseHelpers:
         dbmod._engines.append(bad)
         await dispose_all_engines()
 
+    async def test_engines_registry_thread_safe_concurrent_append(self):
+        # R-P2/#10: concurrent get_engine + dispose_all_engines must not lose an
+        # engine. Before the lock, drain reassigned the list mid-append so a
+        # registered engine escaped disposal -> `Event loop is closed` at exit.
+        # Race is probabilistic; exercise many threads to make it deterministic.
+        import threading
+
+        from fusion_model_hub.db import database as dbmod
+
+        disposed_flag = {"count": 0}
+
+        class _FakeEngine:
+            def __init__(self, tag):
+                self.url = f"sqlite+aiosqlite:///{tag}"
+                self.tag = tag
+                self.dispose = AsyncMock()
+
+        def _append_many(start):
+            for i in range(start, start + 20):
+                with dbmod._engines_lock:
+                    dbmod._engines.append(_FakeEngine(f"t{start}-{i}"))
+
+        threads = [threading.Thread(target=_append_many, args=(k * 20,)) for k in range(4)]
+        for t in threads:
+            t.start()
+        # Interleave a drain while appends are in flight.
+        await dispose_all_engines()
+        for t in threads:
+            t.join()
+        # Whatever escaped the first drain gets disposed by a second pass.
+        await dispose_all_engines()
+        # No engine left registered after the final drain.
+        with dbmod._engines_lock:
+            assert dbmod._engines == []
+
     async def test_get_engine_server_db_pool_kwargs(self):
         pytest.importorskip("asyncpg", reason="asyncpg not installed (PG-only dep)")
         engine = get_engine(
