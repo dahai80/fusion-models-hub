@@ -65,7 +65,11 @@ async def list_quantize_tasks(status: str = "", page: int = 1, page_size: int = 
     tenant_id = _caller_tenant(request) if request else ""
     async with session_factory() as session:
         tasks, total = await crud.list_quantize_tasks(
-            session, status=status, page=page, page_size=page_size, tenant_id=tenant_id,
+            session,
+            status=status,
+            page=page,
+            page_size=page_size,
+            tenant_id=tenant_id,
         )
         items = [
             {
@@ -142,19 +146,27 @@ async def compare_quantize_results(task_id: str, request: Request = None):
                     "memory_usage": output_ver.memory_usage,
                 }
                 result["comparison"] = {
-                    "size_reduction_pct": round(
-                        (1 - output_ver.file_size / source_ver.file_size) * 100, 2
-                    ) if source_ver.file_size > 0 else 0,
+                    "size_reduction_pct": round((1 - output_ver.file_size / source_ver.file_size) * 100, 2)
+                    if source_ver.file_size > 0
+                    else 0,
                     "latency_change_pct": round(
                         (output_ver.inference_latency - source_ver.inference_latency)
-                        / source_ver.inference_latency * 100, 2
-                    ) if source_ver.inference_latency > 0 else 0,
+                        / source_ver.inference_latency
+                        * 100,
+                        2,
+                    )
+                    if source_ver.inference_latency > 0
+                    else 0,
                     "throughput_change_pct": round(
                         (output_ver.throughput - source_ver.throughput) / source_ver.throughput * 100, 2
-                    ) if source_ver.throughput > 0 else 0,
+                    )
+                    if source_ver.throughput > 0
+                    else 0,
                     "memory_change_pct": round(
                         (output_ver.memory_usage - source_ver.memory_usage) / source_ver.memory_usage * 100, 2
-                    ) if source_ver.memory_usage > 0 else 0,
+                    )
+                    if source_ver.memory_usage > 0
+                    else 0,
                 }
         return result
 
@@ -201,9 +213,11 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
     if not lora_v:
         raise HTTPException(status_code=404, detail="LoRA version not found")
     task = await crud.create_lora_merge_task(
-        session, base_version_id=body.base_version_id,
+        session,
+        base_version_id=body.base_version_id,
         lora_version_id=body.lora_version_id,
-        target_format=body.target_format, quant_bits=body.quant_bits,
+        target_format=body.target_format,
+        quant_bits=body.quant_bits,
     )
 
     async def _run_merge(task_id: str):
@@ -213,6 +227,7 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
         # output and record its id as output_version_id.
         from ..deps import get_settings
         from .webhooks import dispatch_webhook_event
+
         sf = get_session_factory()
         async with sf() as s:
             try:
@@ -274,14 +289,17 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
                 # version plus a stuck RUNNING merge task forever. Flush both into
                 # the open session and let the `async with sf()` exit commit once.
                 await crud.update_lora_merge_task(
-                    s, task_id, status=TaskStatus.COMPLETED,
+                    s,
+                    task_id,
+                    status=TaskStatus.COMPLETED,
                     output_version_id=new_ver.id if new_ver else "",
                     autocommit=False,
                 )
                 await s.commit()
                 logger.info(
                     "LoRA merge completed: id=%s output_version=%s",
-                    task_id, new_ver.id if new_ver else "",
+                    task_id,
+                    new_ver.id if new_ver else "",
                 )
                 try:
                     await dispatch_webhook_event(
@@ -299,7 +317,9 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
                     logger.warning("adapter.merged webhook dispatch failed: id=%s", task_id)
             except Exception as e:
                 await crud.update_lora_merge_task(
-                    s, task_id, status=TaskStatus.FAILED,
+                    s,
+                    task_id,
+                    status=TaskStatus.FAILED,
                     error_message=str(e),
                 )
                 logger.exception("LoRA merge failed: id=%s", task_id)
@@ -346,7 +366,9 @@ async def start_layered_quantize(body: LayeredQuantizeRequest, settings: Setting
                     "Layered quantize requested with %d layer_rules for model=%s but "
                     "Fusion-MLX has no per-layer quantize endpoint — applying uniform "
                     "quant_bits=%d (layer_rules ignored)",
-                    len(body.layer_rules), body.model, body.default_bits,
+                    len(body.layer_rules),
+                    body.model,
+                    body.default_bits,
                 )
             payload = {
                 "model": body.model,
@@ -382,7 +404,8 @@ async def start_layered_quantize(body: LayeredQuantizeRequest, settings: Setting
                 }
             logger.warning("MLX layered quantize returned %d: %s", resp.status_code, resp.text)
             raise safe_http_error(
-                resp.status_code, "Fusion-MLX layered quantize failed",
+                resp.status_code,
+                "Fusion-MLX layered quantize failed",
                 context="layered-quantize",
             )
     except httpx.ConnectError as e:
@@ -409,7 +432,8 @@ async def get_layered_quantize_job(job_id: str, settings: SettingsDep):
                 raise HTTPException(status_code=404, detail="Layered quantize job not found")
             logger.warning("MLX layered job status returned %d", resp.status_code)
             raise safe_http_error(
-                resp.status_code, "Fusion-MLX layered job status failed",
+                resp.status_code,
+                "Fusion-MLX layered job status failed",
                 context="layered-job-status",
             )
     except httpx.ConnectError as e:
@@ -434,7 +458,8 @@ async def list_layered_quantize_jobs(settings: SettingsDep):
                 return resp.json()
             logger.warning("MLX layered jobs list returned %d", resp.status_code)
             raise safe_http_error(
-                resp.status_code, "Fusion-MLX layered jobs list failed",
+                resp.status_code,
+                "Fusion-MLX layered jobs list failed",
                 context="layered-jobs-list",
             )
     except httpx.ConnectError as e:
@@ -465,7 +490,8 @@ async def evaluate_quantize(body: QuantizeEvaluateRequest, settings: SettingsDep
                 return resp.json()
             logger.warning("MLX quantize evaluate returned %d: %s", resp.status_code, resp.text)
             raise safe_http_error(
-                resp.status_code, "Fusion-MLX quantize evaluate failed",
+                resp.status_code,
+                "Fusion-MLX quantize evaluate failed",
                 context="quantize-evaluate",
             )
     except httpx.ConnectError as e:
@@ -493,10 +519,12 @@ async def batch_quantize(body: BatchQuantizeRequest):
     errors = []
     for item in body.items:
         if item.quant_bits not in (2, 4, 6, 8):
-            errors.append({
-                "source_version_id": item.source_version_id,
-                "error": f"quant_bits must be one of: 2, 4, 6, 8, got {item.quant_bits}",
-            })
+            errors.append(
+                {
+                    "source_version_id": item.source_version_id,
+                    "error": f"quant_bits must be one of: 2, 4, 6, 8, got {item.quant_bits}",
+                }
+            )
             continue
         try:
             task_id = await submit_quantize(

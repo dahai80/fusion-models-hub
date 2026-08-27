@@ -27,7 +27,6 @@ app.add_typer(analyze_app, name="analyze", help="Analyze model compatibility and
 def hardware():
     import asyncio
 
-
     result = asyncio.run(_show_hardware())
     if result:
         typer.echo(result)
@@ -59,6 +58,7 @@ async def _show_hardware() -> str:
 @app.command()
 def version():
     from .. import __version__
+
     typer.echo(f"fusion-model-hub {__version__}")
 
 

@@ -77,7 +77,11 @@ async def list_downloads(
     page_size: int = 20,
 ):
     tasks, total = await crud.list_download_tasks(
-        session, model_id=model_id, status=status, page=page, page_size=page_size,
+        session,
+        model_id=model_id,
+        status=status,
+        page=page,
+        page_size=page_size,
     )
     return {
         "tasks": [
@@ -165,7 +169,10 @@ async def _run_download(task_id: str, source_url: str, settings):
         try:
             async with sf() as session:
                 await crud.update_download_task(
-                    session, task_id, status="downloading", retry_count=attempt,
+                    session,
+                    task_id,
+                    status="downloading",
+                    retry_count=attempt,
                 )
 
             downloaded = 0
@@ -194,65 +201,67 @@ async def _run_download(task_id: str, source_url: str, settings):
                 except Exception as guard_exc:
                     logger.warning(
                         "SSRF guard rejected redirect to %s: %s",
-                        request.url.host, guard_exc,
+                        request.url.host,
+                        guard_exc,
                     )
                     raise
 
             async with (
                 httpx.AsyncClient(
-                    timeout=300.0, follow_redirects=True,
+                    timeout=300.0,
+                    follow_redirects=True,
                     event_hooks={"request": [_ssrf_guard]},
                 ) as client,
                 client.stream("GET", source_url, headers=headers) as resp,
             ):
-                    if resp.status_code not in (200, 206):
-                        raise Exception(f"HTTP {resp.status_code}")
+                if resp.status_code not in (200, 206):
+                    raise Exception(f"HTTP {resp.status_code}")
 
-                    total = int(resp.headers.get("content-length", 0))
-                    if resp.status_code == 206:
-                        content_range = resp.headers.get("content-range", "")
-                        if "/" in content_range:
-                            total = int(content_range.split("/")[-1])
+                total = int(resp.headers.get("content-length", 0))
+                if resp.status_code == 206:
+                    content_range = resp.headers.get("content-range", "")
+                    if "/" in content_range:
+                        total = int(content_range.split("/")[-1])
 
-                    download_dir = os.path.join(settings.data_dir, "downloads")
-                    os.makedirs(download_dir, exist_ok=True)
-                    part_path = os.path.join(download_dir, f"{task_id}.part")
-                    final_path = os.path.join(download_dir, f"{task_id}.bin")
-                    write_mode = "ab" if downloaded > 0 else "wb"
+                download_dir = os.path.join(settings.data_dir, "downloads")
+                os.makedirs(download_dir, exist_ok=True)
+                part_path = os.path.join(download_dir, f"{task_id}.part")
+                final_path = os.path.join(download_dir, f"{task_id}.bin")
+                write_mode = "ab" if downloaded > 0 else "wb"
 
-                    chunk_size = 1024 * 1024
-                    last_update = time.time()
-                    # H6: compute SHA256 over the streamed bytes. Before, the
-                    # /downloads path wrote the body to disk with ZERO integrity
-                    # check — a corrupt or MITM'd download was persisted as
-                    # "completed". Hash incrementally (resume appends, so hash
-                    # continues over the part file's existing bytes on resume).
-                    import hashlib
-                    hasher = hashlib.sha256()
+                chunk_size = 1024 * 1024
+                last_update = time.time()
+                # H6: compute SHA256 over the streamed bytes. Before, the
+                # /downloads path wrote the body to disk with ZERO integrity
+                # check — a corrupt or MITM'd download was persisted as
+                # "completed". Hash incrementally (resume appends, so hash
+                # continues over the part file's existing bytes on resume).
+                import hashlib
 
-                    with open(part_path, write_mode) as fh:
-                        async for chunk in resp.aiter_bytes(chunk_size):
-                            fh.write(chunk)
-                            hasher.update(chunk)
-                            downloaded += len(chunk)
-                            now = time.time()
-                            if now - last_update >= 1.0:
-                                progress = (downloaded / total * 100) if total > 0 else 0
-                                async with sf() as session:
-                                    await crud.update_download_task(
-                                        session, task_id,
-                                        downloaded_bytes=downloaded,
-                                        total_bytes=total,
-                                        progress_percent=round(progress, 1),
-                                    )
-                                last_update = now
+                hasher = hashlib.sha256()
 
-                    if total > 0 and downloaded < total:
-                        raise Exception(
-                            f"Incomplete download: {downloaded}/{total} bytes"
-                        )
-                    file_hash = hasher.hexdigest()
-                    os.replace(part_path, final_path)
+                with open(part_path, write_mode) as fh:
+                    async for chunk in resp.aiter_bytes(chunk_size):
+                        fh.write(chunk)
+                        hasher.update(chunk)
+                        downloaded += len(chunk)
+                        now = time.time()
+                        if now - last_update >= 1.0:
+                            progress = (downloaded / total * 100) if total > 0 else 0
+                            async with sf() as session:
+                                await crud.update_download_task(
+                                    session,
+                                    task_id,
+                                    downloaded_bytes=downloaded,
+                                    total_bytes=total,
+                                    progress_percent=round(progress, 1),
+                                )
+                            last_update = now
+
+                if total > 0 and downloaded < total:
+                    raise Exception(f"Incomplete download: {downloaded}/{total} bytes")
+                file_hash = hasher.hexdigest()
+                os.replace(part_path, final_path)
 
             # H6: if the caller supplied an expected hash, a mismatch is a hard
             # failure (corrupt/MITM'd bytes) — NOT a silent "completed". Integrity
@@ -260,13 +269,11 @@ async def _run_download(task_id: str, source_url: str, settings):
             if expected_sha256 and file_hash.lower() != expected_sha256:
                 with contextlib.suppress(OSError):
                     os.remove(final_path)
-                msg = (
-                    f"Download integrity check failed: sha256={file_hash} "
-                    f"expected={expected_sha256}"
-                )
+                msg = f"Download integrity check failed: sha256={file_hash} expected={expected_sha256}"
                 async with sf() as session:
                     await crud.update_download_task(
-                        session, task_id,
+                        session,
+                        task_id,
                         status="failed",
                         error_message=msg[:500],
                         retry_count=attempt,
@@ -276,7 +283,8 @@ async def _run_download(task_id: str, source_url: str, settings):
 
             async with sf() as session:
                 await crud.update_download_task(
-                    session, task_id,
+                    session,
+                    task_id,
                     status="completed",
                     downloaded_bytes=downloaded,
                     total_bytes=total,
@@ -286,7 +294,10 @@ async def _run_download(task_id: str, source_url: str, settings):
                 )
             logger.info(
                 "Download completed: id=%s bytes=%d path=%s sha256=%s",
-                task_id, downloaded, final_path, file_hash,
+                task_id,
+                downloaded,
+                final_path,
+                file_hash,
             )
             return
 
@@ -299,7 +310,9 @@ async def _run_download(task_id: str, source_url: str, settings):
                     os.remove(part_path)
             async with sf() as session:
                 await crud.update_download_task(
-                    session, task_id, status="cancelled",
+                    session,
+                    task_id,
+                    status="cancelled",
                     error_message="cancelled by user",
                 )
             logger.info("Download cancelled + .part removed: id=%s", task_id)
@@ -308,16 +321,20 @@ async def _run_download(task_id: str, source_url: str, settings):
         except Exception as e:
             logger.warning(
                 "Download attempt %d/%d failed for task %s: %s",
-                attempt + 1, max_retries + 1, task_id, e,
+                attempt + 1,
+                max_retries + 1,
+                task_id,
+                e,
             )
             if attempt >= max_retries:
                 async with sf() as session:
                     await crud.update_download_task(
-                        session, task_id,
+                        session,
+                        task_id,
                         status="failed",
                         error_message=str(e)[:500],
                         retry_count=attempt + 1,
                     )
                 logger.error("Download permanently failed: id=%s error=%s", task_id, e)
                 return
-            await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(2**attempt)

@@ -75,7 +75,6 @@ def _validate_node_url(url: str) -> None:
         )
 
 
-
 class NodeCreate(BaseModel):
     name: str
     url: str
@@ -193,7 +192,10 @@ async def add_node(body: NodeCreate, session: SessionDep):
     _validate_node_url(body.url)
     logger.info("Adding cluster node: name=%s url=%s", body.name, body.url)
     node = await create_cluster_node(
-        session, name=body.name, url=body.url, capabilities=body.capabilities,
+        session,
+        name=body.name,
+        url=body.url,
+        capabilities=body.capabilities,
     )
     return _node_to_dict(node)
 
@@ -252,7 +254,9 @@ async def submit_distributed_task(body: DistributedTaskCreate, session: SessionD
             if not await get_cluster_node(session, nid):
                 raise HTTPException(status_code=404, detail=f"Node {nid} not found")
     task = await crud.create_distributed_task(
-        session, model_id=body.model_id, version_id=body.version_id,
+        session,
+        model_id=body.model_id,
+        version_id=body.version_id,
         target_nodes=str(body.target_nodes),
     )
 
@@ -261,7 +265,9 @@ async def submit_distributed_task(body: DistributedTaskCreate, session: SessionD
         async with sf() as s:
             try:
                 await crud.update_distributed_task(
-                    s, task_id, status=DistributedTaskStatus.RUNNING,
+                    s,
+                    task_id,
+                    status=DistributedTaskStatus.RUNNING,
                 )
                 logger.info("Distributed task running: id=%s nodes=%s", task_id, target_nodes)
                 completed = failed = 0
@@ -295,17 +301,24 @@ async def submit_distributed_task(body: DistributedTaskCreate, session: SessionD
                     logger.warning("Distributed task %s had no target nodes", task_id)
                     failed = 1
                 final = (
-                    DistributedTaskStatus.COMPLETED if failed == 0
-                    else DistributedTaskStatus.PARTIAL if completed > 0
+                    DistributedTaskStatus.COMPLETED
+                    if failed == 0
+                    else DistributedTaskStatus.PARTIAL
+                    if completed > 0
                     else DistributedTaskStatus.FAILED
                 )
                 await crud.update_distributed_task(
-                    s, task_id, status=final,
+                    s,
+                    task_id,
+                    status=final,
                     progress=f'{{"completed": {completed}, "failed": {failed}}}',
                 )
             except Exception as e:
                 await crud.update_distributed_task(
-                    s, task_id, status=DistributedTaskStatus.FAILED, progress=str(e),
+                    s,
+                    task_id,
+                    status=DistributedTaskStatus.FAILED,
+                    progress=str(e),
                 )
                 logger.exception("Distributed task failed: id=%s", task_id)
 
@@ -345,16 +358,23 @@ async def cluster_topology(session: SessionDep, settings: SettingsDep):
     edges = [{"id": "hub-local", "from": "hub", "to": "local", "latency": 0.0, "bandwidth": 0.0}]
     for node in nodes:
         if _effective_status(node) == "active":
-            edges.append({
-                "id": f"hub-{node.id}", "from": "hub", "to": node.id,
-                "latency": 0.0, "bandwidth": 0.0,
-            })
+            edges.append(
+                {
+                    "id": f"hub-{node.id}",
+                    "from": "hub",
+                    "to": node.id,
+                    "latency": 0.0,
+                    "bandwidth": 0.0,
+                }
+            )
     active_remote = [n["id"] for n in node_dicts if n["status"] == "active" and n["id"] != "local"]
-    routes = [{
-        "pattern": "default",
-        "strategy": "local-first",
-        "fallback_nodes": active_remote,
-    }]
+    routes = [
+        {
+            "pattern": "default",
+            "strategy": "local-first",
+            "fallback_nodes": active_remote,
+        }
+    ]
     logger.info("Cluster topology: %d nodes, %d edges, local_alive=%s", len(node_dicts), len(edges), alive)
     return {
         "nodes": node_dicts,
@@ -391,9 +411,7 @@ async def sync_model_to_cluster(body: SyncModelRequest, session: SessionDep, set
                 local_ok = resp.status_code in (200, 409)
                 logger.info("Sync model %s to local MLX /load: %d", body.model_id, resp.status_code)
                 if resp.status_code == 404:
-                    logger.info(
-                        "MLX /load 404 (upstream route shadowing), falling back to chat auto-load"
-                    )
+                    logger.info("MLX /load 404 (upstream route shadowing), falling back to chat auto-load")
                     chat_resp = await client.post(
                         f"{settings.mlx_url}/v1/chat/completions",
                         json={
@@ -548,9 +566,7 @@ async def remote_sync_inbox(body: RemoteSyncRequest, session: SessionDep, settin
                 headers=_mlx_headers(settings),
             )
             accepted = resp.status_code in (200, 409)
-            logger.info(
-                "Remote-sync inbox: model=%s node_load_status=%d", body.model_id, resp.status_code
-            )
+            logger.info("Remote-sync inbox: model=%s node_load_status=%d", body.model_id, resp.status_code)
     except Exception as e:
         logger.warning("Remote-sync inbox load failed: model=%s err=%s", body.model_id, e)
         raise HTTPException(status_code=503, detail=f"Local MLX load failed: {e}")

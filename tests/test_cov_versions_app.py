@@ -25,6 +25,7 @@ _TMP_ROOT = "/tmp/fmh_cov_va"
 @pytest.fixture
 def settings():
     import time
+
     data_dir = f"{_TMP_ROOT}_{int(time.time() * 1000)}"
     return Settings(
         host="127.0.0.1",
@@ -75,9 +76,7 @@ async def _create_version(client, model_id, version="1.0.0"):
 
 async def _create_published_version(client, model_id, version="1.0.0"):
     v = await _create_version(client, model_id, version)
-    await client.put(
-        f"/api/v1/versions/{v['id']}/metrics", json={"benchmark_score": 90.0}
-    )
+    await client.put(f"/api/v1/versions/{v['id']}/metrics", json={"benchmark_score": 90.0})
     await client.post(f"/api/v1/versions/{v['id']}/promote")
     return v["id"]
 
@@ -117,7 +116,9 @@ class TestVersionChunkedUpload:
         resp = await client.post(
             "/api/v1/models/nonexistent/versions/chunk-upload",
             data={
-                "version": "1.0.0", "total_chunks": "1", "chunk_index": "0",
+                "version": "1.0.0",
+                "total_chunks": "1",
+                "chunk_index": "0",
                 "filename": "model.mlx",
             },
             files={"chunk": ("c.bin", b"x")},
@@ -129,7 +130,9 @@ class TestVersionChunkedUpload:
         resp = await client.post(
             f"/api/v1/models/{m['id']}/versions/chunk-upload",
             data={
-                "version": "1.0.0", "total_chunks": "0", "chunk_index": "0",
+                "version": "1.0.0",
+                "total_chunks": "0",
+                "chunk_index": "0",
                 "filename": "model.mlx",
             },
             files={"chunk": ("c.bin", b"x")},
@@ -141,7 +144,9 @@ class TestVersionChunkedUpload:
         resp = await client.post(
             f"/api/v1/models/{m['id']}/versions/chunk-upload",
             data={
-                "version": "1.0.0", "total_chunks": "2", "chunk_index": "5",
+                "version": "1.0.0",
+                "total_chunks": "2",
+                "chunk_index": "5",
                 "filename": "model.mlx",
             },
             files={"chunk": ("c.bin", b"x")},
@@ -153,7 +158,9 @@ class TestVersionChunkedUpload:
         resp = await client.post(
             f"/api/v1/models/{m['id']}/versions/chunk-upload",
             data={
-                "version": "1.0.0", "total_chunks": "1", "chunk_index": "0",
+                "version": "1.0.0",
+                "total_chunks": "1",
+                "chunk_index": "0",
                 "filename": "../../etc/passwd",
             },
             files={"chunk": ("c.bin", b"x")},
@@ -165,7 +172,9 @@ class TestVersionChunkedUpload:
         resp = await client.post(
             f"/api/v1/models/{m['id']}/versions/chunk-upload",
             data={
-                "version": "1.0.0", "total_chunks": "1", "chunk_index": "0",
+                "version": "1.0.0",
+                "total_chunks": "1",
+                "chunk_index": "0",
                 "filename": "model.mlx",
             },
             files={"chunk": ("", b"")},
@@ -175,10 +184,13 @@ class TestVersionChunkedUpload:
     async def test_chunk_upload_oversized_chunk(self, client):
         m = await _create_model(client, "chunk-oversize")
         from fusion_model_hub.server.routers.versions import MAX_CHUNK_SIZE
+
         resp = await client.post(
             f"/api/v1/models/{m['id']}/versions/chunk-upload",
             data={
-                "version": "1.0.0", "total_chunks": "1", "chunk_index": "0",
+                "version": "1.0.0",
+                "total_chunks": "1",
+                "chunk_index": "0",
                 "filename": "model.mlx",
             },
             files={"chunk": ("big.bin", b"x" * (MAX_CHUNK_SIZE + 1))},
@@ -191,7 +203,9 @@ class TestVersionChunkedUpload:
         resp = await client.post(
             f"/api/v1/models/{m['id']}/versions/chunk-upload",
             data={
-                "version": "3.0.0", "total_chunks": "1", "chunk_index": "0",
+                "version": "3.0.0",
+                "total_chunks": "1",
+                "chunk_index": "0",
                 "filename": "model.mlx",
             },
             files={"chunk": ("c.bin", b"data")},
@@ -274,9 +288,7 @@ class TestVersionBenchmarkRollbackPromote:
     async def test_benchmark_no_fields(self, client):
         m = await _create_model(client, "bench-empty")
         v = await _create_version(client, m["id"])
-        resp = await client.put(
-            f"/api/v1/versions/{v['id']}/benchmark", json={}
-        )
+        resp = await client.put(f"/api/v1/versions/{v['id']}/benchmark", json={})
         assert resp.status_code == 400
 
     async def test_benchmark_version_not_found(self, client):
@@ -335,9 +347,7 @@ class TestVersionBenchmarkRollbackPromote:
     async def test_promote_draft_to_published_multi_step(self, client):
         m = await _create_model(client, "prom-multi")
         v = await _create_version(client, m["id"])
-        await client.put(
-            f"/api/v1/versions/{v['id']}/metrics", json={"benchmark_score": 90.0}
-        )
+        await client.put(f"/api/v1/versions/{v['id']}/metrics", json={"benchmark_score": 90.0})
         resp = await client.post(f"/api/v1/versions/{v['id']}/promote")
         assert resp.status_code == 200
         data = resp.json()
@@ -376,9 +386,7 @@ class TestVersionStatusAndMetrics:
     async def test_metrics_no_fields(self, client):
         m = await _create_model(client, "m-empty")
         v = await _create_version(client, m["id"])
-        resp = await client.put(
-            f"/api/v1/versions/{v['id']}/metrics", json={}
-        )
+        resp = await client.put(f"/api/v1/versions/{v['id']}/metrics", json={})
         assert resp.status_code == 400
 
     async def test_metrics_not_found(self, client):
@@ -424,9 +432,7 @@ class TestVersionStatusAndMetrics:
         assert "version.retired" in events
 
     async def test_deprecate_not_found(self, client):
-        resp = await client.post(
-            "/api/v1/versions/nonexistent/deprecate", json={}
-        )
+        resp = await client.post("/api/v1/versions/nonexistent/deprecate", json={})
         assert resp.status_code == 404
 
     async def test_deprecate_with_successor(self, client):
@@ -522,9 +528,7 @@ class TestAppLifespan:
         await init_db(engine)
         init_deps(settings, engine)
         transport = ASGITransport(app=app, raise_app_exceptions=False)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
             resp = await c.get("/api/v1/system/health")
             assert resp.status_code == 200
         with contextlib.suppress(Exception):
@@ -539,9 +543,7 @@ class TestAppLifespan:
             new=AsyncMock(side_effect=RuntimeError("init_db boom")),
         ):
             transport = ASGITransport(app=app, raise_app_exceptions=False)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=transport, base_url="http://test") as c:
                 resp = await c.get("/api/v1/system/health")
                 assert resp.status_code == 200
         with contextlib.suppress(Exception):
@@ -562,29 +564,37 @@ class TestAppLifespan:
         sf = get_session_factory()
         async with sf() as s:
             await crud.create_quantize_task(
-                s, source_version_id="v-orphan",
-                target_format="mlx", quant_bits=4,
+                s,
+                source_version_id="v-orphan",
+                target_format="mlx",
+                quant_bits=4,
             )
             running = await crud.create_quantize_task(
-                s, source_version_id="v-run",
-                target_format="mlx", quant_bits=4,
+                s,
+                source_version_id="v-run",
+                target_format="mlx",
+                quant_bits=4,
             )
             await crud.update_quantize_task(
-                s, running.id, status=TaskStatus.RUNNING.value,
+                s,
+                running.id,
+                status=TaskStatus.RUNNING.value,
             )
         transport = ASGITransport(app=app, raise_app_exceptions=False)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
             resp = await c.get("/api/v1/system/health")
             assert resp.status_code == 200
         await asyncio.sleep(0.3)
         async with sf() as s:
             t, _ = await crud.list_quantize_tasks(
-                s, status=TaskStatus.FAILED.value, page_size=50,
+                s,
+                status=TaskStatus.FAILED.value,
+                page_size=50,
             )
             statuses = [x.status for x in t]
-            assert TaskStatus.FAILED.value in [st.value if hasattr(st, "value") else st for st in statuses] or len(t) >= 0
+            assert (
+                TaskStatus.FAILED.value in [st.value if hasattr(st, "value") else st for st in statuses] or len(t) >= 0
+            )
         with contextlib.suppress(Exception):
             await dispose_all_engines()
         if os.path.exists(settings.data_dir):
@@ -620,6 +630,7 @@ class TestAppMiddleware:
 
     async def test_delete_without_auth_returns_401_or_405(self, client):
         from fusion_model_hub.server.auth import set_auth_enabled
+
         set_auth_enabled(True)
         try:
             resp = await client.delete("/api/v1/models/nonexistent")
@@ -635,9 +646,12 @@ class TestAuthMiddlewareDeep:
     @staticmethod
     async def _mkkey(client, body, headers=None):
         from fusion_model_hub.server.rate_limit import reset_rate_limits
+
         reset_rate_limits()
         resp = await client.post(
-            "/api/v1/auth/keys", json=body, headers=headers or {},
+            "/api/v1/auth/keys",
+            json=body,
+            headers=headers or {},
         )
         assert resp.status_code == 201, resp.text
         return resp.json()["key"]
@@ -646,7 +660,8 @@ class TestAuthMiddlewareDeep:
         set_auth_enabled(True)
         try:
             resp = await client.post(
-                "/api/v1/models", json={"name": "x", "model_type": "llm"},
+                "/api/v1/models",
+                json={"name": "x", "model_type": "llm"},
             )
             assert resp.status_code == 401
         finally:
@@ -669,7 +684,8 @@ class TestAuthMiddlewareDeep:
         try:
             admin = await self._mkkey(client, {"name": "a", "role": "admin"})
             viewer = await self._mkkey(
-                client, {"name": "v", "role": "viewer"},
+                client,
+                {"name": "v", "role": "viewer"},
                 {"X-API-Key": admin},
             )
             resp = await client.post(
@@ -686,7 +702,8 @@ class TestAuthMiddlewareDeep:
         try:
             admin = await self._mkkey(client, {"name": "a2", "role": "admin"})
             dev = await self._mkkey(
-                client, {"name": "d", "role": "developer"},
+                client,
+                {"name": "d", "role": "developer"},
                 {"X-API-Key": admin},
             )
             m = await client.post(
@@ -696,7 +713,8 @@ class TestAuthMiddlewareDeep:
             )
             mid = m.json()["id"]
             resp = await client.delete(
-                f"/api/v1/models/{mid}", headers={"X-API-Key": dev},
+                f"/api/v1/models/{mid}",
+                headers={"X-API-Key": dev},
             )
             assert resp.status_code == 403
         finally:
@@ -776,17 +794,20 @@ class TestAuthMiddlewareDeep:
 
     async def test_key_cache_hit_on_second_request(self, client):
         from fusion_model_hub.db import crud
+
         set_auth_enabled(True)
         try:
             admin = await self._mkkey(client, {"name": "a6", "role": "admin"})
             crud._HASH_CACHE.clear()
             r1 = await client.get(
-                "/api/v1/auth/keys", headers={"X-API-Key": admin},
+                "/api/v1/auth/keys",
+                headers={"X-API-Key": admin},
             )
             assert r1.status_code == 200
             assert admin in crud._HASH_CACHE
             r2 = await client.get(
-                "/api/v1/auth/keys", headers={"X-API-Key": admin},
+                "/api/v1/auth/keys",
+                headers={"X-API-Key": admin},
             )
             assert r2.status_code == 200
         finally:
@@ -803,21 +824,25 @@ class TestAuthMiddlewareDeep:
                 {"X-API-Key": admin},
             )
             from fusion_model_hub.server import rate_limit
+
             rate_limit.reset_rate_limits()
             statuses = []
             for _ in range(5):
                 r = await client.get(
-                    "/api/v1/auth/keys", headers={"X-API-Key": scoped},
+                    "/api/v1/auth/keys",
+                    headers={"X-API-Key": scoped},
                 )
                 statuses.append(r.status_code)
             assert 429 in statuses
         finally:
             set_auth_enabled(False)
             from fusion_model_hub.server import rate_limit
+
             rate_limit.reset_rate_limits()
 
     async def test_audit_log_written_on_write(self, client):
         from fusion_model_hub.server.deps import get_session_factory
+
         set_auth_enabled(True)
         try:
             admin = await self._mkkey(client, {"name": "a8", "role": "admin"})
@@ -832,9 +857,8 @@ class TestAuthMiddlewareDeep:
                 from sqlalchemy import select
 
                 from fusion_model_hub.db.models import AuditLog
-                rows = (await s.execute(
-                    select(AuditLog).where(AuditLog.action == "post_unknown")
-                )).scalars().all()
+
+                rows = (await s.execute(select(AuditLog).where(AuditLog.action == "post_unknown"))).scalars().all()
                 assert len(rows) >= 1
         finally:
             set_auth_enabled(False)
@@ -847,10 +871,12 @@ class TestTenantsDeep:
     @staticmethod
     async def _mkadmin(client):
         from fusion_model_hub.server.rate_limit import reset_rate_limits
+
         reset_rate_limits()
         set_auth_enabled(True)
         resp = await client.post(
-            "/api/v1/auth/keys", json={"name": "t-admin", "role": "admin"},
+            "/api/v1/auth/keys",
+            json={"name": "t-admin", "role": "admin"},
         )
         assert resp.status_code == 201, resp.text
         return resp.json()["key"]
@@ -859,18 +885,21 @@ class TestTenantsDeep:
         admin = await self._mkadmin(client)
         try:
             resp = await client.post(
-                "/api/v1/tenants", json={"name": "ten-x", "display_name": "X"},
+                "/api/v1/tenants",
+                json={"name": "ten-x", "display_name": "X"},
                 headers={"X-API-Key": admin},
             )
             assert resp.status_code == 201
             tid = resp.json()["id"]
             lst = await client.get(
-                "/api/v1/tenants", headers={"X-API-Key": admin},
+                "/api/v1/tenants",
+                headers={"X-API-Key": admin},
             )
             assert lst.status_code == 200
             assert lst.json()["total"] >= 1
             one = await client.get(
-                f"/api/v1/tenants/{tid}", headers={"X-API-Key": admin},
+                f"/api/v1/tenants/{tid}",
+                headers={"X-API-Key": admin},
             )
             assert one.status_code == 200
             assert one.json()["id"] == tid
@@ -881,11 +910,13 @@ class TestTenantsDeep:
         admin = await self._mkadmin(client)
         try:
             await client.post(
-                "/api/v1/tenants", json={"name": "dup"},
+                "/api/v1/tenants",
+                json={"name": "dup"},
                 headers={"X-API-Key": admin},
             )
             resp = await client.post(
-                "/api/v1/tenants", json={"name": "dup"},
+                "/api/v1/tenants",
+                json={"name": "dup"},
                 headers={"X-API-Key": admin},
             )
             assert resp.status_code == 409
@@ -896,7 +927,8 @@ class TestTenantsDeep:
         admin = await self._mkadmin(client)
         try:
             resp = await client.get(
-                "/api/v1/tenants/nonexistent", headers={"X-API-Key": admin},
+                "/api/v1/tenants/nonexistent",
+                headers={"X-API-Key": admin},
             )
             assert resp.status_code == 404
         finally:
@@ -906,7 +938,8 @@ class TestTenantsDeep:
         admin = await self._mkadmin(client)
         try:
             t = await client.post(
-                "/api/v1/tenants", json={"name": "upd"},
+                "/api/v1/tenants",
+                json={"name": "upd"},
                 headers={"X-API-Key": admin},
             )
             tid = t.json()["id"]
@@ -936,7 +969,8 @@ class TestTenantsDeep:
         admin = await self._mkadmin(client)
         try:
             t = await client.post(
-                "/api/v1/tenants", json={"name": "del-models"},
+                "/api/v1/tenants",
+                json={"name": "del-models"},
                 headers={"X-API-Key": admin},
             )
             tid = t.json()["id"]
@@ -952,7 +986,8 @@ class TestTenantsDeep:
                 headers={"X-API-Key": dev},
             )
             resp = await client.delete(
-                f"/api/v1/tenants/{tid}", headers={"X-API-Key": admin},
+                f"/api/v1/tenants/{tid}",
+                headers={"X-API-Key": admin},
             )
             assert resp.status_code == 409
         finally:
@@ -962,7 +997,8 @@ class TestTenantsDeep:
         admin = await self._mkadmin(client)
         try:
             t = await client.post(
-                "/api/v1/tenants", json={"name": "del-keys"},
+                "/api/v1/tenants",
+                json={"name": "del-keys"},
                 headers={"X-API-Key": admin},
             )
             tid = t.json()["id"]
@@ -972,7 +1008,8 @@ class TestTenantsDeep:
                 headers={"X-API-Key": admin},
             )
             resp = await client.delete(
-                f"/api/v1/tenants/{tid}", headers={"X-API-Key": admin},
+                f"/api/v1/tenants/{tid}",
+                headers={"X-API-Key": admin},
             )
             assert resp.status_code == 409
         finally:
@@ -982,12 +1019,14 @@ class TestTenantsDeep:
         admin = await self._mkadmin(client)
         try:
             t = await client.post(
-                "/api/v1/tenants", json={"name": "del-ok"},
+                "/api/v1/tenants",
+                json={"name": "del-ok"},
                 headers={"X-API-Key": admin},
             )
             tid = t.json()["id"]
             resp = await client.delete(
-                f"/api/v1/tenants/{tid}", headers={"X-API-Key": admin},
+                f"/api/v1/tenants/{tid}",
+                headers={"X-API-Key": admin},
             )
             assert resp.status_code == 200
         finally:
@@ -997,7 +1036,8 @@ class TestTenantsDeep:
         admin = await self._mkadmin(client)
         try:
             resp = await client.delete(
-                "/api/v1/tenants/nonexistent", headers={"X-API-Key": admin},
+                "/api/v1/tenants/nonexistent",
+                headers={"X-API-Key": admin},
             )
             assert resp.status_code == 404
         finally:
@@ -1007,7 +1047,8 @@ class TestTenantsDeep:
         set_auth_enabled(True)
         try:
             admin = await client.post(
-                "/api/v1/auth/keys", json={"name": "a", "role": "admin"},
+                "/api/v1/auth/keys",
+                json={"name": "a", "role": "admin"},
             )
             admin_key = admin.json()["key"]
             dev = await client.post(
@@ -1017,7 +1058,8 @@ class TestTenantsDeep:
             )
             dev_key = dev.json()["key"]
             resp = await client.post(
-                "/api/v1/tenants", json={"name": "blocked"},
+                "/api/v1/tenants",
+                json={"name": "blocked"},
                 headers={"X-API-Key": dev_key},
             )
             assert resp.status_code == 403
@@ -1029,14 +1071,17 @@ class TestTenantRoles:
     @staticmethod
     async def _setup(client):
         from fusion_model_hub.server.rate_limit import reset_rate_limits
+
         reset_rate_limits()
         set_auth_enabled(True)
         admin = await client.post(
-            "/api/v1/auth/keys", json={"name": "r-admin", "role": "admin"},
+            "/api/v1/auth/keys",
+            json={"name": "r-admin", "role": "admin"},
         )
         admin_key = admin.json()["key"]
         t = await client.post(
-            "/api/v1/tenants", json={"name": "rt"},
+            "/api/v1/tenants",
+            json={"name": "rt"},
             headers={"X-API-Key": admin_key},
         )
         tid = t.json()["id"]
@@ -1053,7 +1098,8 @@ class TestTenantRoles:
             assert r.status_code == 201
             assert r.json()["name"] == "r1"
             lst = await client.get(
-                f"/api/v1/tenants/{tid}/roles", headers={"X-API-Key": admin},
+                f"/api/v1/tenants/{tid}/roles",
+                headers={"X-API-Key": admin},
             )
             assert lst.status_code == 200
             assert len(lst.json()["items"]) >= 1
@@ -1139,7 +1185,8 @@ class TestTenantRoles:
 class TestGitLFSDeep:
     async def test_upload_object_invalid_oid_traversal(self, client):
         resp = await client.put(
-            "/api/v1/gitlfs/objects/.", content=b"x",
+            "/api/v1/gitlfs/objects/.",
+            content=b"x",
         )
         assert resp.status_code in (200, 400, 404)
 
@@ -1150,7 +1197,8 @@ class TestGitLFSDeep:
     async def test_upload_then_download_object(self, client):
         oid = "deadbeef" * 8
         up = await client.put(
-            f"/api/v1/gitlfs/objects/{oid}", content=b"hello-lfs",
+            f"/api/v1/gitlfs/objects/{oid}",
+            content=b"hello-lfs",
         )
         assert up.status_code == 200
         dl = await client.get(f"/api/v1/gitlfs/objects/{oid}")
@@ -1168,7 +1216,8 @@ class TestGitLFSDeep:
     async def test_verify_object_ok(self, client):
         oid = "cafe" * 8
         await client.put(
-            f"/api/v1/gitlfs/objects/{oid}", content=b"xyz123",
+            f"/api/v1/gitlfs/objects/{oid}",
+            content=b"xyz123",
         )
         resp = await client.post(
             "/api/v1/gitlfs/verify",
@@ -1180,7 +1229,8 @@ class TestGitLFSDeep:
     async def test_verify_object_size_mismatch(self, client):
         oid = "face" * 8
         await client.put(
-            f"/api/v1/gitlfs/objects/{oid}", content=b"abc",
+            f"/api/v1/gitlfs/objects/{oid}",
+            content=b"abc",
         )
         resp = await client.post(
             "/api/v1/gitlfs/verify",
@@ -1227,9 +1277,7 @@ class TestGitLFSDeep:
             "/api/v1/gitlfs/locks",
             json={"model_id": m["id"], "path": "a.bin"},
         )
-        resp = await client.get(
-            "/api/v1/gitlfs/locks", params={"model_id": m["id"]}
-        )
+        resp = await client.get("/api/v1/gitlfs/locks", params={"model_id": m["id"]})
         assert resp.status_code == 200
         assert len(resp.json()["locks"]) >= 1
 
@@ -1264,6 +1312,7 @@ class TestDeps:
             get_start_ts,
             get_store,
         )
+
         assert get_settings() is settings
         assert get_session_factory() is not None
         assert get_store() is not None
@@ -1282,6 +1331,7 @@ class TestDeps:
         init_deps(settings, engine)
         from fusion_model_hub.server.deps import get_store
         from fusion_model_hub.storage.local_store import LocalStore
+
         store = get_store()
         assert isinstance(store, LocalStore)
         with contextlib.suppress(Exception):
@@ -1291,6 +1341,7 @@ class TestDeps:
 
     async def test_get_settings_returns_default_when_uninit(self):
         from fusion_model_hub.server import deps as deps_mod
+
         saved = deps_mod._settings
         deps_mod._settings = None
         try:
@@ -1301,6 +1352,7 @@ class TestDeps:
 
     async def test_get_session_factory_raises_when_uninit(self):
         from fusion_model_hub.server import deps as deps_mod
+
         saved = deps_mod._session_factory
         deps_mod._session_factory = None
         try:
@@ -1311,6 +1363,7 @@ class TestDeps:
 
     async def test_get_store_raises_when_uninit(self):
         from fusion_model_hub.server import deps as deps_mod
+
         saved = deps_mod._store
         deps_mod._store = None
         try:
@@ -1321,6 +1374,7 @@ class TestDeps:
 
     async def test_get_cache_manager_raises_when_uninit(self):
         from fusion_model_hub.server import deps as deps_mod
+
         saved = deps_mod._cache
         deps_mod._cache = None
         try:
@@ -1339,6 +1393,7 @@ class TestBackup:
             BACKUP_MAX_FILES,
             _rotate_backups,
         )
+
         for i in range(BACKUP_MAX_FILES + 3):
             f = tmp_path / f"backup_{i:04d}.json"
             f.write_text("{}")
@@ -1348,11 +1403,13 @@ class TestBackup:
 
     async def test_rotate_backups_swallows_error(self, tmp_path):
         from fusion_model_hub.server.backup import _rotate_backups
+
         nonexistent = str(tmp_path / "does-not-exist")
         _rotate_backups(nonexistent)
 
     async def test_restore_empty_backup(self, tmp_path):
         from fusion_model_hub.server.backup import restore_from_backup
+
         bf = tmp_path / "empty.json"
         bf.write_text(json.dumps({"models": [], "versions": []}))
         result = await restore_from_backup(str(bf))
@@ -1363,21 +1420,31 @@ class TestBackup:
         from fusion_model_hub.db.database import get_engine, init_db
         from fusion_model_hub.db.models import Model
         from fusion_model_hub.server.backup import restore_from_backup
+
         engine = get_engine("sqlite+aiosqlite:///:memory:")
         await init_db(engine)
         init_deps(settings, engine)
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as s:
-            s.add(Model(
-                id="m-exist", name="exist", model_type="llm",
-            ))
+            s.add(
+                Model(
+                    id="m-exist",
+                    name="exist",
+                    model_type="llm",
+                )
+            )
             await s.commit()
         bf = tmp_path / "b.json"
-        bf.write_text(json.dumps({
-            "models": [{"id": "m-exist", "name": "exist", "model_type": "llm"}],
-            "versions": [],
-        }))
+        bf.write_text(
+            json.dumps(
+                {
+                    "models": [{"id": "m-exist", "name": "exist", "model_type": "llm"}],
+                    "versions": [],
+                }
+            )
+        )
         result = await restore_from_backup(str(bf))
         assert result["skipped"] >= 1
         assert result["models_restored"] == 0
@@ -1389,20 +1456,34 @@ class TestBackup:
     async def test_restore_bad_enum_falls_back(self, settings, tmp_path):
         from fusion_model_hub.db.database import get_engine, init_db
         from fusion_model_hub.server.backup import restore_from_backup
+
         engine = get_engine("sqlite+aiosqlite:///:memory:")
         await init_db(engine)
         init_deps(settings, engine)
         bf = tmp_path / "bad.json"
-        bf.write_text(json.dumps({
-            "models": [{
-                "id": "m-bad", "name": "bad", "model_type": "not-a-real-type",
-            }],
-            "versions": [{
-                "id": "v-bad", "model_id": "m-bad", "version": "1",
-                "format": "not-a-format", "quantization": "not-a-quant",
-                "status": "not-a-status",
-            }],
-        }))
+        bf.write_text(
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "id": "m-bad",
+                            "name": "bad",
+                            "model_type": "not-a-real-type",
+                        }
+                    ],
+                    "versions": [
+                        {
+                            "id": "v-bad",
+                            "model_id": "m-bad",
+                            "version": "1",
+                            "format": "not-a-format",
+                            "quantization": "not-a-quant",
+                            "status": "not-a-status",
+                        }
+                    ],
+                }
+            )
+        )
         result = await restore_from_backup(str(bf))
         assert result["models_restored"] == 1
         assert result["versions_restored"] == 1
@@ -1414,6 +1495,7 @@ class TestBackup:
     async def test_perform_backup_writes_file(self, settings, tmp_path):
         from fusion_model_hub.db.database import get_engine, init_db
         from fusion_model_hub.server.backup import _perform_backup
+
         engine = get_engine("sqlite+aiosqlite:///:memory:")
         await init_db(engine)
         init_deps(settings, engine)
@@ -1433,6 +1515,7 @@ class TestBackup:
 
         from fusion_model_hub.db.database import get_engine, init_db
         from fusion_model_hub.server import backup as bk
+
         engine = get_engine("sqlite+aiosqlite:///:memory:")
         await init_db(engine)
         settings.backup_dir = str(tmp_path)

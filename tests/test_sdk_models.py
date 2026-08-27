@@ -128,8 +128,12 @@ class TestVersionResponse:
 
     def test_full(self):
         r = VersionResponse(
-            id="v1", model_id="m1", version="1.0.0",
-            status="published", benchmark_score=88.0, encrypted=True,
+            id="v1",
+            model_id="m1",
+            version="1.0.0",
+            status="published",
+            benchmark_score=88.0,
+            encrypted=True,
         )
         assert r.status == "published"
         assert r.encrypted is True
@@ -159,7 +163,9 @@ class TestQuantizeRequest:
         assert r.quant_bits == 4
 
     def test_full(self):
-        r = QuantizeRequest(source_version_id="v1", target_format="gguf", quant_bits=8, calibration_dataset="data.jsonl")
+        r = QuantizeRequest(
+            source_version_id="v1", target_format="gguf", quant_bits=8, calibration_dataset="data.jsonl"
+        )
         assert r.quant_bits == 8
         assert r.calibration_dataset == "data.jsonl"
 

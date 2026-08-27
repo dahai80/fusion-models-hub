@@ -31,14 +31,21 @@ def _build_export_tar(model: Any, versions: list, model_dir) -> "io.BytesIO":
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         metadata = {
             "model": {
-                "id": model.id, "name": model.name, "description": model.description,
-                "model_type": model.model_type.value, "architecture": model.architecture,
-                "params_size": model.params_size, "hf_repo": model.hf_repo,
+                "id": model.id,
+                "name": model.name,
+                "description": model.description,
+                "model_type": model.model_type.value,
+                "architecture": model.architecture,
+                "params_size": model.params_size,
+                "hf_repo": model.hf_repo,
             },
             "versions": [
                 {
-                    "id": v.id, "version": v.version, "format": v.format.value,
-                    "quantization": v.quantization.value, "file_hash": v.file_hash,
+                    "id": v.id,
+                    "version": v.version,
+                    "format": v.format.value,
+                    "quantization": v.quantization.value,
+                    "file_hash": v.file_hash,
                     "file_size": v.file_size,
                 }
                 for v in versions
@@ -66,7 +73,7 @@ def _extract_tar_members(tar: "tarfile.TarFile", model_dir, model_dir_resolved) 
         if member.issym() or member.islnk():
             logger.warning("Skipping unsafe tar link member: %s", member.name)
             continue
-        target = (model_dir / member.name)
+        target = model_dir / member.name
         try:
             resolved = target.resolve(strict=False)
         except (OSError, ValueError):
@@ -82,6 +89,7 @@ def _extract_tar_members(tar: "tarfile.TarFile", model_dir, model_dir_resolved) 
             if f:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(f.read())
+
 
 _running_url_downloads: dict[str, asyncio.Task] = {}
 
@@ -211,6 +219,7 @@ async def upload_version(
         # route through store.write_file (one put_object), capped by
         # max_upload_size_mb like the chunked-assemble path.
         from ...storage.local_store import LocalStore
+
         if isinstance(store, LocalStore):
             target_path = target_dir / safe_name
             with open(target_path, "wb") as out:
@@ -240,9 +249,13 @@ async def upload_version(
     try:
         v = await crud.create_version(
             session,
-            model_id=model_id, version=version, format=format,
-            quantization=quantization, file_path=file_path,
-            file_hash=file_hash, file_size=file_size,
+            model_id=model_id,
+            version=version,
+            format=format,
+            quantization=quantization,
+            file_path=file_path,
+            file_hash=file_hash,
+            file_size=file_size,
             release_notes=release_notes,
         )
     except VersionConflictError as e:
@@ -302,7 +315,10 @@ async def chunk_upload_version(
     if len(data) > MAX_CHUNK_SIZE:
         logger.warning(
             "Rejected oversized chunk: upload=%s idx=%d size=%d cap=%d",
-            upload_id, chunk_index, len(data), MAX_CHUNK_SIZE,
+            upload_id,
+            chunk_index,
+            len(data),
+            MAX_CHUNK_SIZE,
         )
         raise HTTPException(
             status_code=413,
@@ -328,9 +344,13 @@ async def chunk_upload_version(
     try:
         v = await crud.create_version(
             session,
-            model_id=model_id, version=version, format=format,
-            quantization=quantization, file_path=str(path),
-            file_hash=hash_val, file_size=size,
+            model_id=model_id,
+            version=version,
+            format=format,
+            quantization=quantization,
+            file_path=str(path),
+            file_hash=hash_val,
+            file_size=size,
             release_notes=release_notes,
         )
     except VersionConflictError as e:
@@ -354,7 +374,12 @@ async def list_versions(
         raise HTTPException(status_code=404, detail="Model not found")
     tenant_id = getattr(request.state, "tenant_id", "") or ""
     versions, total = await crud.list_versions(
-        session, model_id, tenant_id=tenant_id, status=status, page=page, page_size=page_size,
+        session,
+        model_id,
+        tenant_id=tenant_id,
+        status=status,
+        page=page,
+        page_size=page_size,
     )
     return {
         "items": [_version_to_dict(v) for v in versions],
@@ -381,7 +406,9 @@ async def update_version_status(version_id: str, body: StatusChange, session: Se
     await _enforce_version_tenant(session, existing, request)
     try:
         v = await crud.update_version_status(
-            session, version_id, body.target_status,
+            session,
+            version_id,
+            body.target_status,
             approval_level=body.approval_level,
         )
     except InvalidTransition as e:
@@ -409,6 +436,7 @@ async def download_version(version_id: str, session: SessionDep, store: StoreDep
     await crud.increment_download(session, v.model_id)
 
     from fastapi.responses import FileResponse
+
     return FileResponse(
         path=str(file_path),
         filename=file_path.name,
@@ -463,6 +491,7 @@ async def rollback_version(version_id: str, session: SessionDep):
         raise HTTPException(status_code=404, detail="Version not found")
     try:
         from .webhooks import dispatch_webhook_event
+
         await dispatch_webhook_event("version.published", {"id": version_id, "model_id": model_id})
     except Exception:
         logger.exception("Webhook dispatch failed for version.published")
@@ -496,12 +525,14 @@ async def deprecate_version(version_id: str, body: DeprecateRequest, session: Se
         if not updated:
             logger.error(
                 "Deprecate successor link failed (version gone?): id=%s successor=%s",
-                version_id, body.successor_version_id,
+                version_id,
+                body.successor_version_id,
             )
         else:
             v = updated
     try:
         from .webhooks import dispatch_webhook_event
+
         await dispatch_webhook_event("version.deprecated", {"id": version_id, "model_id": model_id})
     except Exception:
         logger.exception("Webhook dispatch failed for version.deprecated")
@@ -518,9 +549,8 @@ async def retire_version(version_id: str, session: SessionDep):
         raise HTTPException(status_code=404, detail="Version not found")
     try:
         from .webhooks import dispatch_webhook_event
-        await dispatch_webhook_event(
-            "version.retired", {"id": version_id, "model_id": v.model_id}
-        )
+
+        await dispatch_webhook_event("version.retired", {"id": version_id, "model_id": v.model_id})
     except Exception:
         logger.exception("Webhook dispatch failed for version.retired")
     return _version_to_dict(v)
@@ -558,6 +588,7 @@ async def promote_version(version_id: str, session: SessionDep):
         if next_status == VersionStatus.PUBLISHED:
             try:
                 from .webhooks import dispatch_webhook_event
+
                 await dispatch_webhook_event(
                     "version.published",
                     {"id": version_id, "model_id": v.model_id},
@@ -581,6 +612,7 @@ class UrlDownloadRequest(BaseModel):
 
 def _validate_download_url(url_str: str) -> None:
     from ..ssrf import validate_external_url
+
     validate_external_url(url_str)
 
 
@@ -619,6 +651,7 @@ async def download_version_from_url(
             expected_hash=body.expected_hash,
         )
         from ..deps import get_session_factory
+
         sf = get_session_factory()
         if result.get("status") == "completed":
             async with sf() as s:
@@ -640,24 +673,31 @@ async def download_version_from_url(
                     # path, so mark the task completed rather than crashing it.
                     logger.warning(
                         "URL download: version %s/%s already exists, marking task completed",
-                        model_id, version,
+                        model_id,
+                        version,
                     )
                 await crud.update_download_task(
-                    s, dl_task_id, status="completed",
+                    s,
+                    dl_task_id,
+                    status="completed",
                     file_path=result.get("path", ""),
                     file_hash=result.get("hash", body.expected_hash),
                 )
-            logger.info("URL download completed: model=%s version=%s task=%s",
-                        model_id, version, dl_task_id)
+            logger.info("URL download completed: model=%s version=%s task=%s", model_id, version, dl_task_id)
         else:
             async with sf() as s:
                 await crud.update_download_task(
-                    s, dl_task_id, status="failed",
+                    s,
+                    dl_task_id,
+                    status="failed",
                     error_message=(result.get("error", "download failed") or "")[:500],
                 )
             logger.error(
                 "URL download failed: model=%s version=%s task=%s error=%s",
-                model_id, version, dl_task_id, result.get("error", ""),
+                model_id,
+                version,
+                dl_task_id,
+                result.get("error", ""),
             )
 
     dl_key = f"{model_id}_{version}"
@@ -732,13 +772,15 @@ async def import_model_tar(
                 raise HTTPException(status_code=409, detail=f"Model already exists: {name}")
 
             from ...db.models import ModelType
+
             try:
                 mt = ModelType(model_data.get("model_type", "llm"))
             except ValueError:
                 mt = ModelType.LLM
 
             m = await crud.create_model(
-                session, name=name,
+                session,
+                name=name,
                 description=model_data.get("description", ""),
                 model_type=mt,
                 architecture=model_data.get("architecture", ""),
@@ -759,7 +801,10 @@ async def import_model_tar(
             # P1-9: the per-member extractfile+write_bytes loop is heavy sync
             # IO; offload it to a worker thread. TarSlip guards stay in place.
             await anyio.to_thread.run_sync(
-                _extract_tar_members, tar, model_dir, model_dir_resolved,
+                _extract_tar_members,
+                tar,
+                model_dir,
+                model_dir_resolved,
             )
 
             imported = 0
@@ -781,7 +826,8 @@ async def import_model_tar(
                     # whole import.
                     logger.warning(
                         "Tar import: version %s/%s already exists, skipping",
-                        m.id, v_data.get("version", ""),
+                        m.id,
+                        v_data.get("version", ""),
                     )
 
             logger.info("Imported model from tar: name=%s id=%s", name, m.id)

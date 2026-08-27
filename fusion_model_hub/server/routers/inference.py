@@ -25,6 +25,7 @@ def _mlx_headers(settings) -> dict[str, str]:
         headers["Authorization"] = f"Bearer {settings.mlx_internal_api_key}"
     return headers
 
+
 _LOADED_TTL = 3600
 _loaded_models: dict[str, dict] = {}
 _model_stats: dict[str, dict] = {}
@@ -58,6 +59,7 @@ async def _check_module_access(model_id: str, request) -> None:
         return
     try:
         from ..deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             m = await crud.get_model(session, model_id)
@@ -75,16 +77,17 @@ async def _check_module_access(model_id: str, request) -> None:
 async def _resolve_model_name_for_inference(model_id: str) -> tuple[str, str | None]:
     try:
         from ..deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             deployments = await crud.list_deployments(session, model_id=model_id, status="running")
             for d in deployments:
                 if d.gray_enabled and d.gray_version_id and random.randint(1, 100) <= d.gray_traffic_ratio:
-                        gray_ver = await crud.get_version(session, d.gray_version_id)
-                        if gray_ver:
-                            m = await crud.get_model(session, model_id)
-                            model_name = m.hf_repo or m.name if m else model_id
-                            return model_name, d.gray_version_id
+                    gray_ver = await crud.get_version(session, d.gray_version_id)
+                    if gray_ver:
+                        m = await crud.get_model(session, model_id)
+                        model_name = m.hf_repo or m.name if m else model_id
+                        return model_name, d.gray_version_id
     except Exception:
         logger.warning("Gray route resolution failed for model=%s, using default", model_id, exc_info=True)
     return "", None
@@ -140,6 +143,7 @@ async def _cleanup_loaded_models() -> None:
             if model_name:
                 try:
                     from ..deps import get_settings
+
                     settings = get_settings()
                     async with httpx.AsyncClient(timeout=15.0) as client:
                         await client.post(
@@ -155,8 +159,11 @@ async def _cleanup_loaded_models() -> None:
 
 
 def _update_model_stats(
-    model_id: str, latency_ms: float, tokens: int = 0,
-    source_module: str = "", key_id: str = "",
+    model_id: str,
+    latency_ms: float,
+    tokens: int = 0,
+    source_module: str = "",
+    key_id: str = "",
 ) -> None:
     if model_id not in _model_stats:
         # R6: bound the tracked set so a long run with many transient models
@@ -188,9 +195,14 @@ def _update_model_stats(
     # E-E7: accumulate per-key counters. Anonymous (no api_key_id, e.g. auth
     # disabled) buckets under "" so local mode still reports a single bucket
     # rather than dropping the volume.
-    pk = stats["per_key"].setdefault(key_id or "", {
-        "request_count": 0, "total_tokens": 0, "total_latency": 0.0,
-    })
+    pk = stats["per_key"].setdefault(
+        key_id or "",
+        {
+            "request_count": 0,
+            "total_tokens": 0,
+            "total_latency": 0.0,
+        },
+    )
     pk["request_count"] += 1
     pk["total_tokens"] += tokens
     pk["total_latency"] += latency_ms
@@ -201,11 +213,13 @@ async def _write_inference_audit(model_id: str, action_type: str, latency_ms: fl
         sf = get_session_factory()
         async with sf() as session:
             module = request.headers.get("X-Fusion-Module", "")
-            detail = json.dumps({
-                "module": module,
-                "model_id": model_id,
-                "latency_ms": round(latency_ms, 2),
-            })
+            detail = json.dumps(
+                {
+                    "module": module,
+                    "model_id": model_id,
+                    "latency_ms": round(latency_ms, 2),
+                }
+            )
             await crud.create_audit_log(
                 session,
                 action=f"inference_{action_type}",
@@ -262,15 +276,16 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
 
     if v.file_path:
         import os
+
         if not os.path.exists(v.file_path):
             # E-D4: a missing file for a PUBLISHED version is a zombie — the
             # prior 403 left it published and silently un-servable. Log loudly
             # with the version id so an operator can retire/rollback it; the
             # 403 still protects callers.
             logger.error(
-                "Published version file missing (zombie): version_id=%s path=%s "
-                "— retire or rollback this version",
-                version_id, v.file_path,
+                "Published version file missing (zombie): version_id=%s path=%s — retire or rollback this version",
+                version_id,
+                v.file_path,
             )
             raise HTTPException(status_code=403, detail="File integrity check failed. Model files may be corrupted.")
         if not v.file_hash:
@@ -281,14 +296,14 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
             computed = await anyio.to_thread.run_sync(_compute_file_hash, v.file_path)
             if computed != v.file_hash.lower():
                 logger.error(
-                    "File hash mismatch for version %s: "
-                    "expected=%s computed=%s",
-                    version_id, v.file_hash, computed,
+                    "File hash mismatch for version %s: expected=%s computed=%s",
+                    version_id,
+                    v.file_hash,
+                    computed,
                 )
                 raise HTTPException(
                     status_code=403,
-                    detail="File integrity check failed. "
-                           "Model files may be corrupted.",
+                    detail="File integrity check failed. Model files may be corrupted.",
                 )
 
     model_name = m.hf_repo or m.name
@@ -304,8 +319,10 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
         raise safe_http_error(
-            e.response.status_code, "Fusion-MLX model load failed",
-            exc=e, context="load",
+            e.response.status_code,
+            "Fusion-MLX model load failed",
+            exc=e,
+            context="load",
         )
 
     async with _loaded_lock:
@@ -332,7 +349,11 @@ class HotReloadRequest(BaseModel):
 
 @router.post("/models/{model_id}/hot-reload")
 async def hot_reload_model(
-    model_id: str, body: HotReloadRequest, session: SessionDep, settings: SettingsDep, request: Request,
+    model_id: str,
+    body: HotReloadRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+    request: Request,
 ):
     # FR-015 zero-downtime hot reload: preload new version, swap served record,
     # then dispatch webhook. MLX loads by hf_repo; version swap is recorded at
@@ -381,10 +402,14 @@ async def hot_reload_model(
         }
     logger.info(
         "Hot-reload done: id=%s old_ver=%s new_ver=%s mlx_model=%s",
-        model_id, old_version_id, body.version_id, model_name,
+        model_id,
+        old_version_id,
+        body.version_id,
+        model_name,
     )
     try:
         from .webhooks import dispatch_webhook_event
+
         await dispatch_webhook_event(
             "model.hot_reloaded",
             {
@@ -521,7 +546,9 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
         if usage:
             tokens = usage.get("total_tokens", 0)
         _update_model_stats(
-            model_id, latency_ms, tokens,
+            model_id,
+            latency_ms,
+            tokens,
             request.headers.get("X-Fusion-Module", "").lower(),
             key_id=getattr(request.state, "api_key_id", ""),
         )
@@ -531,8 +558,10 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
         raise safe_http_error(
-            e.response.status_code, "Fusion-MLX chat request failed",
-            exc=e, context="chat-completions",
+            e.response.status_code,
+            "Fusion-MLX chat request failed",
+            exc=e,
+            context="chat-completions",
         )
 
 
@@ -576,7 +605,9 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
         if usage:
             tokens = usage.get("total_tokens", 0)
         _update_model_stats(
-            model_id, latency_ms, tokens,
+            model_id,
+            latency_ms,
+            tokens,
             request.headers.get("X-Fusion-Module", "").lower(),
             key_id=getattr(request.state, "api_key_id", ""),
         )
@@ -586,8 +617,10 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
         raise safe_http_error(
-            e.response.status_code, "Fusion-MLX completions request failed",
-            exc=e, context="completions",
+            e.response.status_code,
+            "Fusion-MLX completions request failed",
+            exc=e,
+            context="completions",
         )
 
 
@@ -618,7 +651,9 @@ async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: 
         if usage:
             tokens = usage.get("total_tokens", 0)
         _update_model_stats(
-            model_id, latency_ms, tokens,
+            model_id,
+            latency_ms,
+            tokens,
             request.headers.get("X-Fusion-Module", "").lower(),
             key_id=getattr(request.state, "api_key_id", ""),
         )
@@ -628,6 +663,8 @@ async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: 
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
     except httpx.HTTPStatusError as e:
         raise safe_http_error(
-            e.response.status_code, "Fusion-MLX embeddings request failed",
-            exc=e, context="embeddings",
+            e.response.status_code,
+            "Fusion-MLX embeddings request failed",
+            exc=e,
+            context="embeddings",
         )

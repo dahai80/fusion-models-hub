@@ -85,7 +85,10 @@ class AdaptDecisionEngine:
         return generate_plan(model_id, adapt_result.level, params_b, hw)
 
     async def _call_mlx_migration_level(
-        self, model_id: str, hf_repo: str | None, source_format: str | None,
+        self,
+        model_id: str,
+        hf_repo: str | None,
+        source_format: str | None,
     ) -> AdaptationResult | None:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -116,7 +119,9 @@ class AdaptDecisionEngine:
             return None
 
     async def _call_mlx_analyze(
-        self, model_id: str, hf_repo: str | None,
+        self,
+        model_id: str,
+        hf_repo: str | None,
     ) -> dict | None:
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
@@ -139,8 +144,18 @@ class AdaptDecisionEngine:
     @staticmethod
     def _local_fallback(model_id: str, hf_repo: str | None) -> AdaptationResult:
         known_prefixes = [
-            "qwen", "llama", "mistral", "gemma", "phi", "deepseek", "yi",
-            "chatglm", "solar", "internlm", "starcoder", "codellama",
+            "qwen",
+            "llama",
+            "mistral",
+            "gemma",
+            "phi",
+            "deepseek",
+            "yi",
+            "chatglm",
+            "solar",
+            "internlm",
+            "starcoder",
+            "codellama",
         ]
         model_lower = model_id.lower()
 

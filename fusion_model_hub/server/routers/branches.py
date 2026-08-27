@@ -45,8 +45,11 @@ async def create_branch(model_id: str, body: BranchCreate, session: SessionDep):
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     b = await crud.create_model_branch(
-        session, model_id=model_id, name=body.name,
-        base_version_id=body.base_version_id, description=body.description,
+        session,
+        model_id=model_id,
+        name=body.name,
+        base_version_id=body.base_version_id,
+        description=body.description,
     )
     return _branch_to_dict(b)
 
@@ -167,7 +170,9 @@ async def merge_branch(branch_id: str, session: SessionDep):
     if not promoted_id:
         raise HTTPException(status_code=500, detail="Failed to promote merged version")
     b = await crud.update_model_branch(
-        session, branch_id, status=BranchStatus.MERGED,
+        session,
+        branch_id,
+        status=BranchStatus.MERGED,
     )
     logger.info("Merged branch: id=%s name=%s promoted_version=%s", branch_id, b.name, promoted_id)
     result = _branch_to_dict(b)

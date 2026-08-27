@@ -8,8 +8,7 @@ logger = logging.getLogger(__name__)
 
 class StorageBackend(ABC):
     @abstractmethod
-    def model_version_dir(self, model_id: str, version: str) -> Path:
-        ...
+    def model_version_dir(self, model_id: str, version: str) -> Path: ...
 
     # E-R3: the ABC previously omitted write_chunk/assemble_chunks/models_dir
     # even though LocalStore implements them and versions.py calls them. The
@@ -19,14 +18,16 @@ class StorageBackend(ABC):
     # and forces each backend to either implement or raise NotImplementedError
     # in the open — no silent AttributeError 500.
     @abstractmethod
-    async def write_chunk(self, upload_id: str, chunk_index: int, chunk_data: bytes) -> Path:
-        ...
+    async def write_chunk(self, upload_id: str, chunk_index: int, chunk_data: bytes) -> Path: ...
 
     @abstractmethod
     async def assemble_chunks(
-        self, upload_id: str, target_dir: Path, filename: str, total_chunks: int,
-    ) -> tuple[Path, str, int]:
-        ...
+        self,
+        upload_id: str,
+        target_dir: Path,
+        filename: str,
+        total_chunks: int,
+    ) -> tuple[Path, str, int]: ...
 
     # E-R3: LocalStore exposes the models root as a Path attribute that
     # versions.py walks for tar export/import. Declaring it as an abstract
@@ -34,16 +35,13 @@ class StorageBackend(ABC):
     # NotImplementedError because object storage has no walkable local dir.
     @property
     @abstractmethod
-    def models_dir(self) -> Path:
-        ...
+    def models_dir(self) -> Path: ...
 
     @abstractmethod
-    async def write_file(self, target_dir: Path, filename: str, data: bytes) -> tuple[Path, str, int]:
-        ...
+    async def write_file(self, target_dir: Path, filename: str, data: bytes) -> tuple[Path, str, int]: ...
 
     @abstractmethod
-    def get_file(self, file_path: str) -> Path | None:
-        ...
+    def get_file(self, file_path: str) -> Path | None: ...
 
     # FR-027 / P1-2: Git LFS batch API references /gitlfs/objects/{oid} for
     # upload (PUT) and download (GET). Backends must be able to store and
@@ -51,21 +49,16 @@ class StorageBackend(ABC):
     # MinioStore raises NotImplementedError — LFS upload/download on object
     # storage is a separate path not wired here yet.
     @abstractmethod
-    def put_lfs_object(self, oid: str, data: bytes) -> Path:
-        ...
+    def put_lfs_object(self, oid: str, data: bytes) -> Path: ...
 
     @abstractmethod
-    def get_lfs_object(self, oid: str) -> Path | None:
-        ...
+    def get_lfs_object(self, oid: str) -> Path | None: ...
 
     @abstractmethod
-    def delete_version_files(self, model_id: str, version: str) -> bool:
-        ...
+    def delete_version_files(self, model_id: str, version: str) -> bool: ...
 
     @abstractmethod
-    def delete_model_files(self, model_id: str) -> bool:
-        ...
+    def delete_model_files(self, model_id: str) -> bool: ...
 
     @abstractmethod
-    def get_storage_stats(self) -> dict[str, Any]:
-        ...
+    def get_storage_stats(self) -> dict[str, Any]: ...

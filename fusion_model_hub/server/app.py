@@ -60,7 +60,9 @@ async def _reconcile_orphaned_tasks() -> None:
         running_tasks, _ = await list_quantize_tasks(session, status=TaskStatus.RUNNING.value, page_size=200)
         for t in running_tasks:
             await update_quantize_task(
-                session, t.id, status=TaskStatus.FAILED.value,
+                session,
+                t.id,
+                status=TaskStatus.FAILED.value,
                 error_message="Task orphaned by server restart",
             )
             failed += 1
@@ -71,17 +73,22 @@ async def _reconcile_orphaned_tasks() -> None:
         # not stay stuck RUNNING forever (the prior reconcile pass only handled
         # QuantizeTask, leaving LoraMergeTask silently orphaned).
         from ..db.crud import list_lora_merge_tasks, update_lora_merge_task
+
         lora_running, _ = await list_lora_merge_tasks(session, status=TaskStatus.RUNNING.value, page_size=200)
         for t in lora_running:
             await update_lora_merge_task(
-                session, t.id, status=TaskStatus.FAILED.value,
+                session,
+                t.id,
+                status=TaskStatus.FAILED.value,
                 error_message="LoRA merge orphaned by server restart",
             )
             failed += 1
         lora_pending, _ = await list_lora_merge_tasks(session, status=TaskStatus.PENDING.value, page_size=200)
         for t in lora_pending:
             await update_lora_merge_task(
-                session, t.id, status=TaskStatus.FAILED.value,
+                session,
+                t.id,
+                status=TaskStatus.FAILED.value,
                 error_message="LoRA merge not resumed after restart (no safe resume path)",
             )
             failed += 1
@@ -93,10 +100,9 @@ async def _reconcile_orphaned_tasks() -> None:
         from sqlalchemy import select
 
         from ..db.models import DistributedTask, DistributedTaskStatus
+
         for st in (DistributedTaskStatus.RUNNING, DistributedTaskStatus.PENDING):
-            rows = (await session.execute(
-                select(DistributedTask).where(DistributedTask.status == st)
-            )).scalars().all()
+            rows = (await session.execute(select(DistributedTask).where(DistributedTask.status == st))).scalars().all()
             for t in rows:
                 t.status = DistributedTaskStatus.FAILED
                 t.completed_at = None
@@ -153,6 +159,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # metadata while the operator fixes the base.
         try:
             from ..api.base_binding import FusionMLXBase
+
             base = FusionMLXBase(mlx_url=settings.mlx_url)
             compat = await base.check_compatibility(">=0.5.0")
             if compat.get("compatible"):
@@ -172,6 +179,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # H8: close the shared httpx transports pooled for the MLX hot path.
         try:
             from .http_client import close_all_transports
+
             await close_all_transports()
         except Exception:
             logger.warning("Failed to close pooled httpx transports", exc_info=True)
@@ -179,6 +187,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the event loop closes (prevents `RuntimeError: Event loop is closed`).
         try:
             from ..db.database import dispose_all_engines
+
             await dispose_all_engines()
         except Exception:
             logger.warning("Failed to dispose async engines", exc_info=True)
@@ -206,7 +215,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         duration_ms = (time.time() - start) * 1000
         logger.info(
             "%s %s -> %d (%.1fms)",
-            request.method, request.url.path, response.status_code, duration_ms,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
         )
         return response
 
@@ -216,6 +228,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import uuid as _uuid
 
         from fastapi import HTTPException as FastAPIHTTPException
+
         if isinstance(exc, FastAPIHTTPException):
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
         # E-E13: exc.__repr__/str(exc) routinely embeds the SQLAlchemy db_url
@@ -235,7 +248,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         logger.error(
             "Unhandled exception: %s %s -> %s trace_id=%s",
-            request.method, request.url.path, type(exc).__name__, trace_id,
+            request.method,
+            request.url.path,
+            type(exc).__name__,
+            trace_id,
         )
         logger.debug("Unhandled exception detail trace_id=%s: %s", trace_id, redacted)
         return JSONResponse(

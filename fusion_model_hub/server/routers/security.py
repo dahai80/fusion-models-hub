@@ -34,8 +34,11 @@ class ScanRequest(BaseModel):
 
 def _scan_to_dict(s) -> dict:
     return {
-        "id": s.id, "model_id": s.model_id, "version_id": s.version_id,
-        "scan_type": s.scan_type, "status": s.status.value,
+        "id": s.id,
+        "model_id": s.model_id,
+        "version_id": s.version_id,
+        "scan_type": s.scan_type,
+        "status": s.status.value,
         "findings": json.loads(s.findings) if s.findings else {},
         "risk_level": s.risk_level,
         "created_at": s.created_at.isoformat() if s.created_at else None,
@@ -57,8 +60,10 @@ async def trigger_scan(body: ScanRequest, session: SessionDep):
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     scan = await crud.create_security_scan(
-        session, model_id=body.model_id,
-        version_id=body.version_id, scan_type=body.scan_type,
+        session,
+        model_id=body.model_id,
+        version_id=body.version_id,
+        scan_type=body.scan_type,
     )
     source_verified = _verify_hf_repo(model.hf_repo or "")
     # E-S7: do NOT fabricate a clean malicious_code/deps/secrets verdict. The
@@ -76,13 +81,15 @@ async def trigger_scan(body: ScanRequest, session: SessionDep):
     # separate "manual_review" flag, not a risk bump on their own.
     risk_level = "low" if source_verified else "medium"
     scan = await crud.update_security_scan(
-        session, scan.id,
+        session,
+        scan.id,
         status=ScanStatus.COMPLETED,
         findings=json.dumps(findings),
         risk_level=risk_level,
     )
-    logger.info("Security scan completed (provenance only): id=%s risk=%s verified=%s",
-                scan.id, risk_level, source_verified)
+    logger.info(
+        "Security scan completed (provenance only): id=%s risk=%s verified=%s", scan.id, risk_level, source_verified
+    )
     return _scan_to_dict(scan)
 
 
@@ -97,14 +104,23 @@ async def get_scan(scan_id: str, session: SessionDep):
 @router.get("/security/scans")
 async def list_scans(
     session: SessionDep,
-    model_id: str = "", version_id: str = "",
-    status: str = "", page: int = 1, page_size: int = 20,
+    model_id: str = "",
+    version_id: str = "",
+    status: str = "",
+    page: int = 1,
+    page_size: int = 20,
 ):
     scans, total = await crud.list_security_scans(
-        session, model_id=model_id, version_id=version_id,
-        status=status, page=page, page_size=page_size,
+        session,
+        model_id=model_id,
+        version_id=version_id,
+        status=status,
+        page=page,
+        page_size=page_size,
     )
     return {
         "items": [_scan_to_dict(s) for s in scans],
-        "total": total, "page": page, "page_size": page_size,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }

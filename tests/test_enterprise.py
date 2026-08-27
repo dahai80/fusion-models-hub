@@ -17,7 +17,8 @@ from fusion_model_hub.server.deps import init_deps
 @pytest.fixture
 def settings():
     return Settings(
-        host="127.0.0.1", port=11444,
+        host="127.0.0.1",
+        port=11444,
         data_dir="/tmp/fmh_test_enterprise",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -32,6 +33,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -42,10 +44,16 @@ async def client(app, settings):
 
 
 async def _create_model(client, name="ent-model"):
-    resp = await client.post("/api/v1/models", json={
-        "name": name, "description": "enterprise test",
-        "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
-    })
+    resp = await client.post(
+        "/api/v1/models",
+        json={
+            "name": name,
+            "description": "enterprise test",
+            "model_type": "llm",
+            "architecture": "qwen2",
+            "params_size": "7B",
+        },
+    )
     assert resp.status_code == 201
     return resp.json()
 
@@ -64,9 +72,13 @@ class TestSecurityScan:
     @pytest.mark.asyncio
     async def test_start_scan(self, client):
         model = await _create_model(client)
-        resp = await client.post("/api/v1/security/scan", json={
-            "model_id": model["id"], "scan_type": "full",
-        })
+        resp = await client.post(
+            "/api/v1/security/scan",
+            json={
+                "model_id": model["id"],
+                "scan_type": "full",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert "id" in data
@@ -75,9 +87,13 @@ class TestSecurityScan:
     @pytest.mark.asyncio
     async def test_get_scan(self, client):
         model = await _create_model(client)
-        scan = await client.post("/api/v1/security/scan", json={
-            "model_id": model["id"], "scan_type": "full",
-        })
+        scan = await client.post(
+            "/api/v1/security/scan",
+            json={
+                "model_id": model["id"],
+                "scan_type": "full",
+            },
+        )
         scan_id = scan.json()["id"]
         resp = await client.get(f"/api/v1/security/scan/{scan_id}")
         assert resp.status_code == 200
@@ -89,9 +105,13 @@ class TestSecurityScan:
 
     @pytest.mark.asyncio
     async def test_scan_model_not_found(self, client):
-        resp = await client.post("/api/v1/security/scan", json={
-            "model_id": "nonexistent", "scan_type": "full",
-        })
+        resp = await client.post(
+            "/api/v1/security/scan",
+            json={
+                "model_id": "nonexistent",
+                "scan_type": "full",
+            },
+        )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
@@ -106,9 +126,14 @@ class TestWatermark:
         # E-S6: embed refuses the source-public default secret; supply a real one.
         monkeypatch.setenv("FMH_WATERMARK_SECRET", "enterprise-test-secret-32b")
         model = await _create_model(client)
-        resp = await client.post("/api/v1/watermark/embed", json={
-            "model_id": model["id"], "watermark_type": "metadata", "payload": {"owner": "test"},
-        })
+        resp = await client.post(
+            "/api/v1/watermark/embed",
+            json={
+                "model_id": model["id"],
+                "watermark_type": "metadata",
+                "payload": {"owner": "test"},
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert "id" in data
@@ -118,12 +143,20 @@ class TestWatermark:
         # E-S6: verify re-derives the signature from the same per-request secret.
         monkeypatch.setenv("FMH_WATERMARK_SECRET", "enterprise-test-secret-32b")
         model = await _create_model(client)
-        await client.post("/api/v1/watermark/embed", json={
-            "model_id": model["id"], "watermark_type": "metadata", "payload": {"owner": "test"},
-        })
-        resp = await client.post("/api/v1/watermark/verify", json={
-            "model_id": model["id"],
-        })
+        await client.post(
+            "/api/v1/watermark/embed",
+            json={
+                "model_id": model["id"],
+                "watermark_type": "metadata",
+                "payload": {"owner": "test"},
+            },
+        )
+        resp = await client.post(
+            "/api/v1/watermark/verify",
+            json={
+                "model_id": model["id"],
+            },
+        )
         assert resp.status_code == 200
         assert "verified" in resp.json()
 
@@ -134,9 +167,13 @@ class TestWatermark:
 
     @pytest.mark.asyncio
     async def test_embed_model_not_found(self, client):
-        resp = await client.post("/api/v1/watermark/embed", json={
-            "model_id": "nonexistent", "watermark_type": "metadata",
-        })
+        resp = await client.post(
+            "/api/v1/watermark/embed",
+            json={
+                "model_id": "nonexistent",
+                "watermark_type": "metadata",
+            },
+        )
         assert resp.status_code == 404
 
 
@@ -146,9 +183,12 @@ class TestEncryption:
         model = await _create_model(client)
         version = await _create_version(client, model["id"])
         os.environ["FMH_ENCRYPTION_KEY"] = "test-encryption-key-32-bytes-long!!"
-        resp = await client.post("/api/v1/encryption/encrypt", json={
-            "version_id": version["id"],
-        })
+        resp = await client.post(
+            "/api/v1/encryption/encrypt",
+            json={
+                "version_id": version["id"],
+            },
+        )
         assert resp.status_code in (200, 400, 500)
 
     @pytest.mark.asyncio
@@ -156,9 +196,12 @@ class TestEncryption:
         model = await _create_model(client)
         version = await _create_version(client, model["id"])
         os.environ["FMH_ENCRYPTION_KEY"] = "test-encryption-key-32-bytes-long!!"
-        resp = await client.post("/api/v1/encryption/decrypt", json={
-            "version_id": version["id"],
-        })
+        resp = await client.post(
+            "/api/v1/encryption/decrypt",
+            json={
+                "version_id": version["id"],
+            },
+        )
         assert resp.status_code in (200, 400, 409, 500)
 
     @pytest.mark.asyncio
@@ -170,16 +213,22 @@ class TestEncryption:
 
     @pytest.mark.asyncio
     async def test_encrypt_version_not_found(self, client):
-        resp = await client.post("/api/v1/encryption/encrypt", json={
-            "version_id": "nonexistent",
-        })
+        resp = await client.post(
+            "/api/v1/encryption/encrypt",
+            json={
+                "version_id": "nonexistent",
+            },
+        )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_decrypt_version_not_found(self, client):
-        resp = await client.post("/api/v1/encryption/decrypt", json={
-            "version_id": "nonexistent",
-        })
+        resp = await client.post(
+            "/api/v1/encryption/decrypt",
+            json={
+                "version_id": "nonexistent",
+            },
+        )
         assert resp.status_code == 404
 
 
@@ -187,27 +236,42 @@ class TestApprovals:
     @pytest.mark.asyncio
     async def test_create_approval_l1(self, client):
         model = await _create_model(client)
-        resp = await client.post("/api/v1/approvals", json={
-            "model_id": model["id"], "level": "l1", "comment": "auto test",
-        })
+        resp = await client.post(
+            "/api/v1/approvals",
+            json={
+                "model_id": model["id"],
+                "level": "l1",
+                "comment": "auto test",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["status"] == "approved"
 
     @pytest.mark.asyncio
     async def test_create_approval_l2(self, client):
         model = await _create_model(client)
-        resp = await client.post("/api/v1/approvals", json={
-            "model_id": model["id"], "level": "l2", "comment": "need review",
-        })
+        resp = await client.post(
+            "/api/v1/approvals",
+            json={
+                "model_id": model["id"],
+                "level": "l2",
+                "comment": "need review",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["status"] == "pending"
 
     @pytest.mark.asyncio
     async def test_approve_request(self, client):
         model = await _create_model(client)
-        approval = await client.post("/api/v1/approvals", json={
-            "model_id": model["id"], "level": "l2", "comment": "review",
-        })
+        approval = await client.post(
+            "/api/v1/approvals",
+            json={
+                "model_id": model["id"],
+                "level": "l2",
+                "comment": "review",
+            },
+        )
         req_id = approval.json()["id"]
         resp = await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "admin", "comment": "ok"})
         assert resp.status_code == 200
@@ -216,9 +280,14 @@ class TestApprovals:
     @pytest.mark.asyncio
     async def test_reject_request(self, client):
         model = await _create_model(client)
-        approval = await client.post("/api/v1/approvals", json={
-            "model_id": model["id"], "level": "l2", "comment": "review",
-        })
+        approval = await client.post(
+            "/api/v1/approvals",
+            json={
+                "model_id": model["id"],
+                "level": "l2",
+                "comment": "review",
+            },
+        )
         req_id = approval.json()["id"]
         resp = await client.post(f"/api/v1/approvals/{req_id}/reject", json={"approver": "admin", "comment": "no"})
         assert resp.status_code == 200
@@ -232,9 +301,13 @@ class TestApprovals:
     @pytest.mark.asyncio
     async def test_get_approval(self, client):
         model = await _create_model(client)
-        approval = await client.post("/api/v1/approvals", json={
-            "model_id": model["id"], "level": "l2",
-        })
+        approval = await client.post(
+            "/api/v1/approvals",
+            json={
+                "model_id": model["id"],
+                "level": "l2",
+            },
+        )
         req_id = approval.json()["id"]
         resp = await client.get(f"/api/v1/approvals/{req_id}")
         assert resp.status_code == 200
@@ -253,9 +326,14 @@ class TestApprovals:
     async def test_l3_quorum_stays_pending_after_one_approver(self, client):
         # R-P2/#7: L3 multi-approver — one approve must NOT flip to APPROVED.
         model = await _create_model(client)
-        approval = await client.post("/api/v1/approvals", json={
-            "model_id": model["id"], "level": "l3", "comment": "high gate",
-        })
+        approval = await client.post(
+            "/api/v1/approvals",
+            json={
+                "model_id": model["id"],
+                "level": "l3",
+                "comment": "high gate",
+            },
+        )
         assert approval.status_code == 200
         req_id = approval.json()["id"]
         assert approval.json()["status"] == "pending"
@@ -269,9 +347,14 @@ class TestApprovals:
     async def test_l3_quorum_approves_after_two_distinct_approvers(self, client):
         # R-P2/#7: quorum of 2 distinct approvers — second distinct approver flips APPROVED.
         model = await _create_model(client)
-        approval = await client.post("/api/v1/approvals", json={
-            "model_id": model["id"], "level": "l3", "comment": "high gate",
-        })
+        approval = await client.post(
+            "/api/v1/approvals",
+            json={
+                "model_id": model["id"],
+                "level": "l3",
+                "comment": "high gate",
+            },
+        )
         req_id = approval.json()["id"]
         await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "alice", "comment": "1"})
         resp = await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "bob", "comment": "2"})
@@ -284,9 +367,14 @@ class TestApprovals:
     async def test_l3_quorum_same_approver_twice_stays_pending(self, client):
         # R-P2/#7: one approver approving twice must NOT count as a quorum.
         model = await _create_model(client)
-        approval = await client.post("/api/v1/approvals", json={
-            "model_id": model["id"], "level": "l3", "comment": "high gate",
-        })
+        approval = await client.post(
+            "/api/v1/approvals",
+            json={
+                "model_id": model["id"],
+                "level": "l3",
+                "comment": "high gate",
+            },
+        )
         req_id = approval.json()["id"]
         await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "alice", "comment": "1"})
         resp = await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "alice", "comment": "2"})
@@ -296,9 +384,14 @@ class TestApprovals:
     @pytest.mark.asyncio
     async def test_l3_approve_requires_approver_field(self, client):
         model = await _create_model(client)
-        approval = await client.post("/api/v1/approvals", json={
-            "model_id": model["id"], "level": "l3", "comment": "high gate",
-        })
+        approval = await client.post(
+            "/api/v1/approvals",
+            json={
+                "model_id": model["id"],
+                "level": "l3",
+                "comment": "high gate",
+            },
+        )
         req_id = approval.json()["id"]
         resp = await client.post(f"/api/v1/approvals/{req_id}/approve", json={"approver": "", "comment": ""})
         assert resp.status_code == 400
@@ -307,25 +400,37 @@ class TestApprovals:
 class TestGitLFS:
     @pytest.mark.asyncio
     async def test_batch_upload(self, client):
-        resp = await client.post("/api/v1/gitlfs/objects/batch", json={
-            "operation": "upload", "objects": [{"oid": "abc123", "size": 1024}],
-        })
+        resp = await client.post(
+            "/api/v1/gitlfs/objects/batch",
+            json={
+                "operation": "upload",
+                "objects": [{"oid": "abc123", "size": 1024}],
+            },
+        )
         assert resp.status_code == 200
         assert "objects" in resp.json()
 
     @pytest.mark.asyncio
     async def test_batch_download(self, client):
-        resp = await client.post("/api/v1/gitlfs/objects/batch", json={
-            "operation": "download", "objects": [{"oid": "abc123", "size": 1024}],
-        })
+        resp = await client.post(
+            "/api/v1/gitlfs/objects/batch",
+            json={
+                "operation": "download",
+                "objects": [{"oid": "abc123", "size": 1024}],
+            },
+        )
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
     async def test_create_lock(self, client):
         model = await _create_model(client)
-        resp = await client.post("/api/v1/gitlfs/locks", json={
-            "model_id": model["id"], "path": "models/weights.bin",
-        })
+        resp = await client.post(
+            "/api/v1/gitlfs/locks",
+            json={
+                "model_id": model["id"],
+                "path": "models/weights.bin",
+            },
+        )
         assert resp.status_code == 200
         assert "lock" in resp.json()
 
@@ -337,9 +442,13 @@ class TestGitLFS:
     @pytest.mark.asyncio
     async def test_delete_lock(self, client):
         model = await _create_model(client)
-        lock = await client.post("/api/v1/gitlfs/locks", json={
-            "model_id": model["id"], "path": "models/test.bin",
-        })
+        lock = await client.post(
+            "/api/v1/gitlfs/locks",
+            json={
+                "model_id": model["id"],
+                "path": "models/test.bin",
+            },
+        )
         lock_id = lock.json()["lock"]["id"]
         resp = await client.delete(f"/api/v1/gitlfs/locks/{lock_id}")
         assert resp.status_code == 200
@@ -357,10 +466,15 @@ class TestLoraMerge:
         base_v = await _create_version(client, model["id"])
         lora_model = await _create_model(client, name="lora-model")
         lora_v = await _create_version(client, lora_model["id"])
-        resp = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": base_v["id"], "lora_version_id": lora_v["id"],
-            "target_format": "mlx", "quant_bits": 4,
-        })
+        resp = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": base_v["id"],
+                "lora_version_id": lora_v["id"],
+                "target_format": "mlx",
+                "quant_bits": 4,
+            },
+        )
         assert resp.status_code == 202
         assert "task_id" in resp.json()
 
@@ -370,30 +484,42 @@ class TestLoraMerge:
         base_v = await _create_version(client, model["id"])
         lora_model = await _create_model(client, name="lora-model2")
         lora_v = await _create_version(client, lora_model["id"])
-        resp = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": base_v["id"], "lora_version_id": lora_v["id"],
-            "quant_bits": 3,
-        })
+        resp = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": base_v["id"],
+                "lora_version_id": lora_v["id"],
+                "quant_bits": 3,
+            },
+        )
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_lora_merge_base_not_found(self, client):
         model = await _create_model(client)
         lora_v = await _create_version(client, model["id"])
-        resp = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": "nonexistent", "lora_version_id": lora_v["id"],
-            "quant_bits": 4,
-        })
+        resp = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": "nonexistent",
+                "lora_version_id": lora_v["id"],
+                "quant_bits": 4,
+            },
+        )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_lora_merge_lora_not_found(self, client):
         model = await _create_model(client)
         base_v = await _create_version(client, model["id"])
-        resp = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": base_v["id"], "lora_version_id": "nonexistent",
-            "quant_bits": 4,
-        })
+        resp = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": base_v["id"],
+                "lora_version_id": "nonexistent",
+                "quant_bits": 4,
+            },
+        )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
@@ -402,10 +528,14 @@ class TestLoraMerge:
         base_v = await _create_version(client, model["id"])
         lora_model = await _create_model(client, name="lora-model3")
         lora_v = await _create_version(client, lora_model["id"])
-        merge = await client.post("/api/v1/quantize/lora-merge", json={
-            "base_version_id": base_v["id"], "lora_version_id": lora_v["id"],
-            "quant_bits": 4,
-        })
+        merge = await client.post(
+            "/api/v1/quantize/lora-merge",
+            json={
+                "base_version_id": base_v["id"],
+                "lora_version_id": lora_v["id"],
+                "quant_bits": 4,
+            },
+        )
         task_id = merge.json()["task_id"]
         await asyncio.sleep(0.3)
         resp = await client.get(f"/api/v1/quantize/lora-merge/{task_id}")
@@ -421,26 +551,38 @@ class TestDistributedTasks:
     @pytest.mark.asyncio
     async def test_submit_distributed_task(self, client):
         model = await _create_model(client)
-        resp = await client.post("/api/v1/cluster/distributed-tasks", json={
-            "model_id": model["id"], "target_nodes": [],
-        })
+        resp = await client.post(
+            "/api/v1/cluster/distributed-tasks",
+            json={
+                "model_id": model["id"],
+                "target_nodes": [],
+            },
+        )
         assert resp.status_code == 202
         assert "task_id" in resp.json()
 
     @pytest.mark.asyncio
     async def test_submit_distributed_invalid_node(self, client):
         model = await _create_model(client)
-        resp = await client.post("/api/v1/cluster/distributed-tasks", json={
-            "model_id": model["id"], "target_nodes": ["nonexistent"],
-        })
+        resp = await client.post(
+            "/api/v1/cluster/distributed-tasks",
+            json={
+                "model_id": model["id"],
+                "target_nodes": ["nonexistent"],
+            },
+        )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_get_distributed_task(self, client):
         model = await _create_model(client)
-        task = await client.post("/api/v1/cluster/distributed-tasks", json={
-            "model_id": model["id"], "target_nodes": [],
-        })
+        task = await client.post(
+            "/api/v1/cluster/distributed-tasks",
+            json={
+                "model_id": model["id"],
+                "target_nodes": [],
+            },
+        )
         task_id = task.json()["task_id"]
         await asyncio.sleep(0.3)
         resp = await client.get(f"/api/v1/cluster/distributed-tasks/{task_id}")
@@ -489,7 +631,9 @@ class TestVersionPromote:
         version = await _create_version(client, model["id"])
         await client.put(f"/api/v1/versions/{version['id']}/metrics", json={"benchmark_score": 90.0})
         await client.post(f"/api/v1/versions/{version['id']}/promote")
-        await client.post(f"/api/v1/versions/{version['id']}/deprecate", json={"successor_version_id": "", "remark": "old"})
+        await client.post(
+            f"/api/v1/versions/{version['id']}/deprecate", json={"successor_version_id": "", "remark": "old"}
+        )
         resp = await client.post(f"/api/v1/versions/{version['id']}/promote")
         assert resp.status_code == 409
 
@@ -503,12 +647,19 @@ class TestAuthMiddleware:
     @pytest.mark.asyncio
     async def test_auth_enabled_write_blocked(self, client):
         from fusion_model_hub.server.auth import set_auth_enabled
+
         set_auth_enabled(True)
         try:
-            resp = await client.post("/api/v1/models", json={
-                "name": "auth-test", "description": "x",
-                "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
-            })
+            resp = await client.post(
+                "/api/v1/models",
+                json={
+                    "name": "auth-test",
+                    "description": "x",
+                    "model_type": "llm",
+                    "architecture": "qwen2",
+                    "params_size": "7B",
+                },
+            )
             assert resp.status_code == 401
         finally:
             set_auth_enabled(False)
@@ -516,6 +667,7 @@ class TestAuthMiddleware:
     @pytest.mark.asyncio
     async def test_auth_enabled_read_ok(self, client):
         from fusion_model_hub.server.auth import set_auth_enabled
+
         set_auth_enabled(True)
         try:
             resp = await client.get("/api/v1/system/health")
@@ -526,14 +678,22 @@ class TestAuthMiddleware:
     @pytest.mark.asyncio
     async def test_auth_with_valid_key(self, client):
         from fusion_model_hub.server.auth import set_auth_enabled
+
         set_auth_enabled(True)
         try:
             key_resp = await client.post("/api/v1/auth/keys", json={"name": "test-key"})
             api_key = key_resp.json()["key"]
-            resp = await client.post("/api/v1/models", json={
-                "name": "auth-model", "description": "x",
-                "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
-            }, headers={"X-API-Key": api_key})
+            resp = await client.post(
+                "/api/v1/models",
+                json={
+                    "name": "auth-model",
+                    "description": "x",
+                    "model_type": "llm",
+                    "architecture": "qwen2",
+                    "params_size": "7B",
+                },
+                headers={"X-API-Key": api_key},
+            )
             assert resp.status_code == 201
         finally:
             set_auth_enabled(False)
@@ -545,6 +705,7 @@ class TestAuthMiddleware:
         # single model_id to scope against, so the prior extractor returned ""
         # and _check_model_access silently skipped the ACL.
         from fusion_model_hub.server.auth import set_auth_enabled
+
         set_auth_enabled(True)
         try:
             key_resp = await client.post(
@@ -575,18 +736,35 @@ class TestAuthMiddleware:
         # model-b (403). Confirms the resource-level ACL still works after the
         # collection-op guard was added.
         from fusion_model_hub.server.auth import set_auth_enabled
+
         # Create the models while auth is OFF (no key needed), then turn auth
         # on and create the scoped key as the bootstrap admin. Capture ids from
         # the create responses directly — /models/search does not filter by
         # name reliably for colliding matches.
-        ma_id = (await client.post("/api/v1/models", json={
-            "name": "model-a", "description": "x",
-            "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
-        })).json()["id"]
-        mb_id = (await client.post("/api/v1/models", json={
-            "name": "model-b", "description": "x",
-            "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
-        })).json()["id"]
+        ma_id = (
+            await client.post(
+                "/api/v1/models",
+                json={
+                    "name": "model-a",
+                    "description": "x",
+                    "model_type": "llm",
+                    "architecture": "qwen2",
+                    "params_size": "7B",
+                },
+            )
+        ).json()["id"]
+        mb_id = (
+            await client.post(
+                "/api/v1/models",
+                json={
+                    "name": "model-b",
+                    "description": "x",
+                    "model_type": "llm",
+                    "architecture": "qwen2",
+                    "params_size": "7B",
+                },
+            )
+        ).json()["id"]
         assert ma_id != mb_id
         set_auth_enabled(True)
         try:
@@ -597,11 +775,13 @@ class TestAuthMiddleware:
             assert key_resp.status_code == 201, key_resp.text
             api_key = key_resp.json()["key"]
             scoped_a = await client.get(
-                f"/api/v1/models/{ma_id}", headers={"X-API-Key": api_key},
+                f"/api/v1/models/{ma_id}",
+                headers={"X-API-Key": api_key},
             )
             assert scoped_a.status_code == 200
             scoped_b = await client.get(
-                f"/api/v1/models/{mb_id}", headers={"X-API-Key": api_key},
+                f"/api/v1/models/{mb_id}",
+                headers={"X-API-Key": api_key},
             )
             assert scoped_b.status_code == 403
         finally:
@@ -613,16 +793,19 @@ class TestAuthMiddleware:
         # keys; setting a different body.tenant_id is a cross-tenant forge that
         # must be rejected. Root/super-admin (no tenant) still provisions any.
         from fusion_model_hub.server.auth import set_auth_enabled
+
         set_auth_enabled(True)
         try:
             # bootstrap: root admin (no tenant).
             root = (await client.post("/api/v1/auth/keys", json={"name": "root", "role": "admin"})).json()["key"]
             # root provisions a tenanted admin for tenant B.
-            admin_b = (await client.post(
-                "/api/v1/auth/keys",
-                json={"name": "adminB", "tenant_id": "tenB", "role": "admin"},
-                headers={"X-API-Key": root},
-            )).json()["key"]
+            admin_b = (
+                await client.post(
+                    "/api/v1/auth/keys",
+                    json={"name": "adminB", "tenant_id": "tenB", "role": "admin"},
+                    headers={"X-API-Key": root},
+                )
+            ).json()["key"]
             # adminB mints a key for its own tenant -> ok (201).
             own = await client.post(
                 "/api/v1/auth/keys",
@@ -665,34 +848,53 @@ class TestInferenceTenantIsolation:
     async def test_cross_tenant_serve_status_is_denied(self, client):
         from fusion_model_hub.server.auth import set_auth_enabled
         from fusion_model_hub.server.routers import inference as inf_mod
+
         set_auth_enabled(True)
         try:
             root = await self._mkkey(client, {"name": "root", "role": "admin"})
             key_a = await self._mkkey(
-                client, {"name": "ka", "tenant_id": "tenA", "role": "developer"}, {"X-API-Key": root},
+                client,
+                {"name": "ka", "tenant_id": "tenA", "role": "developer"},
+                {"X-API-Key": root},
             )
             key_b = await self._mkkey(
-                client, {"name": "kb", "tenant_id": "tenB", "role": "developer"}, {"X-API-Key": root},
+                client,
+                {"name": "kb", "tenant_id": "tenB", "role": "developer"},
+                {"X-API-Key": root},
             )
             # tenant B owns the model (key carries tenant_id into create).
-            mb = (await client.post("/api/v1/models", json={
-                "name": "b-only", "description": "x",
-                "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
-            }, headers={"X-API-Key": key_b})).json()
+            mb = (
+                await client.post(
+                    "/api/v1/models",
+                    json={
+                        "name": "b-only",
+                        "description": "x",
+                        "model_type": "llm",
+                        "architecture": "qwen2",
+                        "params_size": "7B",
+                    },
+                    headers={"X-API-Key": key_b},
+                )
+            ).json()
             await client.post(f"/api/v1/models/{mb['id']}/publish", headers={"X-API-Key": key_b})
             # served (loaded) state injected — read path checks DB tenant, not MLX.
             inf_mod._loaded_models.clear()
             inf_mod._loaded_models[mb["id"]] = {
-                "version_id": "v1", "model_name": "b-only", "status": "loaded", "loaded_at": 0.0,
+                "version_id": "v1",
+                "model_name": "b-only",
+                "status": "loaded",
+                "loaded_at": 0.0,
             }
             # owner (tenant B) reads -> 200.
             own = await client.get(
-                f"/api/v1/models/{mb['id']}/serve", headers={"X-API-Key": key_b},
+                f"/api/v1/models/{mb['id']}/serve",
+                headers={"X-API-Key": key_b},
             )
             assert own.status_code == 200, own.text
             # cross-tenant (tenant A) reads -> 404, no existence leak.
             cross = await client.get(
-                f"/api/v1/models/{mb['id']}/serve", headers={"X-API-Key": key_a},
+                f"/api/v1/models/{mb['id']}/serve",
+                headers={"X-API-Key": key_a},
             )
             assert cross.status_code == 404, cross.text
             inf_mod._loaded_models.clear()
@@ -704,19 +906,33 @@ class TestInferenceTenantIsolation:
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from fusion_model_hub.server.auth import set_auth_enabled
+
         set_auth_enabled(True)
         try:
             root = await self._mkkey(client, {"name": "root2", "role": "admin"})
             key_a = await self._mkkey(
-                client, {"name": "ka2", "tenant_id": "tenA", "role": "developer"}, {"X-API-Key": root},
+                client,
+                {"name": "ka2", "tenant_id": "tenA", "role": "developer"},
+                {"X-API-Key": root},
             )
             key_b = await self._mkkey(
-                client, {"name": "kb2", "tenant_id": "tenB", "role": "developer"}, {"X-API-Key": root},
+                client,
+                {"name": "kb2", "tenant_id": "tenB", "role": "developer"},
+                {"X-API-Key": root},
             )
-            mb = (await client.post("/api/v1/models", json={
-                "name": "b-only2", "description": "x",
-                "model_type": "llm", "architecture": "qwen2", "params_size": "7B",
-            }, headers={"X-API-Key": key_b})).json()
+            mb = (
+                await client.post(
+                    "/api/v1/models",
+                    json={
+                        "name": "b-only2",
+                        "description": "x",
+                        "model_type": "llm",
+                        "architecture": "qwen2",
+                        "params_size": "7B",
+                    },
+                    headers={"X-API-Key": key_b},
+                )
+            ).json()
             # publish needs admin — root (admin, no tenant) bypasses the owner
             # check so B's developer key can subsequently serve its own model.
             await client.post(f"/api/v1/models/{mb['id']}/publish", headers={"X-API-Key": root})
@@ -740,15 +956,20 @@ class TestInferenceTenantIsolation:
             with patch("fusion_model_hub.server.routers.inference.httpx.AsyncClient", return_value=mock_client):
                 # owner (tenant B) serves -> 200.
                 own = await client.post(
-                    f"/api/v1/models/{mb['id']}/serve", json={}, headers={"X-API-Key": key_b},
+                    f"/api/v1/models/{mb['id']}/serve",
+                    json={},
+                    headers={"X-API-Key": key_b},
                 )
                 assert own.status_code == 200, own.text
                 # cross-tenant (tenant A) serves -> 403 (owner check, not read).
                 cross = await client.post(
-                    f"/api/v1/models/{mb['id']}/serve", json={}, headers={"X-API-Key": key_a},
+                    f"/api/v1/models/{mb['id']}/serve",
+                    json={},
+                    headers={"X-API-Key": key_a},
                 )
                 assert cross.status_code == 403, cross.text
             from fusion_model_hub.server.routers import inference as inf_mod
+
             inf_mod._loaded_models.clear()
         finally:
             set_auth_enabled(False)
@@ -772,6 +993,7 @@ class TestCRUDNewTables:
     async def test_security_scan_crud(self, client):
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             scan = await crud.create_security_scan(session, model_id="m1", version_id="v1", scan_type="full")
@@ -787,6 +1009,7 @@ class TestCRUDNewTables:
     async def test_watermark_crud(self, client):
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             wm = await crud.create_watermark(session, model_id="m1", version_id="v1", signature="sig123", payload="{}")
@@ -800,9 +1023,12 @@ class TestCRUDNewTables:
     async def test_approval_crud(self, client):
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
-            approval = await crud.create_approval_request(session, model_id="m1", version_id="v1", level="l2", requester="tester")
+            approval = await crud.create_approval_request(
+                session, model_id="m1", version_id="v1", level="l2", requester="tester"
+            )
             assert approval.id
             fetched = await crud.get_approval_request(session, approval.id)
             assert fetched is not None
@@ -815,11 +1041,15 @@ class TestCRUDNewTables:
     async def test_lora_merge_task_crud(self, client):
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             task = await crud.create_lora_merge_task(
-                session, base_version_id="bv1", lora_version_id="lv1",
-                target_format="mlx", quant_bits=4,
+                session,
+                base_version_id="bv1",
+                lora_version_id="lv1",
+                target_format="mlx",
+                quant_bits=4,
             )
             assert task.id
             fetched = await crud.get_lora_merge_task(session, task.id)
@@ -833,10 +1063,13 @@ class TestCRUDNewTables:
     async def test_distributed_task_crud(self, client):
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             task = await crud.create_distributed_task(
-                session, model_id="m1", version_id="v1",
+                session,
+                model_id="m1",
+                version_id="v1",
                 target_nodes="n1,n2",
             )
             assert task.id
@@ -849,6 +1082,7 @@ class TestCRUDNewTables:
     async def test_gitlfs_lock_crud(self, client):
         from fusion_model_hub.db import crud
         from fusion_model_hub.server.deps import get_session_factory
+
         sf = get_session_factory()
         async with sf() as session:
             lock = await crud.create_gitlfs_lock(session, model_id="m1", path="models/test.bin", owner="user1")
@@ -862,17 +1096,20 @@ class TestCRUDNewTables:
 class TestSDKClient:
     def test_client_init(self):
         from fusion_model_hub.sdk import FusionModelHubClient
+
         c = FusionModelHubClient(base_url="http://localhost:9999", api_key="test-key")
         assert c._base_url == "http://localhost:9999"
         assert c._headers["X-API-Key"] == "test-key"
 
     def test_client_url_construction(self):
         from fusion_model_hub.sdk import FusionModelHubClient
+
         c = FusionModelHubClient(base_url="http://localhost:11444/")
         assert c._url("/models") == "http://localhost:11444/api/v1/models"
 
     def test_client_no_api_key(self):
         from fusion_model_hub.sdk import FusionModelHubClient
+
         c = FusionModelHubClient()
         assert "X-API-Key" not in c._headers
 
@@ -880,23 +1117,35 @@ class TestSDKClient:
 class TestInferenceProxy:
     @pytest.mark.asyncio
     async def test_chat_completions(self, client):
-        resp = await client.post("/api/v1/inference/chat/completions", json={
-            "model": "nonexistent", "messages": [{"role": "user", "content": "hi"}],
-        })
+        resp = await client.post(
+            "/api/v1/inference/chat/completions",
+            json={
+                "model": "nonexistent",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
         assert resp.status_code in (200, 400, 404, 502, 503)
 
     @pytest.mark.asyncio
     async def test_completions(self, client):
-        resp = await client.post("/api/v1/inference/completions", json={
-            "model": "nonexistent", "prompt": "hello",
-        })
+        resp = await client.post(
+            "/api/v1/inference/completions",
+            json={
+                "model": "nonexistent",
+                "prompt": "hello",
+            },
+        )
         assert resp.status_code in (200, 400, 404, 502, 503)
 
     @pytest.mark.asyncio
     async def test_embeddings(self, client):
-        resp = await client.post("/api/v1/inference/embeddings", json={
-            "model": "nonexistent", "input": "test",
-        })
+        resp = await client.post(
+            "/api/v1/inference/embeddings",
+            json={
+                "model": "nonexistent",
+                "input": "test",
+            },
+        )
         assert resp.status_code in (200, 400, 404, 502, 503)
 
     @pytest.mark.asyncio

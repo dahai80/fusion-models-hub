@@ -1,4 +1,5 @@
 """Model data models — supports all model formats, with MLX as primary target."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -75,6 +76,7 @@ class ModelInfo:
 @dataclass
 class DownloadTask:
     """Download task tracking."""
+
     model_id: str
     url: str
     format: ModelFormat = ModelFormat.MLX

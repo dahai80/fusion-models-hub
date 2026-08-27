@@ -3,6 +3,7 @@
 All model operations depend on Fusion-MLX being installed. This module handles
 detection, version checking, and compatibility verification.
 """
+
 from __future__ import annotations
 
 import logging
@@ -46,6 +47,7 @@ class FusionMLXBase:
 
         # Check if fusion-mlx command exists
         import shutil
+
         if shutil.which("fusion-mlx"):
             return {"installed": True, "running": False, "version": "detected", "models_available": 0}
 

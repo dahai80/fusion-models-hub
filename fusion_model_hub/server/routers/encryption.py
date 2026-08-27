@@ -41,12 +41,13 @@ class DecryptRequest(BaseModel):
 
 def _resolve_fernet() -> Any:
     from cryptography.fernet import Fernet
+
     key = os.environ.get("FMH_ENCRYPTION_KEY", "")
     if not key or key == _DEFAULT_KEY:
         raise HTTPException(
             status_code=503,
             detail="Encryption disabled: set a non-default FMH_ENCRYPTION_KEY env "
-                   "(>=32 bytes, high entropy) before encrypting/decrypting model files",
+            "(>=32 bytes, high entropy) before encrypting/decrypting model files",
         )
     key_bytes = key.encode()[:32].ljust(32, b"\0")
     return Fernet(base64.urlsafe_b64encode(key_bytes))
@@ -58,6 +59,7 @@ def _stream_encrypt(path: Path, fernet: Any) -> int:
     # regardless of file size; the staging-then-replace keeps the original
     # intact if encryption dies mid-way.
     import uuid
+
     staging = path.parent / f".{path.name}.{uuid.uuid4().hex}.enc.tmp"
     total = 0
     try:
@@ -82,6 +84,7 @@ def _stream_encrypt(path: Path, fernet: Any) -> int:
 
 def _stream_decrypt(path: Path, fernet: Any) -> int:
     import uuid
+
     staging = path.parent / f".{path.name}.{uuid.uuid4().hex}.dec.tmp"
     total = 0
     try:
@@ -157,4 +160,3 @@ async def encryption_status(version_id: str, session: SessionDep):
     if not v:
         raise HTTPException(status_code=404, detail="Version not found")
     return {"version_id": v.id, "encrypted": v.encrypted}
-

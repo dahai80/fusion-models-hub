@@ -1,4 +1,3 @@
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -11,7 +10,8 @@ from fusion_model_hub.server.deps import init_deps
 @pytest.fixture
 def settings():
     return Settings(
-        host="127.0.0.1", port=11444,
+        host="127.0.0.1",
+        port=11444,
         data_dir="/tmp/fmh_test_data",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -26,6 +26,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -53,13 +54,16 @@ class TestHealthCheck:
 class TestModelCRUD:
     @pytest.mark.asyncio
     async def test_create_model(self, client):
-        resp = await client.post("/api/v1/models", json={
-            "name": "test-model-1",
-            "description": "A test model",
-            "model_type": "llm",
-            "architecture": "qwen2",
-            "params_size": "7B",
-        })
+        resp = await client.post(
+            "/api/v1/models",
+            json={
+                "name": "test-model-1",
+                "description": "A test model",
+                "model_type": "llm",
+                "architecture": "qwen2",
+                "params_size": "7B",
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["name"] == "test-model-1"
@@ -84,9 +88,13 @@ class TestModelCRUD:
 
     @pytest.mark.asyncio
     async def test_list_models_with_keyword(self, client):
-        await client.post("/api/v1/models", json={
-            "name": "keyword-unique-xyz", "description": "searchable",
-        })
+        await client.post(
+            "/api/v1/models",
+            json={
+                "name": "keyword-unique-xyz",
+                "description": "searchable",
+            },
+        )
         resp = await client.get("/api/v1/models", params={"keyword": "unique-xyz"})
         assert resp.status_code == 200
         assert resp.json()["total"] >= 1
@@ -126,10 +134,13 @@ class TestModelCRUD:
 
     @pytest.mark.asyncio
     async def test_model_with_tags(self, client):
-        resp = await client.post("/api/v1/models", json={
-            "name": "tagged-model",
-            "tags": [{"key": "domain", "value": "nlp"}, {"key": "size", "value": "small"}],
-        })
+        resp = await client.post(
+            "/api/v1/models",
+            json={
+                "name": "tagged-model",
+                "tags": [{"key": "domain", "value": "nlp"}, {"key": "size", "value": "small"}],
+            },
+        )
         assert resp.status_code == 201
         assert len(resp.json()["tags"]) == 2
 
@@ -178,7 +189,9 @@ class TestVersionCRUD:
         create_resp = await client.post("/api/v1/models", json={"name": "ver-get-model"})
         model_id = create_resp.json()["id"]
         ver_resp = await client.post(
-            f"/api/v1/models/{model_id}/versions", data={"version": "2.0.0"}, files={"file": ("", b"")},
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "2.0.0"},
+            files={"file": ("", b"")},
         )
         version_id = ver_resp.json()["id"]
         resp = await client.get(f"/api/v1/versions/{version_id}")
@@ -190,7 +203,9 @@ class TestVersionCRUD:
         create_resp = await client.post("/api/v1/models", json={"name": "ver-status-model"})
         model_id = create_resp.json()["id"]
         ver_resp = await client.post(
-            f"/api/v1/models/{model_id}/versions", data={"version": "1.0.0"}, files={"file": ("", b"")},
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0"},
+            files={"file": ("", b"")},
         )
         version_id = ver_resp.json()["id"]
         await client.put(
@@ -213,12 +228,16 @@ class TestVersionCRUD:
         create_resp = await client.post("/api/v1/models", json={"name": "ver-rollback-model"})
         model_id = create_resp.json()["id"]
         ver_resp = await client.post(
-            f"/api/v1/models/{model_id}/versions", data={"version": "1.0.0"}, files={"file": ("", b"")},
+            f"/api/v1/models/{model_id}/versions",
+            data={"version": "1.0.0"},
+            files={"file": ("", b"")},
         )
         version_id = ver_resp.json()["id"]
         await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "testing"})
         await client.put(f"/api/v1/versions/{version_id}/metrics", json={"benchmark_score": 90.0})
-        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published", "approval_level": "l1"})
+        await client.put(
+            f"/api/v1/versions/{version_id}/status", json={"target_status": "published", "approval_level": "l1"}
+        )
         await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "deprecated"})
         resp = await client.post(f"/api/v1/versions/{version_id}/rollback")
         assert resp.status_code == 200
@@ -235,12 +254,14 @@ class TestVersionUploadConcurrency:
         model_id = (await client.post("/api/v1/models", json={"name": "dup-ver"})).json()["id"]
         first = await client.post(
             f"/api/v1/models/{model_id}/versions",
-            data={"version": "1.0.0"}, files={"file": ("", b"")},
+            data={"version": "1.0.0"},
+            files={"file": ("", b"")},
         )
         assert first.status_code == 201
         second = await client.post(
             f"/api/v1/models/{model_id}/versions",
-            data={"version": "1.0.0"}, files={"file": ("", b"")},
+            data={"version": "1.0.0"},
+            files={"file": ("", b"")},
         )
         assert second.status_code == 409
         # exactly one row for (model_id, "1.0.0") — the constraint prevented the
@@ -307,9 +328,13 @@ class TestHFImport:
 class TestQuantizeAPI:
     @pytest.mark.asyncio
     async def test_submit_quantize_invalid_bits(self, client):
-        resp = await client.post("/api/v1/quantize", json={
-            "source_version_id": "nonexistent", "quant_bits": 3,
-        })
+        resp = await client.post(
+            "/api/v1/quantize",
+            json={
+                "source_version_id": "nonexistent",
+                "quant_bits": 3,
+            },
+        )
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
@@ -360,7 +385,8 @@ class TestLifecycleStateMachine:
         model_id = create_resp.json()["id"]
         ver_resp = await client.post(
             f"/api/v1/models/{model_id}/versions",
-            data={"version": "1.0.0"}, files={"file": ("", b"")},
+            data={"version": "1.0.0"},
+            files={"file": ("", b"")},
         )
         version_id = ver_resp.json()["id"]
         resp = await client.put(
@@ -375,13 +401,16 @@ class TestLifecycleStateMachine:
         model_id = create_resp.json()["id"]
         ver_resp = await client.post(
             f"/api/v1/models/{model_id}/versions",
-            data={"version": "2.0.0"}, files={"file": ("", b"")},
+            data={"version": "2.0.0"},
+            files={"file": ("", b"")},
         )
         version_id = ver_resp.json()["id"]
         r1 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "testing"})
         assert r1.json()["status"] == "testing"
         await client.put(f"/api/v1/versions/{version_id}/metrics", json={"benchmark_score": 90.0})
-        r2 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published", "approval_level": "l1"})
+        r2 = await client.put(
+            f"/api/v1/versions/{version_id}/status", json={"target_status": "published", "approval_level": "l1"}
+        )
         assert r2.json()["status"] == "published"
         r3 = await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "deprecated"})
         assert r3.json()["status"] == "deprecated"
@@ -394,17 +423,21 @@ class TestLifecycleStateMachine:
         model_id = create_resp.json()["id"]
         v1 = await client.post(
             f"/api/v1/models/{model_id}/versions",
-            data={"version": "1.0.0"}, files={"file": ("", b"")},
+            data={"version": "1.0.0"},
+            files={"file": ("", b"")},
         )
         v2 = await client.post(
             f"/api/v1/models/{model_id}/versions",
-            data={"version": "2.0.0"}, files={"file": ("", b"")},
+            data={"version": "2.0.0"},
+            files={"file": ("", b"")},
         )
         v1_id = v1.json()["id"]
         v2_id = v2.json()["id"]
         await client.put(f"/api/v1/versions/{v1_id}/status", json={"target_status": "testing"})
         await client.put(f"/api/v1/versions/{v1_id}/metrics", json={"benchmark_score": 90.0})
-        await client.put(f"/api/v1/versions/{v1_id}/status", json={"target_status": "published", "approval_level": "l1"})
+        await client.put(
+            f"/api/v1/versions/{v1_id}/status", json={"target_status": "published", "approval_level": "l1"}
+        )
         resp = await client.post(
             f"/api/v1/versions/{v1_id}/deprecate",
             json={"successor_version_id": v2_id},
@@ -419,12 +452,15 @@ class TestLifecycleStateMachine:
         model_id = create_resp.json()["id"]
         ver_resp = await client.post(
             f"/api/v1/models/{model_id}/versions",
-            data={"version": "1.0.0"}, files={"file": ("", b"")},
+            data={"version": "1.0.0"},
+            files={"file": ("", b"")},
         )
         version_id = ver_resp.json()["id"]
         await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "testing"})
         await client.put(f"/api/v1/versions/{version_id}/metrics", json={"benchmark_score": 90.0})
-        await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "published", "approval_level": "l1"})
+        await client.put(
+            f"/api/v1/versions/{version_id}/status", json={"target_status": "published", "approval_level": "l1"}
+        )
         await client.put(f"/api/v1/versions/{version_id}/status", json={"target_status": "deprecated"})
         resp = await client.post(f"/api/v1/versions/{version_id}/retire")
         assert resp.status_code == 200
@@ -438,7 +474,8 @@ class TestBenchmark:
         model_id = create_resp.json()["id"]
         ver_resp = await client.post(
             f"/api/v1/models/{model_id}/versions",
-            data={"version": "1.0.0"}, files={"file": ("", b"")},
+            data={"version": "1.0.0"},
+            files={"file": ("", b"")},
         )
         version_id = ver_resp.json()["id"]
         resp = await client.put(
@@ -536,6 +573,7 @@ class TestInference:
 
 
 # -- Phase 6: Cluster, Sync, Batch, Compare --
+
 
 class TestClusterNodes:
     @pytest.mark.asyncio
@@ -795,7 +833,9 @@ class TestTenantCRUD:
 class TestWebhookCRUD:
     @pytest.mark.asyncio
     async def test_create_webhook(self, client):
-        resp = await client.post("/api/v1/webhooks", json={"name": "wh1", "url": "https://example.com/hook", "events": "model.created"})
+        resp = await client.post(
+            "/api/v1/webhooks", json={"name": "wh1", "url": "https://example.com/hook", "events": "model.created"}
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["name"] == "wh1"
@@ -881,7 +921,9 @@ class TestGrayReleaseAndScale:
         mid = model.json()["id"]
         dep = await client.post("/api/v1/deployments", json={"model_id": mid, "name": "gray-dep"})
         did = dep.json()["id"]
-        resp = await client.post(f"/api/v1/deployments/{did}/gray", json={"gray_version_id": "fake-ver-id", "gray_traffic_ratio": 20})
+        resp = await client.post(
+            f"/api/v1/deployments/{did}/gray", json={"gray_version_id": "fake-ver-id", "gray_traffic_ratio": 20}
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["gray_enabled"] is True
@@ -893,7 +935,9 @@ class TestGrayReleaseAndScale:
         mid = model.json()["id"]
         dep = await client.post("/api/v1/deployments", json={"model_id": mid, "name": "gray-off-dep"})
         did = dep.json()["id"]
-        await client.post(f"/api/v1/deployments/{did}/gray", json={"gray_version_id": "some-ver", "gray_traffic_ratio": 10})
+        await client.post(
+            f"/api/v1/deployments/{did}/gray", json={"gray_version_id": "some-ver", "gray_traffic_ratio": 10}
+        )
         resp = await client.delete(f"/api/v1/deployments/{did}/gray")
         assert resp.status_code == 200
         assert resp.json()["gray_enabled"] is False

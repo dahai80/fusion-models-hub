@@ -40,10 +40,7 @@ class RecommendEngine:
     ) -> RecommendResponse:
         hw = await self._hw_detector.detect()
 
-        candidates = [
-            m for m in models_from_db
-            if request.min_params_b <= m.get("params_b", 0) <= request.max_params_b
-        ]
+        candidates = [m for m in models_from_db if request.min_params_b <= m.get("params_b", 0) <= request.max_params_b]
         if request.task and request.task != "all":
             candidates = [m for m in candidates if m.get("task", "llm") == request.task]
 
@@ -87,11 +84,13 @@ class RecommendEngine:
             model_id = m.get("id", m.get("model_id", "unknown"))
             params_b = m.get("params_b", 0)
             quant_type = m.get("quant_type", "Q4_K_M")
-            specs.append({
-                "model_id": model_id,
-                "params": max(1, int(params_b * 1e9)),
-                "quant_type": quant_type,
-            })
+            specs.append(
+                {
+                    "model_id": model_id,
+                    "params": max(1, int(params_b * 1e9)),
+                    "quant_type": quant_type,
+                }
+            )
 
         all_results: dict[str, dict[str, Any]] = {}
         for i in range(0, len(specs), _BATCH_SIZE):

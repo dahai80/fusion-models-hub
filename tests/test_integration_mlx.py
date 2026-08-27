@@ -65,6 +65,7 @@ def _read_mlx_key() -> str:
     path = os.path.expanduser("~/.fusion-mlx/settings.json")
     try:
         import json
+
         with open(path) as f:
             return json.load(f).get("auth", {}).get("api_key", "")
     except (FileNotFoundError, OSError, ValueError):
@@ -97,7 +98,8 @@ async def mlx_client():
     # so Hub->MLX calls authenticate. Fresh in-memory DB per test for isolation.
     set_auth_enabled(False)
     s = Settings(
-        host="127.0.0.1", port=11444,
+        host="127.0.0.1",
+        port=11444,
         data_dir="/tmp/fmh_integration_mlx",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
@@ -132,7 +134,6 @@ class TestMlxHealth:
         assert len(mlx.get("info", {}).get("loaded_models", [])) > 0
 
 
-
 class TestMlxServeChatRoundTrip:
     # Full round-trip: register a model pointing at a real MLX model name,
     # publish, serve (MLX load), chat (real inference), unload. No mocks.
@@ -142,11 +143,14 @@ class TestMlxServeChatRoundTrip:
     async def test_serve_chat_unload_round_trip(self, mlx_client):
         # 1. Create model with hf_repo = a real MLX-cached model name so
         #    serve resolves model_name = m.hf_repo and MLX can load it.
-        create = await mlx_client.post("/api/v1/models", json={
-            "name": f"int-{INTEGRATION_MODEL}",
-            "model_type": "llm",
-            "hf_repo": INTEGRATION_MODEL,
-        })
+        create = await mlx_client.post(
+            "/api/v1/models",
+            json={
+                "name": f"int-{INTEGRATION_MODEL}",
+                "model_type": "llm",
+                "hf_repo": INTEGRATION_MODEL,
+            },
+        )
         assert create.status_code == 201, create.text
         model_id = create.json()["id"]
 
@@ -203,7 +207,6 @@ class TestMlxServeChatRoundTrip:
             await mlx_client.delete(f"/api/v1/models/{model_id}")
 
 
-
 class TestMlxQuantizeJob:
     # Direct MLX /v1/quantize probe: submit a quantize job against a small local
     # model dir, poll the job to completion, assert output_path. This validates
@@ -237,7 +240,8 @@ class TestMlxQuantizeJob:
                 for _ in range(30):
                     await asyncio.sleep(1.0)
                     poll = await client.get(
-                        f"{MLX_URL}/v1/quantize/jobs/{job_id}", headers=headers,
+                        f"{MLX_URL}/v1/quantize/jobs/{job_id}",
+                        headers=headers,
                     )
                     assert poll.status_code == 200, poll.text
                     info = poll.json()
@@ -251,6 +255,7 @@ class TestMlxQuantizeJob:
             finally:
                 # Best-effort cleanup of the test output dir.
                 import shutil
+
                 with __import__("contextlib").suppress(OSError):
                     shutil.rmtree(LOCAL_QUANTIZE_OUT, ignore_errors=True)
 
@@ -274,11 +279,14 @@ class TestMlxQuantizeCache:
         # 1. Create model + a published version whose file_path points at a real
         #    small file (so serve/quantize integrity checks have a path, though
         #    the cache hit bypasses the actual quantize call).
-        create = await mlx_client.post("/api/v1/models", json={
-            "name": "int-quant-cache",
-            "model_type": "llm",
-            "hf_repo": INTEGRATION_MODEL,
-        })
+        create = await mlx_client.post(
+            "/api/v1/models",
+            json={
+                "name": "int-quant-cache",
+                "model_type": "llm",
+                "hf_repo": INTEGRATION_MODEL,
+            },
+        )
         assert create.status_code == 201, create.text
         model_id = create.json()["id"]
 
@@ -315,11 +323,14 @@ class TestMlxQuantizeCache:
             assert cache.has(model_id, CacheLevel.QUANTIZED, 4, source_version_id=version_id)
 
             # 4. Submit quantize -> _run_quantize must hit the cache and complete.
-            submit = await mlx_client.post("/api/v1/quantize", json={
-                "source_version_id": version_id,
-                "target_format": "mlx",
-                "quant_bits": 4,
-            })
+            submit = await mlx_client.post(
+                "/api/v1/quantize",
+                json={
+                    "source_version_id": version_id,
+                    "target_format": "mlx",
+                    "quant_bits": 4,
+                },
+            )
             assert submit.status_code == 202, submit.text
             task_id = submit.json()["task_id"]
 
@@ -349,4 +360,5 @@ class TestMlxQuantizeCache:
             await mlx_client.delete(f"/api/v1/models/{model_id}")
         finally:
             import shutil
+
             shutil.rmtree(tmpdir, ignore_errors=True)

@@ -3,6 +3,7 @@
 Supports: HuggingFace safetensors, PyTorch, GGUF → MLX
 All conversion goes through fusion-mlx HTTP API. Never imports torch/transformers.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,9 +56,15 @@ class ModelConverter:
             return {"Authorization": f"Bearer {self.api_key}"}
         return {}
 
-    async def convert(self, source_path: str, source_format: str = "",
-                      output_path: str = "", quant_bits: int = 4,
-                      model_name: str = "", hf_repo: str = "") -> dict[str, Any]:
+    async def convert(
+        self,
+        source_path: str,
+        source_format: str = "",
+        output_path: str = "",
+        quant_bits: int = 4,
+        model_name: str = "",
+        hf_repo: str = "",
+    ) -> dict[str, Any]:
         """Convert a model to Fusion-MLX format via fusion-mlx API.
 
         Args:
@@ -78,9 +85,8 @@ class ModelConverter:
         request = {
             "source_path": source_path,
             "source_format": fmt,
-            "output_path": output_path or str(
-                Path.cwd() / f"{model_name or Path(source_path).stem}-{quant_bits}bit.mlx"
-            ),
+            "output_path": output_path
+            or str(Path.cwd() / f"{model_name or Path(source_path).stem}-{quant_bits}bit.mlx"),
             "quant_bits": quant_bits,
             "model_name": model_name or Path(source_path).stem,
         }
@@ -111,8 +117,7 @@ class ModelConverter:
         except Exception as e:
             return {"status": "failed", "error": str(e)}
 
-    async def convert_from_hf(self, hf_repo: str, quant_bits: int = 4,
-                               output_path: str = "") -> dict[str, Any]:
+    async def convert_from_hf(self, hf_repo: str, quant_bits: int = 4, output_path: str = "") -> dict[str, Any]:
         """Convert a HuggingFace model directly from repo ID."""
         return await self.convert(
             source_path="",
@@ -139,11 +144,15 @@ class ModelConverter:
         output_path = str(mlx_models_dir / f"{path.stem}-{bits}bit.mlx")
         try:
             async with httpx.AsyncClient(timeout=600.0) as client:
-                resp = await client.post(f"{self.mlx_url}/v1/quantize", json={
-                    "model": str(path),
-                    "output_path": output_path,
-                    "quant_bits": bits,
-                }, headers=self._headers())
+                resp = await client.post(
+                    f"{self.mlx_url}/v1/quantize",
+                    json={
+                        "model": str(path),
+                        "output_path": output_path,
+                        "quant_bits": bits,
+                    },
+                    headers=self._headers(),
+                )
                 resp.raise_for_status()
                 data = resp.json()
                 job_id = data.get("job_id", "")
@@ -198,15 +207,20 @@ class ModelConverter:
                         result["file_size"] = size
                     logger.info(
                         "Computed quantize output provenance: path=%s size=%d hash=%s",
-                        out, size, digest[:16],
+                        out,
+                        size,
+                        digest[:16],
                     )
                 return result
         except Exception as e:
             return {"status": "failed", "error": str(e)}
 
     async def _poll_quantize_job(
-        self, client: httpx.AsyncClient, job_id: str,
-        timeout_s: float = 600.0, interval_s: float = 1.0,
+        self,
+        client: httpx.AsyncClient,
+        job_id: str,
+        timeout_s: float = 600.0,
+        interval_s: float = 1.0,
     ) -> dict[str, Any]:
         """Poll MLX /v1/quantize/jobs/{id} until the job is done or failed."""
         import time

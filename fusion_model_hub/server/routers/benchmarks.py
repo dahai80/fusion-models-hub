@@ -120,7 +120,8 @@ async def get_benchmark(
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
-                f"{mlx_url}/v1/benchmarks/{model_id}", params=params,
+                f"{mlx_url}/v1/benchmarks/{model_id}",
+                params=params,
             )
             if resp.status_code == 200:
                 return resp.json()

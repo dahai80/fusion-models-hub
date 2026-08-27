@@ -33,6 +33,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -43,13 +44,16 @@ async def client(app, settings):
 
 
 async def _create_model(client, name="ext-test-model"):
-    resp = await client.post("/api/v1/models", json={
-        "name": name,
-        "description": "extended test model",
-        "model_type": "llm",
-        "architecture": "qwen2",
-        "params_size": "7B",
-    })
+    resp = await client.post(
+        "/api/v1/models",
+        json={
+            "name": name,
+            "description": "extended test model",
+            "model_type": "llm",
+            "architecture": "qwen2",
+            "params_size": "7B",
+        },
+    )
     if resp.status_code == 201:
         model_id = resp.json()["id"]
         await client.post(f"/api/v1/models/{model_id}/publish")
@@ -139,7 +143,9 @@ class TestInferenceServeModel:
         mock_resp.status_code = 500
         mock_resp.text = "internal error"
         mock_resp.raise_for_status.side_effect = __import__("httpx").HTTPStatusError(
-            "error", request=MagicMock(), response=mock_resp,
+            "error",
+            request=MagicMock(),
+            response=mock_resp,
         )
         mock_client_instance = AsyncMock()
         mock_client_instance.post = AsyncMock(return_value=mock_resp)
@@ -155,6 +161,7 @@ class TestInferenceServeModel:
     @pytest.mark.asyncio
     async def test_serve_model_success_with_mock(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         model = await _create_model(client, "serve-ok")
@@ -182,6 +189,7 @@ class TestInferenceServeModel:
     @pytest.mark.asyncio
     async def test_serve_model_with_explicit_version_id(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         model = await _create_model(client, "serve-explicit-ver")
@@ -206,12 +214,16 @@ class TestInferenceServeModel:
     @pytest.mark.asyncio
     async def test_serve_model_uses_hf_repo_as_model_name(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
-        model_resp = await client.post("/api/v1/models", json={
-            "name": "serve-hf-repo-model",
-            "hf_repo": "Qwen/Qwen2.5-7B",
-        })
+        model_resp = await client.post(
+            "/api/v1/models",
+            json={
+                "name": "serve-hf-repo-model",
+                "hf_repo": "Qwen/Qwen2.5-7B",
+            },
+        )
         model = model_resp.json()
         await client.post(f"/api/v1/models/{model['id']}/publish")
         ver = await _create_published_version(client, model["id"])
@@ -246,6 +258,7 @@ class TestInferenceHotReload:
     @pytest.mark.asyncio
     async def test_hot_reload_same_version_rejected(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
         model = await _create_model(client, "hot-same")
         ver = await _create_published_version(client, model["id"])
@@ -269,6 +282,7 @@ class TestInferenceHotReload:
     @pytest.mark.asyncio
     async def test_hot_reload_preload_failure(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
         model = await _create_model(client, "hot-preload-fail")
         old_ver = await _create_published_version(client, model["id"], "1.0.0")
@@ -297,6 +311,7 @@ class TestInferenceHotReload:
     @pytest.mark.asyncio
     async def test_hot_reload_success_swaps_version(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
         model = await _create_model(client, "hot-ok")
         old_ver = await _create_published_version(client, model["id"], "1.0.0")
@@ -334,6 +349,7 @@ class TestInferenceUnloadModel:
     @pytest.mark.asyncio
     async def test_unload_model_success(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         model = await _create_model(client, "unload-ok")
@@ -368,6 +384,7 @@ class TestInferenceUnloadModel:
     @pytest.mark.asyncio
     async def test_unload_model_mlx_error_still_unloads(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         inf_mod._loaded_models["test-unload-err-id"] = {
@@ -399,6 +416,7 @@ class TestInferenceServeStatus:
     @pytest.mark.asyncio
     async def test_status_loaded(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         inf_mod._loaded_models["status-model-id"] = {
@@ -427,6 +445,7 @@ class TestInferenceChatCompletion:
     @pytest.mark.asyncio
     async def test_chat_model_loaded_mlx_unavailable(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         inf_mod._loaded_models["chat-model-id"] = {
@@ -452,6 +471,7 @@ class TestInferenceChatCompletion:
     @pytest.mark.asyncio
     async def test_chat_model_loaded_success(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         inf_mod._loaded_models["chat-ok-id"] = {
@@ -480,6 +500,7 @@ class TestInferenceChatCompletion:
     @pytest.mark.asyncio
     async def test_chat_model_mlx_http_error(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         inf_mod._loaded_models["chat-err-id"] = {
@@ -492,7 +513,9 @@ class TestInferenceChatCompletion:
         mock_resp.status_code = 429
         mock_resp.text = "rate limited"
         mock_resp.raise_for_status.side_effect = __import__("httpx").HTTPStatusError(
-            "rate limit", request=MagicMock(), response=mock_resp,
+            "rate limit",
+            request=MagicMock(),
+            response=mock_resp,
         )
         mock_client_instance = AsyncMock()
         mock_client_instance.post = AsyncMock(return_value=mock_resp)
@@ -521,6 +544,7 @@ class TestInferenceCompletions:
     @pytest.mark.asyncio
     async def test_completions_model_loaded_success(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         inf_mod._loaded_models["comp-ok-id"] = {
@@ -548,6 +572,7 @@ class TestInferenceCompletions:
     @pytest.mark.asyncio
     async def test_completions_mlx_unavailable(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         inf_mod._loaded_models["comp-mlx-id"] = {
@@ -585,6 +610,7 @@ class TestInferenceEmbeddings:
     @pytest.mark.asyncio
     async def test_embeddings_model_loaded_success(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         inf_mod._loaded_models["emb-ok-id"] = {
@@ -612,6 +638,7 @@ class TestInferenceEmbeddings:
     @pytest.mark.asyncio
     async def test_embeddings_mlx_unavailable(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
 
         inf_mod._loaded_models["emb-mlx-id"] = {
@@ -639,6 +666,7 @@ class TestInferenceTTLEviction:
     @pytest.mark.asyncio
     async def test_cleanup_expired_models(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
         inf_mod._last_cleanup_ts = 0.0
 
@@ -672,6 +700,7 @@ class TestInferenceTTLEviction:
     @pytest.mark.asyncio
     async def test_cleanup_unload_failure_does_not_raise(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
         inf_mod._last_cleanup_ts = 0.0
 
@@ -695,6 +724,7 @@ class TestInferenceTTLEviction:
     @pytest.mark.asyncio
     async def test_cleanup_no_model_name_still_removes(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
         inf_mod._last_cleanup_ts = 0.0
 
@@ -711,6 +741,7 @@ class TestInferenceTTLEviction:
     @pytest.mark.asyncio
     async def test_ttl_eviction_triggered_on_serve(self, client):
         from fusion_model_hub.server.routers import inference as inf_mod
+
         inf_mod._loaded_models.clear()
         inf_mod._last_cleanup_ts = 0.0
 
@@ -822,6 +853,7 @@ class TestSyncSSRFValidation:
     @pytest.mark.asyncio
     async def test_allowed_172_32_network(self, client):
         from fusion_model_hub.server.routers.sync import _validate_sync_url
+
         try:
             _validate_sync_url("http://172.32.0.1/api")
         except Exception as e:
@@ -846,6 +878,7 @@ class TestSyncSSRFValidation:
     @pytest.mark.asyncio
     async def test_allowed_https_external(self, client):
         from fusion_model_hub.server.routers.sync import _validate_sync_url
+
         try:
             _validate_sync_url("https://remote-hub.example.com/api")
         except Exception as e:
@@ -854,6 +887,7 @@ class TestSyncSSRFValidation:
     @pytest.mark.asyncio
     async def test_allowed_http_external(self, client):
         from fusion_model_hub.server.routers.sync import _validate_sync_url
+
         try:
             _validate_sync_url("http://remote-hub.example.com/api")
         except Exception as e:
@@ -1103,12 +1137,16 @@ class TestTasksSubmitQuantize:
     @pytest.mark.asyncio
     async def test_submit_quantize_source_not_found(self, client):
         from fusion_model_hub.server import tasks as tasks_mod
+
         tasks_mod._running_tasks.clear()
 
-        r = await client.post("/api/v1/quantize", json={
-            "source_version_id": "nonexistent-ver-id",
-            "quant_bits": 4,
-        })
+        r = await client.post(
+            "/api/v1/quantize",
+            json={
+                "source_version_id": "nonexistent-ver-id",
+                "quant_bits": 4,
+            },
+        )
         assert r.status_code == 202
         task_id = r.json()["task_id"]
 
@@ -1124,6 +1162,7 @@ class TestTasksSubmitQuantize:
     @pytest.mark.asyncio
     async def test_submit_quantize_success_with_mock(self, client):
         from fusion_model_hub.server import tasks as tasks_mod
+
         tasks_mod._running_tasks.clear()
 
         model = await _create_model(client, "quant-model")
@@ -1139,10 +1178,13 @@ class TestTasksSubmitQuantize:
             mock_converter.quantize = AsyncMock(return_value=mock_result)
             MockConverter.return_value = mock_converter
 
-            r = await client.post("/api/v1/quantize", json={
-                "source_version_id": ver["id"],
-                "quant_bits": 4,
-            })
+            r = await client.post(
+                "/api/v1/quantize",
+                json={
+                    "source_version_id": ver["id"],
+                    "quant_bits": 4,
+                },
+            )
             assert r.status_code == 202
             task_id = r.json()["task_id"]
 
@@ -1158,6 +1200,7 @@ class TestTasksSubmitQuantize:
     @pytest.mark.asyncio
     async def test_submit_quantize_converter_failure(self, client):
         from fusion_model_hub.server import tasks as tasks_mod
+
         tasks_mod._running_tasks.clear()
 
         model = await _create_model(client, "quant-fail-model")
@@ -1168,10 +1211,13 @@ class TestTasksSubmitQuantize:
             mock_converter.quantize = AsyncMock(side_effect=RuntimeError("conversion error"))
             MockConverter.return_value = mock_converter
 
-            r = await client.post("/api/v1/quantize", json={
-                "source_version_id": ver["id"],
-                "quant_bits": 4,
-            })
+            r = await client.post(
+                "/api/v1/quantize",
+                json={
+                    "source_version_id": ver["id"],
+                    "quant_bits": 4,
+                },
+            )
             assert r.status_code == 202
             task_id = r.json()["task_id"]
 
@@ -1186,6 +1232,7 @@ class TestTasksSubmitQuantize:
     @pytest.mark.asyncio
     async def test_submit_quantize_create_version_failure(self, client):
         from fusion_model_hub.server import tasks as tasks_mod
+
         tasks_mod._running_tasks.clear()
 
         model = await _create_model(client, "quant-cv-fail-model")
@@ -1196,16 +1243,21 @@ class TestTasksSubmitQuantize:
             "file_hash": "abc",
             "file_size": 1024,
         }
-        with patch("fusion_model_hub.server.tasks.ModelConverter") as MockConverter, \
-             patch("fusion_model_hub.server.tasks.create_version", new_callable=AsyncMock, return_value=None):
+        with (
+            patch("fusion_model_hub.server.tasks.ModelConverter") as MockConverter,
+            patch("fusion_model_hub.server.tasks.create_version", new_callable=AsyncMock, return_value=None),
+        ):
             mock_converter = AsyncMock()
             mock_converter.quantize = AsyncMock(return_value=mock_result)
             MockConverter.return_value = mock_converter
 
-            r = await client.post("/api/v1/quantize", json={
-                "source_version_id": ver["id"],
-                "quant_bits": 4,
-            })
+            r = await client.post(
+                "/api/v1/quantize",
+                json={
+                    "source_version_id": ver["id"],
+                    "quant_bits": 4,
+                },
+            )
             assert r.status_code == 202
             task_id = r.json()["task_id"]
 
@@ -1221,6 +1273,7 @@ class TestTasksSubmitQuantize:
     @pytest.mark.asyncio
     async def test_submit_quantize_unexpected_exception(self, client):
         from fusion_model_hub.server import tasks as tasks_mod
+
         tasks_mod._running_tasks.clear()
 
         model = await _create_model(client, "quant-exc-model")
@@ -1231,10 +1284,13 @@ class TestTasksSubmitQuantize:
             mock_converter.quantize = AsyncMock(side_effect=RuntimeError("unexpected"))
             MockConverter.return_value = mock_converter
 
-            r = await client.post("/api/v1/quantize", json={
-                "source_version_id": ver["id"],
-                "quant_bits": 4,
-            })
+            r = await client.post(
+                "/api/v1/quantize",
+                json={
+                    "source_version_id": ver["id"],
+                    "quant_bits": 4,
+                },
+            )
             assert r.status_code == 202
             task_id = r.json()["task_id"]
 
@@ -1261,6 +1317,7 @@ class TestTasksGetStatus:
         sf = get_session_factory()
         async with sf() as session:
             from fusion_model_hub.db.crud import create_quantize_task
+
             task = await create_quantize_task(
                 session,
                 source_version_id="v1",
@@ -1278,6 +1335,7 @@ class TestTasksGetStatus:
     @pytest.mark.asyncio
     async def test_get_task_status_none_for_missing(self, client):
         from fusion_model_hub.server.tasks import get_task_status
+
         result = await get_task_status("nonexistent-task-id")
         assert result is None
 
@@ -1286,6 +1344,7 @@ class TestTasksListRunning:
     @pytest.mark.asyncio
     async def test_list_running_tasks(self, client):
         from fusion_model_hub.server import tasks as tasks_mod
+
         tasks_mod._running_tasks.clear()
 
         resp = await client.get("/api/v1/quantize/running")
@@ -1295,6 +1354,7 @@ class TestTasksListRunning:
     @pytest.mark.asyncio
     async def test_list_running_tasks_direct(self, client):
         from fusion_model_hub.server.tasks import _running_tasks, list_running_tasks
+
         _running_tasks.clear()
 
         result = list_running_tasks()
@@ -1306,6 +1366,7 @@ class TestTasksQuantizeBits:
     @pytest.mark.asyncio
     async def test_quantize_2bit(self, client):
         from fusion_model_hub.server import tasks as tasks_mod
+
         tasks_mod._running_tasks.clear()
 
         model = await _create_model(client, "quant-2bit")
@@ -1313,15 +1374,22 @@ class TestTasksQuantizeBits:
 
         with patch("fusion_model_hub.server.tasks.ModelConverter") as MockConverter:
             mock_converter = AsyncMock()
-            mock_converter.quantize = AsyncMock(return_value={
-                "output_path": "/tmp/q2.mlx", "file_hash": "h2", "file_size": 512,
-            })
+            mock_converter.quantize = AsyncMock(
+                return_value={
+                    "output_path": "/tmp/q2.mlx",
+                    "file_hash": "h2",
+                    "file_size": 512,
+                }
+            )
             MockConverter.return_value = mock_converter
 
-            r = await client.post("/api/v1/quantize", json={
-                "source_version_id": ver["id"],
-                "quant_bits": 2,
-            })
+            r = await client.post(
+                "/api/v1/quantize",
+                json={
+                    "source_version_id": ver["id"],
+                    "quant_bits": 2,
+                },
+            )
             assert r.status_code == 202
             task_id = r.json()["task_id"]
 
@@ -1335,6 +1403,7 @@ class TestTasksQuantizeBits:
     @pytest.mark.asyncio
     async def test_quantize_8bit(self, client):
         from fusion_model_hub.server import tasks as tasks_mod
+
         tasks_mod._running_tasks.clear()
 
         model = await _create_model(client, "quant-8bit")
@@ -1342,15 +1411,22 @@ class TestTasksQuantizeBits:
 
         with patch("fusion_model_hub.server.tasks.ModelConverter") as MockConverter:
             mock_converter = AsyncMock()
-            mock_converter.quantize = AsyncMock(return_value={
-                "output_path": "/tmp/q8.mlx", "file_hash": "h8", "file_size": 2048,
-            })
+            mock_converter.quantize = AsyncMock(
+                return_value={
+                    "output_path": "/tmp/q8.mlx",
+                    "file_hash": "h8",
+                    "file_size": 2048,
+                }
+            )
             MockConverter.return_value = mock_converter
 
-            r = await client.post("/api/v1/quantize", json={
-                "source_version_id": ver["id"],
-                "quant_bits": 8,
-            })
+            r = await client.post(
+                "/api/v1/quantize",
+                json={
+                    "source_version_id": ver["id"],
+                    "quant_bits": 8,
+                },
+            )
             assert r.status_code == 202
             task_id = r.json()["task_id"]
 
@@ -1365,18 +1441,24 @@ class TestTasksQuantizeBits:
 class TestTasksQuantizeInvalidBits:
     @pytest.mark.asyncio
     async def test_quantize_3bit_rejected(self, client):
-        resp = await client.post("/api/v1/quantize", json={
-            "source_version_id": "nonexistent",
-            "quant_bits": 3,
-        })
+        resp = await client.post(
+            "/api/v1/quantize",
+            json={
+                "source_version_id": "nonexistent",
+                "quant_bits": 3,
+            },
+        )
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_quantize_5bit_rejected(self, client):
-        resp = await client.post("/api/v1/quantize", json={
-            "source_version_id": "nonexistent",
-            "quant_bits": 5,
-        })
+        resp = await client.post(
+            "/api/v1/quantize",
+            json={
+                "source_version_id": "nonexistent",
+                "quant_bits": 5,
+            },
+        )
         assert resp.status_code == 400
 
 
@@ -1384,6 +1466,7 @@ class TestTasksWebhookDispatch:
     @pytest.mark.asyncio
     async def test_completed_task_dispatches_webhook(self, client):
         from fusion_model_hub.server import tasks as tasks_mod
+
         tasks_mod._running_tasks.clear()
 
         model = await _create_model(client, "wh-dispatch-model")
@@ -1394,16 +1477,23 @@ class TestTasksWebhookDispatch:
             "file_hash": "wh123",
             "file_size": 512,
         }
-        with patch("fusion_model_hub.server.tasks.ModelConverter") as MockConverter, \
-             patch("fusion_model_hub.server.routers.webhooks.dispatch_webhook_event", new_callable=AsyncMock) as mock_dispatch:
+        with (
+            patch("fusion_model_hub.server.tasks.ModelConverter") as MockConverter,
+            patch(
+                "fusion_model_hub.server.routers.webhooks.dispatch_webhook_event", new_callable=AsyncMock
+            ) as mock_dispatch,
+        ):
             mock_converter = AsyncMock()
             mock_converter.quantize = AsyncMock(return_value=mock_result)
             MockConverter.return_value = mock_converter
 
-            r = await client.post("/api/v1/quantize", json={
-                "source_version_id": ver["id"],
-                "quant_bits": 4,
-            })
+            r = await client.post(
+                "/api/v1/quantize",
+                json={
+                    "source_version_id": ver["id"],
+                    "quant_bits": 4,
+                },
+            )
             assert r.status_code == 202
             task_id = r.json()["task_id"]
 
@@ -1422,32 +1512,41 @@ class TestTasksWebhookDispatch:
 class TestLoraAdapter:
     @pytest.mark.asyncio
     async def test_lora_base_model_not_found(self, client):
-        resp = await client.post("/api/v1/models", json={
-            "name": "lora-bad-base",
-            "model_type": "lora",
-            "base_model_id": "nonexistent",
-        })
+        resp = await client.post(
+            "/api/v1/models",
+            json={
+                "name": "lora-bad-base",
+                "model_type": "lora",
+                "base_model_id": "nonexistent",
+            },
+        )
         assert resp.status_code == 404
         assert "base_model_id" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_lora_empty_base_model_id_rejected(self, client):
-        resp = await client.post("/api/v1/models", json={
-            "name": "lora-orphan",
-            "model_type": "lora",
-            "base_model_id": "",
-        })
+        resp = await client.post(
+            "/api/v1/models",
+            json={
+                "name": "lora-orphan",
+                "model_type": "lora",
+                "base_model_id": "",
+            },
+        )
         assert resp.status_code == 400
         assert "base_model_id" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_lora_base_model_id_persisted_and_queryable(self, client):
         base = await _create_model(client, "lora-base-host")
-        resp = await client.post("/api/v1/models", json={
-            "name": "lora-adapter-1",
-            "model_type": "lora",
-            "base_model_id": base["id"],
-        })
+        resp = await client.post(
+            "/api/v1/models",
+            json={
+                "name": "lora-adapter-1",
+                "model_type": "lora",
+                "base_model_id": base["id"],
+            },
+        )
         assert resp.status_code == 201
         adapter = resp.json()
         assert adapter["model_type"] == "lora"
@@ -1460,14 +1559,20 @@ class TestLoraAdapter:
     async def test_lora_update_base_model_id(self, client):
         base_a = await _create_model(client, "lora-host-a")
         base_b = await _create_model(client, "lora-host-b")
-        adapter = await client.post("/api/v1/models", json={
-            "name": "lora-adapter-2",
-            "model_type": "lora",
-            "base_model_id": base_a["id"],
-        })
-        upd = await client.put(f"/api/v1/models/{adapter.json()['id']}", json={
-            "base_model_id": base_b["id"],
-        })
+        adapter = await client.post(
+            "/api/v1/models",
+            json={
+                "name": "lora-adapter-2",
+                "model_type": "lora",
+                "base_model_id": base_a["id"],
+            },
+        )
+        upd = await client.put(
+            f"/api/v1/models/{adapter.json()['id']}",
+            json={
+                "base_model_id": base_b["id"],
+            },
+        )
         assert upd.status_code == 200
         assert upd.json()["base_model_id"] == base_b["id"]
 
@@ -1478,11 +1583,14 @@ class TestLoraAdapter:
             "fusion_model_hub.server.routers.webhooks.dispatch_webhook_event",
             new=AsyncMock(),
         ) as mock_dispatch:
-            resp = await client.post("/api/v1/models", json={
-                "name": "lora-adapter-wh",
-                "model_type": "lora",
-                "base_model_id": base["id"],
-            })
+            resp = await client.post(
+                "/api/v1/models",
+                json={
+                    "name": "lora-adapter-wh",
+                    "model_type": "lora",
+                    "base_model_id": base["id"],
+                },
+            )
         assert resp.status_code == 201
         events = [call.args[0] for call in mock_dispatch.call_args_list]
         assert "model.created" in events
@@ -1504,11 +1612,14 @@ class TestLoraAdapter:
             "fusion_model_hub.server.routers.quantize.httpx.AsyncClient",
             return_value=mock_ctx,
         ):
-            cr = await client.post("/api/v1/quantize/lora-merge", json={
-                "base_version_id": v1["id"],
-                "lora_version_id": v2["id"],
-                "quant_bits": 4,
-            })
+            cr = await client.post(
+                "/api/v1/quantize/lora-merge",
+                json={
+                    "base_version_id": v1["id"],
+                    "lora_version_id": v2["id"],
+                    "quant_bits": 4,
+                },
+            )
             assert cr.status_code == 202
             task_id = cr.json()["task_id"]
             await asyncio.sleep(0.4)
@@ -1532,18 +1643,24 @@ class TestLoraAdapter:
         mock_ctx.post = AsyncMock(return_value=ok)
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        with patch(
-            "fusion_model_hub.server.routers.quantize.httpx.AsyncClient",
-            return_value=mock_ctx,
-        ), patch(
-            "fusion_model_hub.server.routers.webhooks.dispatch_webhook_event",
-            new=AsyncMock(),
-        ) as mock_wh:
-            cr = await client.post("/api/v1/quantize/lora-merge", json={
-                "base_version_id": v1["id"],
-                "lora_version_id": v2["id"],
-                "quant_bits": 4,
-            })
+        with (
+            patch(
+                "fusion_model_hub.server.routers.quantize.httpx.AsyncClient",
+                return_value=mock_ctx,
+            ),
+            patch(
+                "fusion_model_hub.server.routers.webhooks.dispatch_webhook_event",
+                new=AsyncMock(),
+            ) as mock_wh,
+        ):
+            cr = await client.post(
+                "/api/v1/quantize/lora-merge",
+                json={
+                    "base_version_id": v1["id"],
+                    "lora_version_id": v2["id"],
+                    "quant_bits": 4,
+                },
+            )
             task_id = cr.json()["task_id"]
             await asyncio.sleep(0.4)
         status = await client.get(f"/api/v1/quantize/lora-merge/{task_id}")
@@ -1552,4 +1669,3 @@ class TestLoraAdapter:
         assert data["output_version_id"]
         wh_events = [call.args[0] for call in mock_wh.call_args_list]
         assert "adapter.merged" in wh_events
-

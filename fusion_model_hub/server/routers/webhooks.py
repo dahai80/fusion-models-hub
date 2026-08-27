@@ -35,11 +35,16 @@ def _caller_tenant(request: Request) -> str:
 @router.post("", status_code=201, response_model=WebhookOut)
 async def create_webhook(body: WebhookCreate, session: SessionDep, request: Request):
     from ..ssrf import validate_external_url
+
     validate_external_url(body.url)
     tenant_id = _caller_tenant(request)
     w = await crud.create_webhook(
-        session, name=body.name, url=body.url, secret=body.secret,
-        events=body.events, tenant_id=tenant_id,
+        session,
+        name=body.name,
+        url=body.url,
+        secret=body.secret,
+        events=body.events,
+        tenant_id=tenant_id,
     )
     logger.info("Created webhook: id=%s tenant=%s", w.id, tenant_id)
     return w

@@ -1,4 +1,5 @@
 """Local model manager — manages locally installed .mlx models."""
+
 from __future__ import annotations
 
 import json
@@ -35,9 +36,15 @@ class LocalModelManager:
     def _save_meta(self) -> None:
         self._meta_file.write_text(json.dumps(self._models, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def register(self, model_id: str, name: str, path: str,
-                 quant: str = "4bit", version: str = "1.0.0",
-                 mlx_version: str = ">=0.5.0") -> None:
+    def register(
+        self,
+        model_id: str,
+        name: str,
+        path: str,
+        quant: str = "4bit",
+        version: str = "1.0.0",
+        mlx_version: str = ">=0.5.0",
+    ) -> None:
         """Register a locally installed model."""
         self._models[model_id] = {
             "id": model_id,

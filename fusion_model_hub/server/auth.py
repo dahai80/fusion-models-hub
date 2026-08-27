@@ -72,8 +72,16 @@ def _check_role_permission(role: UserRole, method: str) -> JSONResponse | None:
 # (import, batch delete/tag) that create or remove models outside its scope.
 # Treat every segment in this set as "collection op, no single model_id".
 _MODEL_COLLECTION_KEYWORDS = {
-    "import", "sync", "batch", "compare", "recommend", "search",
-    "market", "tag", "delete", "publish-all",
+    "import",
+    "sync",
+    "batch",
+    "compare",
+    "recommend",
+    "search",
+    "market",
+    "tag",
+    "delete",
+    "publish-all",
 }
 
 
@@ -198,11 +206,13 @@ async def auth_middleware(request: Request, call_next):
             _last_used_cache[ak.id] = now
             try:
                 from ..db.crud import touch_api_key_last_used
+
                 await touch_api_key_last_used(session, ak.id)
             except Exception:
                 logger.debug("last_used_at refresh failed for key %s", ak.id, exc_info=True)
 
         from .rate_limit import check_rate_limit
+
         if not check_rate_limit(ak.key_prefix, ak.qps_limit):
             return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
 
@@ -220,6 +230,7 @@ async def auth_middleware(request: Request, call_next):
     # avoid a DB outage blocking all writes).
     try:
         from ..db.crud import create_audit_log
+
         resource_type = _extract_resource_type(request.url.path)
         resource_id = _extract_resource_id(request.url.path)
         action = f"{request.method.lower()}_{resource_type}"
@@ -276,8 +287,15 @@ def _extract_resource_id(path: str) -> str:
         if p in ("models", "versions", "quantize") and i + 1 < len(parts):
             candidate = parts[i + 1]
             if candidate not in (
-                "import", "download-url", "chunk-upload",
-                "running", "deprecate", "retire", "rollback", "benchmark", "status",
+                "import",
+                "download-url",
+                "chunk-upload",
+                "running",
+                "deprecate",
+                "retire",
+                "rollback",
+                "benchmark",
+                "status",
             ):
                 return candidate
     return ""

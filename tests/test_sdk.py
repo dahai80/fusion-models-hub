@@ -704,7 +704,9 @@ class TestHTTPErrorHandling:
         sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
         resp = _mock_response({"detail": "not found"}, status_code=404)
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "404", request=MagicMock(), response=resp,
+            "404",
+            request=MagicMock(),
+            response=resp,
         )
         _setup_mock_client(MockClient, "get", resp)
         with pytest.raises(httpx.HTTPStatusError):
@@ -715,7 +717,9 @@ class TestHTTPErrorHandling:
         sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
         resp = _mock_response({"detail": "conflict"}, status_code=409)
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "409", request=MagicMock(), response=resp,
+            "409",
+            request=MagicMock(),
+            response=resp,
         )
         _setup_mock_client(MockClient, "post", resp)
         with pytest.raises(httpx.HTTPStatusError):
@@ -726,7 +730,9 @@ class TestHTTPErrorHandling:
         sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
         resp = _mock_response({"detail": "bad request"}, status_code=400)
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "400", request=MagicMock(), response=resp,
+            "400",
+            request=MagicMock(),
+            response=resp,
         )
         _setup_mock_client(MockClient, "put", resp)
         with pytest.raises(httpx.HTTPStatusError):
@@ -737,7 +743,9 @@ class TestHTTPErrorHandling:
         sdk = FusionModelHubClient(base_url=BASE_URL, api_key="test-key")
         resp = _mock_response({"detail": "not found"}, status_code=404)
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "404", request=MagicMock(), response=resp,
+            "404",
+            request=MagicMock(),
+            response=resp,
         )
         _setup_mock_client(MockClient, "delete", resp)
         with pytest.raises(httpx.HTTPStatusError):

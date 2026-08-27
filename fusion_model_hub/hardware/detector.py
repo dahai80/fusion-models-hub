@@ -109,9 +109,12 @@ class HardwareDetector:
             disk_free_gb=disk_data.get("free_gb", 0),
             os_name=data.get("os", "macos"),
         )
-        logger.info("Hardware detected: chip=%s vram=%.1fGB ram=%.1fGB",
-                     profile.gpu.chip_generation.value if profile.gpu else "N/A",
-                     profile.effective_vram_gb, profile.ram_gb)
+        logger.info(
+            "Hardware detected: chip=%s vram=%.1fGB ram=%.1fGB",
+            profile.gpu.chip_generation.value if profile.gpu else "N/A",
+            profile.effective_vram_gb,
+            profile.ram_gb,
+        )
         return profile
 
     @staticmethod

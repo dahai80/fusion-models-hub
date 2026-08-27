@@ -41,13 +41,15 @@ async def search_modelscope(
     total = data.get("Data", {}).get("TotalCount", 0) if isinstance(data, dict) else 0
     items = []
     for m in models:
-        items.append({
-            "name": m.get("Name", ""),
-            "id": m.get("Id", ""),
-            "task": m.get("Task", ""),
-            "framework": m.get("Framework", ""),
-            "source": "modelscope",
-            "downloads": m.get("Downloads", 0),
-            "creator": m.get("Creator", ""),
-        })
+        items.append(
+            {
+                "name": m.get("Name", ""),
+                "id": m.get("Id", ""),
+                "task": m.get("Task", ""),
+                "framework": m.get("Framework", ""),
+                "source": "modelscope",
+                "downloads": m.get("Downloads", 0),
+                "creator": m.get("Creator", ""),
+            }
+        )
     return {"items": items, "total": total, "source": "modelscope"}

@@ -48,7 +48,10 @@ class LocalStore(StorageBackend):
         return d
 
     async def write_chunk(
-        self, upload_id: str, chunk_index: int, chunk_data: bytes,
+        self,
+        upload_id: str,
+        chunk_index: int,
+        chunk_data: bytes,
     ) -> Path:
         tmp_dir = self.upload_tmp_dir(upload_id)
         chunk_path = tmp_dir / f"{chunk_index:06d}.part"
@@ -58,7 +61,11 @@ class LocalStore(StorageBackend):
         return chunk_path
 
     def _assemble_chunks_sync(
-        self, upload_id: str, target_dir: Path, filename: str, total_chunks: int,
+        self,
+        upload_id: str,
+        target_dir: Path,
+        filename: str,
+        total_chunks: int,
     ) -> tuple[Path, str, int]:
         # E-D3: assemble to a side temp file, fsync, then atomic os.replace into
         # place. A crash mid-assemble leaves the old target untouched instead of a
@@ -95,17 +102,28 @@ class LocalStore(StorageBackend):
         file_hash = hasher.hexdigest()
         logger.info(
             "Assembled upload: id=%s file=%s size=%d hash=%s",
-            upload_id, filename, total_size, file_hash[:16],
+            upload_id,
+            filename,
+            total_size,
+            file_hash[:16],
         )
         return target_path, file_hash, total_size
 
     async def assemble_chunks(
-        self, upload_id: str, target_dir: Path, filename: str, total_chunks: int,
+        self,
+        upload_id: str,
+        target_dir: Path,
+        filename: str,
+        total_chunks: int,
     ) -> tuple[Path, str, int]:
         # P1-7: the multi-chunk read+write+fsync blocks the event loop for the
         # whole upload; run the blocking assembly on a worker thread.
         return await anyio.to_thread.run_sync(
-            self._assemble_chunks_sync, upload_id, target_dir, filename, total_chunks,
+            self._assemble_chunks_sync,
+            upload_id,
+            target_dir,
+            filename,
+            total_chunks,
         )
 
     def _write_file_sync(self, target_dir: Path, filename: str, data: bytes) -> tuple[Path, str, int]:

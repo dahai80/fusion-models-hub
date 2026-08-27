@@ -70,6 +70,7 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
         hub_version = "unknown"
 
     from ..deps import get_start_ts
+
     start_ts = get_start_ts()
     uptime_str = ""
     if start_ts:
@@ -92,6 +93,7 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
     # R10: surface that the per-key QPS limiter is node-local/in-memory, not a
     # cluster-wide enforced budget, so ops does not infer a multi-node guarantee.
     from ..rate_limit import is_rate_limit_persistent
+
     rate_limit_info = {
         "enabled": getattr(settings, "auth_enabled", True),
         "persistent": is_rate_limit_persistent(),
@@ -122,12 +124,21 @@ async def storage_stats(store: StoreDep):
 
 @router.get("/system/audit")
 async def audit_logs(
-    session: SessionDep, request: Request, resource_type: str = "",
-    action: str = "", page: int = 1, page_size: int = 20,
+    session: SessionDep,
+    request: Request,
+    resource_type: str = "",
+    action: str = "",
+    page: int = 1,
+    page_size: int = 20,
 ):
     tenant_id = getattr(request.state, "tenant_id", "") or ""
     logs, total = await crud.list_audit_logs(
-        session, tenant_id=tenant_id, resource_type=resource_type, action=action, page=page, page_size=page_size,
+        session,
+        tenant_id=tenant_id,
+        resource_type=resource_type,
+        action=action,
+        page=page,
+        page_size=page_size,
     )
     items = [
         {
@@ -149,7 +160,10 @@ async def export_data(session: SessionDep, request: Request, models: str = ""):
     caller_tenant = getattr(request.state, "tenant_id", "") or ""
     model_ids = [x.strip() for x in models.split(",") if x.strip()] if models else []
     all_models, _ = await crud.list_models(
-        session, page=1, page_size=10000, tenant_id=caller_tenant,
+        session,
+        page=1,
+        page_size=10000,
+        tenant_id=caller_tenant,
     )
     if model_ids:
         all_models = [m for m in all_models if m.id in model_ids]
@@ -159,27 +173,34 @@ async def export_data(session: SessionDep, request: Request, models: str = ""):
         "version": "1.0",
         "models": [
             {
-                "id": m.id, "name": m.name, "tenant_id": m.tenant_id,
-                "description": m.description, "model_type": m.model_type.value,
-                "architecture": m.architecture, "params_size": m.params_size,
-                "license": m.license, "author": m.author, "language": m.language,
-                "task_types": m.task_types, "owner": m.owner, "hf_repo": m.hf_repo,
+                "id": m.id,
+                "name": m.name,
+                "tenant_id": m.tenant_id,
+                "description": m.description,
+                "model_type": m.model_type.value,
+                "architecture": m.architecture,
+                "params_size": m.params_size,
+                "license": m.license,
+                "author": m.author,
+                "language": m.language,
+                "task_types": m.task_types,
+                "owner": m.owner,
+                "hf_repo": m.hf_repo,
                 "tags": [{"key": t.key, "value": t.value} for t in m.tags],
             }
             for m in all_models
         ],
-        "tenants": [
-            {"id": t.id, "name": t.name, "display_name": t.display_name}
-            for t in tenants
-        ],
+        "tenants": [{"id": t.id, "name": t.name, "display_name": t.display_name} for t in tenants],
         "webhooks": [
-            {"id": w.id, "name": w.name, "url": w.url, "events": w.events, "tenant_id": w.tenant_id}
-            for w in webhooks
+            {"id": w.id, "name": w.name, "url": w.url, "events": w.events, "tenant_id": w.tenant_id} for w in webhooks
         ],
     }
     logger.info(
         "Exported data: tenant=%s models=%d tenants=%d webhooks=%d",
-        caller_tenant or "root", len(all_models), len(tenants), len(webhooks),
+        caller_tenant or "root",
+        len(all_models),
+        len(tenants),
+        len(webhooks),
     )
     return JSONResponse(content=export)
 
@@ -189,6 +210,7 @@ async def import_data(session: SessionDep, request: Request, data: dict):
     caller_tenant = getattr(request.state, "tenant_id", "") or ""
     caller_role = getattr(request.state, "user_role", "") or ""
     from ..auth import _is_auth_enabled
+
     if _is_auth_enabled() and caller_role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can import system data")
     # Imported resources are bound to the caller's tenant (root="" may seed any);
@@ -208,17 +230,25 @@ async def import_data(session: SessionDep, request: Request, data: dict):
         existing = await crud.get_model_by_name(session, m.get("name", ""))
         if not existing:
             from ...db.models import ModelType
+
             try:
                 mt = ModelType(m.get("model_type", "llm"))
             except ValueError:
                 mt = ModelType.LLM
             new_m = await crud.create_model(
-                session, name=m["name"], tenant_id=caller_tenant,
-                description=m.get("description", ""), model_type=mt,
-                architecture=m.get("architecture", ""), params_size=m.get("params_size", ""),
-                license=m.get("license", ""), author=m.get("author", ""),
-                language=m.get("language", ""), task_types=m.get("task_types", ""),
-                owner=m.get("owner", ""), hf_repo=m.get("hf_repo", ""),
+                session,
+                name=m["name"],
+                tenant_id=caller_tenant,
+                description=m.get("description", ""),
+                model_type=mt,
+                architecture=m.get("architecture", ""),
+                params_size=m.get("params_size", ""),
+                license=m.get("license", ""),
+                author=m.get("author", ""),
+                language=m.get("language", ""),
+                task_types=m.get("task_types", ""),
+                owner=m.get("owner", ""),
+                hf_repo=m.get("hf_repo", ""),
             )
             tags = m.get("tags", [])
             if tags:
@@ -228,10 +258,14 @@ async def import_data(session: SessionDep, request: Request, data: dict):
     webhooks_data = data.get("webhooks", [])
     for w in webhooks_data:
         from ..ssrf import validate_external_url
+
         validate_external_url(w["url"])
         await crud.create_webhook(
-            session, name=w["name"], url=w["url"],
-            events=w.get("events", ""), tenant_id=caller_tenant,
+            session,
+            name=w["name"],
+            url=w["url"],
+            events=w.get("events", ""),
+            tenant_id=caller_tenant,
         )
         count += 1
 
@@ -247,14 +281,16 @@ async def scan_duplicate_weights(session: SessionDep):
     for m in all_models:
         for v in m.versions:
             if v.file_hash:
-                hash_groups[v.file_hash].append({
-                    "model_id": m.id,
-                    "model_name": m.name,
-                    "version_id": v.id,
-                    "version": v.version,
-                    "file_hash": v.file_hash,
-                    "file_size": v.file_size,
-                })
+                hash_groups[v.file_hash].append(
+                    {
+                        "model_id": m.id,
+                        "model_name": m.name,
+                        "version_id": v.id,
+                        "version": v.version,
+                        "file_hash": v.file_hash,
+                        "file_size": v.file_size,
+                    }
+                )
 
     duplicates = [group for group in hash_groups.values() if len(group) > 1]
     logger.info("Duplicate scan found %d duplicate groups", len(duplicates))
@@ -268,15 +304,17 @@ async def disk_cleanup(session: SessionDep):
     for m in all_models:
         for v in m.versions:
             if v.status.value == "retired" and v.file_path:
-                candidates.append({
-                    "model_id": m.id,
-                    "model_name": m.name,
-                    "version_id": v.id,
-                    "version": v.version,
-                    "file_path": v.file_path,
-                    "file_size": v.file_size,
-                    "status": v.status.value,
-                })
+                candidates.append(
+                    {
+                        "model_id": m.id,
+                        "model_name": m.name,
+                        "version_id": v.id,
+                        "version": v.version,
+                        "file_path": v.file_path,
+                        "file_size": v.file_size,
+                        "status": v.status.value,
+                    }
+                )
     logger.info("Cleanup scan found %d retired versions with files", len(candidates))
     return {"candidates": candidates, "total": len(candidates)}
 
@@ -293,7 +331,9 @@ def _collect_hardware_info() -> dict:
     try:
         result = subprocess.run(
             ["/usr/sbin/system_profiler", "SPDisplaysDataType"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             for line in result.stdout.splitlines():
@@ -310,11 +350,15 @@ def _collect_hardware_info() -> dict:
         logger.debug("GPU info collection failed", exc_info=True)
 
     import os
+
     cpu_cores = os.cpu_count() or 0
 
     try:
         result = subprocess.run(
-            ["/usr/bin/vm_stat"], capture_output=True, text=True, timeout=5,
+            ["/usr/bin/vm_stat"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             page_size = 16384
@@ -330,18 +374,20 @@ def _collect_hardware_info() -> dict:
                 elif "Pages wired down:" in line:
                     total_pages += int(line.split(":")[-1].strip().rstrip("."))
             if total_pages + free_pages > 0:
-                memory_total_gb = round((total_pages + free_pages) * page_size / (1024 ** 3), 2)
-                memory_used_gb = round(total_pages * page_size / (1024 ** 3), 2)
+                memory_total_gb = round((total_pages + free_pages) * page_size / (1024**3), 2)
+                memory_used_gb = round(total_pages * page_size / (1024**3), 2)
     except Exception:
         logger.debug("Memory info collection failed", exc_info=True)
 
     try:
         result = subprocess.run(
             ["/usr/sbin/sysctl", "-n", "hw.memsize"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
-            memory_total_gb = round(int(result.stdout.strip()) / (1024 ** 3), 2)
+            memory_total_gb = round(int(result.stdout.strip()) / (1024**3), 2)
     except Exception:
         logger.debug("sysctl memsize failed", exc_info=True)
 
@@ -349,7 +395,9 @@ def _collect_hardware_info() -> dict:
         try:
             result = subprocess.run(
                 ["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
                 gpu_name = result.stdout.strip()

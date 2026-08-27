@@ -66,6 +66,7 @@ async def _require_admin_or_bootstrap(session, request: Request, settings) -> No
         if expected:
             supplied = request.headers.get("X-Bootstrap-Token", "")
             import hmac
+
             if not supplied or not hmac.compare_digest(supplied, expected):
                 logger.warning("Bootstrap rejected: missing/invalid X-Bootstrap-Token for ip=%s", ip)
                 raise HTTPException(status_code=403, detail="Bootstrap token required to create the first key")
@@ -99,7 +100,8 @@ async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request, 
         if body.tenant_id and body.tenant_id != caller_tenant:
             logger.warning(
                 "Cross-tenant key forge blocked: caller_tenant=%s body_tenant=%s",
-                caller_tenant, body.tenant_id,
+                caller_tenant,
+                body.tenant_id,
             )
             raise HTTPException(
                 status_code=403,
@@ -110,8 +112,14 @@ async def create_key(body: ApiKeyCreate, session: SessionDep, request: Request, 
         # bootstrap (first key): root admin, no tenant
         tenant_id = ""
     ak, full_key = await crud.create_api_key(
-        session, name=body.name, tenant_id=tenant_id, permissions=body.permissions, role=body.role,
-        qps_limit=body.qps_limit, allowed_models=body.allowed_models, allowed_modules=body.allowed_modules,
+        session,
+        name=body.name,
+        tenant_id=tenant_id,
+        permissions=body.permissions,
+        role=body.role,
+        qps_limit=body.qps_limit,
+        allowed_models=body.allowed_models,
+        allowed_modules=body.allowed_modules,
     )
     return {
         "id": ak.id,
@@ -190,6 +198,7 @@ async def key_usage(key_id: str, session: SessionDep, request: Request):
     # api_key_id; filter to ak.id and fall back to the "" (anonymous, auth-off
     # local mode) bucket only when this key itself is anonymous-equivalent.
     from .inference import _model_stats
+
     total_requests = 0
     by_model: dict[str, dict] = {}
     last_at = None

@@ -26,6 +26,7 @@ def _check_model_owner(model, request: Request):
     # only modify models in their own tenant; admin passes through. When auth is
     # off (local dev) the check is permissive, matching list_models semantics.
     from ..auth import _is_auth_enabled
+
     if not _is_auth_enabled():
         return
     role = getattr(request.state, "user_role", "")
@@ -42,6 +43,7 @@ def _check_model_read(model, request: Request):
     # tenant A could read tenant B's model by id. Mirrors _check_model_owner but
     # for reads: cross-tenant reads 404 (not 403, to avoid leaking existence).
     from ..auth import _is_auth_enabled
+
     if not _is_auth_enabled():
         return
     role = getattr(request.state, "user_role", "")
@@ -134,6 +136,7 @@ def _model_to_dict(m) -> dict[str, Any]:
 
 # -- Static-path routes MUST come before /models/{model_id} --
 
+
 @router.post("/models", status_code=201)
 async def create_model(body: ModelCreate, session: SessionDep, request: Request):
     existing = await crud.get_model_by_name(session, body.name)
@@ -151,13 +154,20 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
             raise HTTPException(status_code=404, detail="base_model_id not found")
     m = await crud.create_model(
         session,
-        name=body.name, tenant_id=tenant_id, description=body.description,
-        model_type=body.model_type, base_model_id=body.base_model_id,
+        name=body.name,
+        tenant_id=tenant_id,
+        description=body.description,
+        model_type=body.model_type,
+        base_model_id=body.base_model_id,
         architecture=body.architecture,
-        params_size=body.params_size, license=body.license,
-        author=body.author, language=body.language,
-        task_types=body.task_types, owner=body.owner,
-        hf_repo=body.hf_repo, model_modules=body.model_modules,
+        params_size=body.params_size,
+        license=body.license,
+        author=body.author,
+        language=body.language,
+        task_types=body.task_types,
+        owner=body.owner,
+        hf_repo=body.hf_repo,
+        model_modules=body.model_modules,
         idle_timeout_minutes=body.idle_timeout_minutes,
     )
     if body.tags:
@@ -165,6 +175,7 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
         await session.refresh(m)
     try:
         from .webhooks import dispatch_webhook_event
+
         await dispatch_webhook_event("model.created", {"id": m.id, "name": m.name}, tenant_id=tenant_id)
         if body.model_type == ModelType.LORA:
             await dispatch_webhook_event(
@@ -189,8 +200,13 @@ async def list_models(
 ):
     tenant_id = getattr(request.state, "tenant_id", "") or ""
     models, total = await crud.list_models(
-        session, tenant_id=tenant_id, keyword=keyword, model_type=model_type,
-        architecture=architecture, page=page, page_size=page_size,
+        session,
+        tenant_id=tenant_id,
+        keyword=keyword,
+        model_type=model_type,
+        architecture=architecture,
+        page=page,
+        page_size=page_size,
     )
     return {
         "items": [_model_to_dict(m) for m in models],
@@ -217,8 +233,13 @@ async def search_models(
 ):
     tenant_id = getattr(request.state, "tenant_id", "") or ""
     models, total = await crud.list_models(
-        session, tenant_id=tenant_id, keyword=keyword, model_type=model_type,
-        architecture=architecture, page=1, page_size=1000,
+        session,
+        tenant_id=tenant_id,
+        keyword=keyword,
+        model_type=model_type,
+        architecture=architecture,
+        page=1,
+        page_size=1000,
     )
     filtered = models
     if params_size:
@@ -226,10 +247,7 @@ async def search_models(
     if quantization:
         filtered = [m for m in filtered if any(v.quantization.value == quantization for v in m.versions)]
     if min_benchmark_score > 0:
-        filtered = [
-            m for m in filtered
-            if any(v.benchmark_score >= min_benchmark_score for v in m.versions)
-        ]
+        filtered = [m for m in filtered if any(v.benchmark_score >= min_benchmark_score for v in m.versions)]
     sort_key_map = {
         "updated_at": lambda m: m.updated_at or m.created_at,
         "created_at": lambda m: m.created_at,
@@ -241,7 +259,7 @@ async def search_models(
     filtered.sort(key=key_func, reverse=(sort_order == "desc"))
     total = len(filtered)
     offset = (page - 1) * page_size
-    page_items = filtered[offset:offset + page_size]
+    page_items = filtered[offset : offset + page_size]
     return {
         "items": [_model_to_dict(m) for m in page_items],
         "total": total,
@@ -263,11 +281,16 @@ async def market_search(
     if source in ("all", "local"):
         try:
             from ..deps import get_session_factory
+
             sf = get_session_factory()
             async with sf() as session:
                 tenant_id = getattr(request.state, "tenant_id", "") or ""
                 models, _ = await crud.list_models(
-                    session, tenant_id=tenant_id, keyword=keyword, page=page, page_size=page_size,
+                    session,
+                    tenant_id=tenant_id,
+                    keyword=keyword,
+                    page=page,
+                    page_size=page_size,
                 )
                 results["local"] = [_model_to_dict(m) for m in models]
         except Exception:
@@ -275,6 +298,7 @@ async def market_search(
     if source in ("all", "modelscope"):
         try:
             from ...repo.modelscope_search import search_modelscope
+
             ms = await search_modelscope(query=keyword, task=task, page=page, page_size=page_size)
             results["modelscope"] = ms.get("items", [])
         except Exception:
@@ -282,15 +306,16 @@ async def market_search(
     if source in ("all", "private"):
         try:
             from ..deps import get_session_factory
+
             sf = get_session_factory()
             async with sf() as session:
                 models, _ = await crud.list_models(
-                    session, keyword=keyword, page=page, page_size=page_size,
+                    session,
+                    keyword=keyword,
+                    page=page,
+                    page_size=page_size,
                 )
-                private_models = [
-                    _model_to_dict(m) for m in models
-                    if not m.hf_repo
-                ]
+                private_models = [_model_to_dict(m) for m in models if not m.hf_repo]
                 results["private"] = private_models
         except Exception:
             logger.exception("Private repo search failed")
@@ -305,13 +330,15 @@ async def market_search(
                 if resp.status_code == 200:
                     items = []
                     for m in resp.json():
-                        items.append({
-                            "name": m.get("id", ""),
-                            "id": m.get("id", ""),
-                            "task": m.get("pipeline_tag", ""),
-                            "downloads": m.get("downloads", 0),
-                            "source": "huggingface",
-                        })
+                        items.append(
+                            {
+                                "name": m.get("id", ""),
+                                "id": m.get("id", ""),
+                                "task": m.get("pipeline_tag", ""),
+                                "downloads": m.get("downloads", 0),
+                                "source": "huggingface",
+                            }
+                        )
                     results["huggingface"] = items
         except Exception:
             logger.exception("HF market search failed")
@@ -334,6 +361,7 @@ async def compare_models(ids: str, session: SessionDep):
 
 def _validate_url(url_str: str) -> None:
     from ..ssrf import validate_external_url
+
     validate_external_url(url_str)
 
 
@@ -383,7 +411,10 @@ async def sync_registry(body: SyncRequest, session: SessionDep):
 
 @router.post("/models/batch/delete")
 async def batch_delete(
-    body: BatchDeleteRequest, session: SessionDep, store: StoreDep, cache: CacheDep,
+    body: BatchDeleteRequest,
+    session: SessionDep,
+    store: StoreDep,
+    cache: CacheDep,
 ):
     logger.info("Batch delete: %d models", len(body.model_ids))
     deleted = []
@@ -464,8 +495,7 @@ async def import_from_hf(body: HfImportRequest, session: SessionDep):
         model_type=model_type,
         architecture=architecture,
         params_size=(
-            hf_info.get("safetensors", {}).get("total", "")
-            if isinstance(hf_info.get("safetensors"), dict) else ""
+            hf_info.get("safetensors", {}).get("total", "") if isinstance(hf_info.get("safetensors"), dict) else ""
         ),
         license=hf_info.get("cardData", {}).get("license", ""),
         author=hf_info.get("author", ""),
@@ -478,6 +508,7 @@ async def import_from_hf(body: HfImportRequest, session: SessionDep):
 
     if body.download:
         from ...repo.downloader import ModelDownloader
+
         download_url = f"{HF_MIRROR}/{hf_repo}"
         downloader = ModelDownloader()
         result = await downloader.download(download_url, name)
@@ -498,7 +529,9 @@ async def import_from_hf(body: HfImportRequest, session: SessionDep):
             if version:
                 logger.info(
                     "Downloaded HF model files: repo=%s version_id=%s path=%s",
-                    hf_repo, version.id, result["path"],
+                    hf_repo,
+                    version.id,
+                    result["path"],
                 )
         else:
             logger.warning("HF model download failed: repo=%s error=%s", hf_repo, result.get("error", "unknown"))
@@ -519,6 +552,7 @@ async def _fetch_hf_model_info(repo_id: str) -> dict:
 
 
 # -- Dynamic path routes AFTER all static paths --
+
 
 @router.get("/models/{model_id}")
 async def get_model(model_id: str, session: SessionDep, request: Request):
@@ -604,7 +638,11 @@ async def deprecate_model(model_id: str, session: SessionDep, request: Request):
 
 @router.delete("/models/{model_id}")
 async def delete_model(
-    model_id: str, session: SessionDep, store: StoreDep, request: Request, cache: CacheDep,
+    model_id: str,
+    session: SessionDep,
+    store: StoreDep,
+    request: Request,
+    cache: CacheDep,
 ):
     m = await crud.get_model(session, model_id)
     if not m:
@@ -621,6 +659,7 @@ async def delete_model(
     await crud.delete_model(session, model_id)
     try:
         from .webhooks import dispatch_webhook_event
+
         await dispatch_webhook_event("model.deleted", {"id": model_id, "name": m.name}, tenant_id=tenant_id)
     except Exception:
         logger.exception("Webhook dispatch failed for model.deleted")

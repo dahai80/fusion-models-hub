@@ -64,6 +64,7 @@ class SyncPullRequest(BaseModel):
 
 def _validate_sync_url(url_str: str) -> None:
     from ..ssrf import validate_external_url
+
     validate_external_url(url_str)
 
 
@@ -83,14 +84,19 @@ async def push_to_remote(body: SyncPushRequest, session: SessionDep, settings: S
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
                     f"{body.target_url}/api/v1/system/import",
-                    json={"models": [{
-                        "id": m.id, "name": m.name,
-                        "description": m.description,
-                        "model_type": m.model_type.value,
-                        "architecture": m.architecture,
-                        "params_size": m.params_size,
-                        "hf_repo": m.hf_repo,
-                    }]},
+                    json={
+                        "models": [
+                            {
+                                "id": m.id,
+                                "name": m.name,
+                                "description": m.description,
+                                "model_type": m.model_type.value,
+                                "architecture": m.architecture,
+                                "params_size": m.params_size,
+                                "hf_repo": m.hf_repo,
+                            }
+                        ]
+                    },
                 )
             pushed.append({"version_id": vid, "status": "pushed", "remote_status": resp.status_code})
             logger.info("Pushed version %s to %s", vid, body.target_url)
@@ -116,6 +122,7 @@ async def pull_from_remote(body: SyncPullRequest, session: SessionDep, settings:
         return {"status": "already_exists", "model_id": existing.id}
 
     from ...db.models import ModelType
+
     try:
         mt = ModelType(remote_model.get("model_type", "llm"))
     except ValueError:

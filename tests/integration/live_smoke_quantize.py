@@ -9,6 +9,7 @@ Cleans the produced output dir. Run with real MLX up.
 
 Usage: python tests/integration/live_smoke_quantize.py
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,12 +25,14 @@ SOURCE_MODEL = os.path.join(MLX_MODELS, "mlx-community-Llama-3.2-1B-Instruct-4bi
 
 def _mlx_key() -> str:
     import json
+
     with open(os.path.expanduser("~/.fusion-mlx/settings.json")) as f:
         return json.load(f).get("auth", {}).get("api_key", "")
 
 
 def cleanup(out_path: str):
     import shutil
+
     if out_path and os.path.exists(out_path):
         shutil.rmtree(out_path, ignore_errors=True)
         log.info("[cleanup] removed %s", out_path)
@@ -57,6 +60,7 @@ async def run() -> bool:
 
 def main() -> int:
     import asyncio
+
     ok = asyncio.run(run())
     log.info("RESULT quantize_live=%s", ok)
     return 0 if ok else 1

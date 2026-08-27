@@ -29,6 +29,7 @@ def list_local(
         if p:
             try:
                 from pathlib import Path
+
                 size_info = f" ({Path(p).stat().st_size / 1e9:.1f} GB)"
             except Exception:
                 pass

@@ -22,11 +22,7 @@ def _get_engine(settings: SettingsDep) -> RecommendEngine:
     # E-E10: invalidate on mlx_url OR mlx_internal_api_key drift, not just mlx_url.
     # On rebuild, drop the old engine's embedded HardwareDetector 5-min cache so a
     # hot-reload-swapped MLX URL does not keep serving stale hardware.
-    if (
-        _engine is None
-        or _engine.mlx_url != settings.mlx_url
-        or _engine.api_key != settings.mlx_internal_api_key
-    ):
+    if _engine is None or _engine.mlx_url != settings.mlx_url or _engine.api_key != settings.mlx_internal_api_key:
         if _engine is not None:
             _engine.invalidate_cache()
         _engine = RecommendEngine(settings.mlx_url, api_key=settings.mlx_internal_api_key)
@@ -92,6 +88,7 @@ def _parse_params_b(size: str | None) -> float:
 async def _fetch_models_from_db(session, request: RecommendRequest) -> list[dict]:
     try:
         from ...db.crud import list_models
+
         result, _ = await list_models(session, page_size=200)
         # E-E3: previously hardcoded params_b:0, task:"llm", download_count:0
         # for every model — so the RecommendEngine's params filter (engine.py

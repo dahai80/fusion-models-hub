@@ -48,8 +48,11 @@ async def create_evaluation(body: EvaluationCreate, session: SessionDep, request
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     e = await crud.create_evaluation(
-        session, model_id=body.model_id, benchmark_name=body.benchmark_name,
-        tenant_id=tenant_id, version_id=body.version_id,
+        session,
+        model_id=body.model_id,
+        benchmark_name=body.benchmark_name,
+        tenant_id=tenant_id,
+        version_id=body.version_id,
     )
     return _eval_to_dict(e)
 
@@ -65,9 +68,13 @@ async def list_evaluations(
     page_size: int = 20,
 ):
     evals, total = await crud.list_evaluations(
-        session, model_id=model_id, version_id=version_id,
-        benchmark_name=benchmark_name, status=status,
-        page=page, page_size=page_size,
+        session,
+        model_id=model_id,
+        version_id=version_id,
+        benchmark_name=benchmark_name,
+        status=status,
+        page=page,
+        page_size=page_size,
     )
     return {
         "items": [_eval_to_dict(e) for e in evals],
@@ -86,8 +93,11 @@ async def compare_benchmarks(
     if not model_id or not benchmark_name:
         raise HTTPException(status_code=400, detail="model_id and benchmark_name are required")
     evals, _ = await crud.list_evaluations(
-        session, model_id=model_id, benchmark_name=benchmark_name,
-        status=EvaluationStatus.COMPLETED.value, page_size=100,
+        session,
+        model_id=model_id,
+        benchmark_name=benchmark_name,
+        status=EvaluationStatus.COMPLETED.value,
+        page_size=100,
     )
     if not evals:
         raise HTTPException(status_code=404, detail="No completed evaluations found")

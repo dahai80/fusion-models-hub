@@ -26,7 +26,9 @@ def _favorite_to_dict(f) -> dict:
 
 @router.post("/{model_id}/favorites", status_code=201)
 async def add_favorite(
-    model_id: str, session: SessionDep, request: Request,
+    model_id: str,
+    session: SessionDep,
+    request: Request,
 ):
     m = await crud.get_model(session, model_id)
     if not m:
@@ -41,14 +43,19 @@ async def add_favorite(
 
 @router.get("/{model_id}/favorites")
 async def list_favorites(
-    model_id: str, session: SessionDep,
-    page: int = 1, page_size: int = 20,
+    model_id: str,
+    session: SessionDep,
+    page: int = 1,
+    page_size: int = 20,
 ):
     m = await crud.get_model(session, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     favs, total = await crud.list_model_favorites(
-        session, model_id=model_id, page=page, page_size=page_size,
+        session,
+        model_id=model_id,
+        page=page,
+        page_size=page_size,
     )
     return {
         "items": [_favorite_to_dict(f) for f in favs],
@@ -60,12 +67,17 @@ async def list_favorites(
 
 @router.get("/favorites/me")
 async def list_my_favorites(
-    session: SessionDep, request: Request,
-    page: int = 1, page_size: int = 20,
+    session: SessionDep,
+    request: Request,
+    page: int = 1,
+    page_size: int = 20,
 ):
     user_id = getattr(request.state, "tenant_id", "") or ""
     favs, total = await crud.list_model_favorites(
-        session, user_id=user_id, page=page, page_size=page_size,
+        session,
+        user_id=user_id,
+        page=page,
+        page_size=page_size,
     )
     return {
         "items": [_favorite_to_dict(f) for f in favs],

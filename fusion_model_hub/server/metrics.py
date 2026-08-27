@@ -89,6 +89,7 @@ async def metrics_middleware(request: Request, call_next) -> Response:
 
 async def update_resource_metrics(session) -> None:
     from ..db import crud
+
     try:
         _, model_count = await crud.list_models(session, page_size=1)
         MODELS_TOTAL.set(model_count)

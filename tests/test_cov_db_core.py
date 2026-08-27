@@ -32,6 +32,7 @@ def app(settings):
 @pytest.fixture
 async def client(app, settings):
     from fusion_model_hub.server.auth import set_auth_enabled
+
     set_auth_enabled(False)
     engine = get_engine(settings.db_url)
     await init_db(engine)
@@ -58,6 +59,7 @@ class TestDatabaseHelpers:
         engine = get_engine(f"sqlite+aiosqlite:///{db_path}")
         async with engine.connect() as conn:
             from sqlalchemy import text
+
             result = await conn.execute(text("PRAGMA journal_mode"))
             mode = result.scalar()
         assert mode in ("wal", "WAL", "memory", "delete")
@@ -67,6 +69,7 @@ class TestDatabaseHelpers:
         bad = MagicMock()
         bad.dispose = AsyncMock(side_effect=RuntimeError("boom"))
         from fusion_model_hub.db import database as dbmod
+
         dbmod._engines.append(bad)
         await dispose_all_engines()
 
@@ -108,7 +111,9 @@ class TestDatabaseHelpers:
     async def test_get_engine_server_db_pool_kwargs(self):
         pytest.importorskip("asyncpg", reason="asyncpg not installed (PG-only dep)")
         engine = get_engine(
-            "postgresql+asyncpg://u:p@nonhost:5432/db", pool_size=5, max_overflow=3,
+            "postgresql+asyncpg://u:p@nonhost:5432/db",
+            pool_size=5,
+            max_overflow=3,
         )
         assert engine is not None
         await engine.dispose()
@@ -122,6 +127,7 @@ class TestDatabaseHelpers:
 class TestSsrfValidation:
     def _v(self, url, **kw):
         from fusion_model_hub.server.ssrf import validate_external_url
+
         validate_external_url(url, **kw)
 
     def test_allows_http_https(self):
@@ -131,27 +137,35 @@ class TestSsrfValidation:
 
     def test_rejects_non_http_schemes(self):
         from fastapi import HTTPException
+
         for u in ("file:///etc/passwd", "ftp://example.com", "gopher://x"):
             with pytest.raises(HTTPException):
                 self._v(u)
 
     def test_rejects_localhost(self):
         from fastapi import HTTPException
+
         for u in ("http://localhost", "http://127.0.0.1", "http://[::1]"):
             with pytest.raises(HTTPException):
                 self._v(u)
 
     def test_rejects_internal_cidr(self):
         from fastapi import HTTPException
+
         for u in (
-            "http://10.0.0.1", "http://172.16.0.1", "http://172.31.0.1",
-            "http://192.168.1.1", "http://169.254.169.254", "http://0.0.0.0",
+            "http://10.0.0.1",
+            "http://172.16.0.1",
+            "http://172.31.0.1",
+            "http://192.168.1.1",
+            "http://169.254.169.254",
+            "http://0.0.0.0",
         ):
             with pytest.raises(HTTPException):
                 self._v(u)
 
     def test_rejects_numeric_ip_encoding(self):
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException):
             self._v("http://2130706433")
         with pytest.raises(HTTPException):
@@ -162,11 +176,13 @@ class TestSsrfValidation:
 
     def test_rejects_missing_hostname(self):
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException):
             self._v("http://")
 
     def test_https_only_flag(self):
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException):
             self._v("http://example.com", allow_https_only=True)
         with patch("fusion_model_hub.server.ssrf.socket.getaddrinfo", return_value=[]):
@@ -174,6 +190,7 @@ class TestSsrfValidation:
 
     def test_dns_rebinding_internal_resolution_rejected(self):
         from fastapi import HTTPException
+
         fake_info = [("AF_INET", "STREAM", "TCP", "", ("10.0.0.5", 0))]
         with patch("fusion_model_hub.server.ssrf.socket.getaddrinfo", return_value=fake_info):
             with pytest.raises(HTTPException):
@@ -181,6 +198,7 @@ class TestSsrfValidation:
 
     def test_unresolvable_hostname_passes(self):
         import socket
+
         with patch("fusion_model_hub.server.ssrf.socket.getaddrinfo", side_effect=socket.gaierror):
             self._v("http://typo-host-not-real.com")
 
@@ -193,6 +211,7 @@ class TestSsrfValidation:
 class TestLocalStore:
     def _store(self, tmp_path):
         from fusion_model_hub.storage.local_store import LocalStore
+
         return LocalStore(data_dir=str(tmp_path / "store"))
 
     async def test_write_chunk_and_assemble(self, tmp_path):
@@ -203,11 +222,15 @@ class TestLocalStore:
         target_dir = store.models_dir / "m1" / "v1"
         target_dir.mkdir(parents=True, exist_ok=True)
         path, file_hash, size = await store.assemble_chunks(
-            upload_id, target_dir, "model.bin", 2,
+            upload_id,
+            target_dir,
+            "model.bin",
+            2,
         )
         assert size == 8
         assert path.exists()
         import hashlib
+
         assert file_hash == hashlib.sha256(b"AAAABBBB").hexdigest()
 
     async def test_assemble_missing_chunk_raises(self, tmp_path):
@@ -305,8 +328,11 @@ class TestLocalStore:
 def _hw_gpu_data():
     return {
         "gpu": {
-            "name": "Apple M2 Max", "vendor": "Apple", "vram_bytes": 32_000_000_000,
-            "memory_bandwidth_gbps": 400, "shared_memory": True,
+            "name": "Apple M2 Max",
+            "vendor": "Apple",
+            "vram_bytes": 32_000_000_000,
+            "memory_bandwidth_gbps": 400,
+            "shared_memory": True,
         },
         "cpu": {"name": "Apple M2 Max", "cores": 12},
         "ram": {"total_bytes": 32_000_000_000, "total_gb": 32.0},
@@ -318,6 +344,7 @@ def _hw_gpu_data():
 class TestHardwareDetector:
     async def test_detect_returns_profile(self):
         from fusion_model_hub.hardware.detector import HardwareDetector
+
         det = HardwareDetector(mlx_url="http://mlx.test:11434")
         mock = MagicMock()
         mock.status_code = 200
@@ -332,12 +359,15 @@ class TestHardwareDetector:
         assert profile is not None
         assert profile.gpu is not None
         from fusion_model_hub.hardware.types import ChipGeneration
+
         assert profile.gpu.chip_generation == ChipGeneration.M2_MAX
 
     async def test_detect_mlx_error_returns_fallback(self):
         from fusion_model_hub.hardware.detector import HardwareDetector
+
         det = HardwareDetector(mlx_url="http://mlx.test:11434")
         import httpx as _httpx
+
         ctx = AsyncMock()
         ctx.get = AsyncMock(side_effect=_httpx.ConnectError("refused"))
         ctx.__aenter__ = AsyncMock(return_value=ctx)
@@ -350,6 +380,7 @@ class TestHardwareDetector:
 
     async def test_detect_uses_cache_on_second_call(self):
         from fusion_model_hub.hardware.detector import HardwareDetector
+
         det = HardwareDetector(mlx_url="http://mlx.test:11434")
         mock = MagicMock()
         mock.status_code = 200
@@ -367,6 +398,7 @@ class TestHardwareDetector:
 
     def test_invalidate_cache(self):
         from fusion_model_hub.hardware.detector import HardwareDetector
+
         det = HardwareDetector(mlx_url="http://mlx.test:11434")
         det._cache = "stale"
         det._cache_time = 999
@@ -381,9 +413,15 @@ class TestHardwareDetector:
 
 def _fake_hw():
     from fusion_model_hub.hardware.types import CPUProfile, HardwareProfile
+
     return HardwareProfile(
-        gpu=None, cpu=CPUProfile(name="x", cores=8),
-        ram_bytes=0, ram_gb=32.0, disk_free_bytes=0, disk_free_gb=100.0, os_name="macos",
+        gpu=None,
+        cpu=CPUProfile(name="x", cores=8),
+        ram_bytes=0,
+        ram_gb=32.0,
+        disk_free_bytes=0,
+        disk_free_gb=100.0,
+        os_name="macos",
     )
 
 
@@ -392,13 +430,19 @@ class TestRecommendEngine:
         return {
             "results": [
                 {
-                    "model_id": "m1", "can_run": can_run, "fit_type": "full",
-                    "vram_required_gb": 4.0, "vram_available_gb": 32.0,
+                    "model_id": "m1",
+                    "can_run": can_run,
+                    "fit_type": "full",
+                    "vram_required_gb": 4.0,
+                    "vram_available_gb": 32.0,
                     "estimated_tok_per_sec": 120.0,
                 },
                 {
-                    "model_id": "m2", "can_run": False, "fit_type": "none",
-                    "vram_required_gb": 80.0, "vram_available_gb": 32.0,
+                    "model_id": "m2",
+                    "can_run": False,
+                    "fit_type": "none",
+                    "vram_required_gb": 80.0,
+                    "vram_available_gb": 32.0,
                     "estimated_tok_per_sec": 0.0,
                 },
             ]
@@ -418,6 +462,7 @@ class TestRecommendEngine:
     async def test_recommend_ranks_runnable_first(self):
         from fusion_model_hub.recommend.engine import RecommendEngine
         from fusion_model_hub.recommend.types import RecommendRequest
+
         eng = RecommendEngine(mlx_url="http://mlx.test:11434")
         with patch.object(eng._hw_detector, "detect", AsyncMock(return_value=_fake_hw())):
             with patch("httpx.AsyncClient", return_value=self._client_ctx(self._mlx_response())):
@@ -435,6 +480,7 @@ class TestRecommendEngine:
     async def test_recommend_filters_by_task(self):
         from fusion_model_hub.recommend.engine import RecommendEngine
         from fusion_model_hub.recommend.types import RecommendRequest
+
         eng = RecommendEngine(mlx_url="http://mlx.test:11434")
         with patch.object(eng._hw_detector, "detect", AsyncMock(return_value=_fake_hw())):
             with patch("httpx.AsyncClient", return_value=self._client_ctx({"results": []})):
@@ -451,6 +497,7 @@ class TestRecommendEngine:
     async def test_recommend_mlx_error_falls_back_single(self):
         from fusion_model_hub.recommend.engine import RecommendEngine
         from fusion_model_hub.recommend.types import RecommendRequest
+
         eng = RecommendEngine(mlx_url="http://mlx.test:11434")
         with patch.object(eng._hw_detector, "detect", AsyncMock(return_value=_fake_hw())):
             ctx = AsyncMock()
@@ -474,21 +521,27 @@ class TestRecommendEngine:
 class TestModelConverter:
     async def test_convert_missing_source_returns_failed(self):
         from fusion_model_hub.convert.converter import ModelConverter
+
         conv = ModelConverter(mlx_url="http://mlx.test:11434")
         result = await conv.convert(source_path="/nonexistent/path/model.safetensors")
         assert result["status"] == "failed"
 
     async def test_convert_success(self, tmp_path):
         from fusion_model_hub.convert.converter import ModelConverter
+
         conv = ModelConverter(mlx_url="http://mlx.test:11434")
         src = tmp_path / "model.safetensors"
         src.write_bytes(b"weights")
         mock = MagicMock()
         mock.status_code = 200
-        mock.json = MagicMock(return_value={
-            "output_path": str(tmp_path / "out.mlx"),
-            "original_size_gb": 1.0, "converted_size_gb": 0.5, "compression_ratio": 2.0,
-        })
+        mock.json = MagicMock(
+            return_value={
+                "output_path": str(tmp_path / "out.mlx"),
+                "original_size_gb": 1.0,
+                "converted_size_gb": 0.5,
+                "compression_ratio": 2.0,
+            }
+        )
         mock.raise_for_status = MagicMock()
         ctx = AsyncMock()
         ctx.post = AsyncMock(return_value=mock)
@@ -501,6 +554,7 @@ class TestModelConverter:
 
     async def test_convert_from_hf(self):
         from fusion_model_hub.convert.converter import ModelConverter
+
         conv = ModelConverter(mlx_url="http://mlx.test:11434")
         mock = MagicMock()
         mock.status_code = 200
@@ -516,10 +570,12 @@ class TestModelConverter:
 
     async def test_convert_http_error_returns_failed(self, tmp_path):
         from fusion_model_hub.convert.converter import ModelConverter
+
         conv = ModelConverter(mlx_url="http://mlx.test:11434")
         src = tmp_path / "model.gguf"
         src.write_bytes(b"x")
         import httpx as _httpx
+
         mock = MagicMock()
         mock.status_code = 500
         mock.text = "err"
@@ -534,20 +590,26 @@ class TestModelConverter:
 
     async def test_quantize_missing_file_returns_failed(self):
         from fusion_model_hub.convert.converter import ModelConverter
+
         conv = ModelConverter(mlx_url="http://mlx.test:11434")
         result = await conv.quantize("/nonexistent.mlx", bits=4)
         assert result["status"] == "failed"
 
     async def test_quantize_success(self, tmp_path):
         from fusion_model_hub.convert.converter import ModelConverter
+
         conv = ModelConverter(mlx_url="http://mlx.test:11434")
         src = tmp_path / "model.mlx"
         src.write_bytes(b"mlx-weights")
         mock = MagicMock()
         mock.status_code = 200
-        mock.json = MagicMock(return_value={
-            "output_path": str(src), "file_hash": "abc", "file_size": 10,
-        })
+        mock.json = MagicMock(
+            return_value={
+                "output_path": str(src),
+                "file_hash": "abc",
+                "file_size": 10,
+            }
+        )
         mock.raise_for_status = MagicMock()
         ctx = AsyncMock()
         ctx.post = AsyncMock(return_value=mock)
@@ -560,6 +622,7 @@ class TestModelConverter:
 
     def test_detect_format(self):
         from fusion_model_hub.convert.converter import ModelConverter
+
         assert ModelConverter._detect_format("m.safetensors") == "huggingface"
         assert ModelConverter._detect_format("m.gguf") == "gguf"
         assert ModelConverter._detect_format("", hf_repo="Qwen/x") == "huggingface"
@@ -575,16 +638,20 @@ def _stream_cm(stream_obj):
     class _Cm:
         def __init__(self, s):
             self.s = s
+
         async def __aenter__(self):
             return self.s
+
         async def __aexit__(self, *a):
             return False
+
     return _Cm(stream_obj)
 
 
 class TestModelDownloader:
     async def test_download_writes_file(self, tmp_path):
         from fusion_model_hub.repo.downloader import ModelDownloader
+
         dl = ModelDownloader(storage_dir=str(tmp_path / "models"))
         stream = AsyncMock()
         stream.status_code = 200
@@ -593,6 +660,7 @@ class TestModelDownloader:
         async def _aiter():
             yield b"chunk1"
             yield b"chunk2"
+
         stream.aiter_bytes = _aiter
         stream.raise_for_status = MagicMock()
 
@@ -608,6 +676,7 @@ class TestModelDownloader:
 
     async def test_download_resume_sends_range(self, tmp_path):
         from fusion_model_hub.repo.downloader import ModelDownloader
+
         dl = ModelDownloader(storage_dir=str(tmp_path / "models"))
         (tmp_path / "models" / "model-r.mlx.part").write_bytes(b"already-here")
         stream = AsyncMock()
@@ -616,6 +685,7 @@ class TestModelDownloader:
 
         async def _aiter():
             yield b"-more"
+
         stream.aiter_bytes = _aiter
         stream.raise_for_status = MagicMock()
 
@@ -624,8 +694,10 @@ class TestModelDownloader:
         class _Ctx:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *a):
                 return False
+
             def stream(self, method, url, **kw):
                 captured_headers.update(kw.get("headers", {}))
                 return _stream_cm(stream)
@@ -638,6 +710,7 @@ class TestModelDownloader:
 
     async def test_download_hash_mismatch_deletes_file(self, tmp_path):
         from fusion_model_hub.repo.downloader import ModelDownloader
+
         dl = ModelDownloader(storage_dir=str(tmp_path / "models"))
         stream = AsyncMock()
         stream.status_code = 200
@@ -645,6 +718,7 @@ class TestModelDownloader:
 
         async def _aiter():
             yield b"hello"
+
         stream.aiter_bytes = _aiter
         stream.raise_for_status = MagicMock()
 
@@ -654,7 +728,9 @@ class TestModelDownloader:
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("httpx.AsyncClient", return_value=ctx):
             result = await dl.download(
-                "http://example.com/m.mlx", "model-m", expected_hash="deadbeef" * 8,
+                "http://example.com/m.mlx",
+                "model-m",
+                expected_hash="deadbeef" * 8,
             )
         assert result["status"] == "hash_mismatch"
         assert result["hash_verified"] is False
@@ -662,8 +738,10 @@ class TestModelDownloader:
 
     async def test_download_network_error_returns_failed(self, tmp_path):
         from fusion_model_hub.repo.downloader import ModelDownloader
+
         dl = ModelDownloader(storage_dir=str(tmp_path / "models"))
         import httpx as _httpx
+
         ctx = MagicMock()
         ctx.stream = MagicMock(side_effect=_httpx.ConnectError("refused"))
         ctx.__aenter__ = AsyncMock(return_value=ctx)
@@ -674,6 +752,7 @@ class TestModelDownloader:
 
     def test_get_storage_info(self, tmp_path):
         from fusion_model_hub.repo.downloader import ModelDownloader
+
         dl = ModelDownloader(storage_dir=str(tmp_path / "models"))
         (tmp_path / "models" / "a.mlx").write_bytes(b"x" * 100)
         info = dl.get_storage_info()
@@ -688,11 +767,14 @@ class TestModelDownloader:
 class TestModelscopeSearch:
     async def test_search_returns_results(self):
         from fusion_model_hub.repo.modelscope_search import search_modelscope
+
         mock = MagicMock()
         mock.status_code = 200
-        mock.json = MagicMock(return_value={
-            "Data": {"Models": [{"Name": "test-model", "Id": "m1", "Task": "llm"}], "TotalCount": 1},
-        })
+        mock.json = MagicMock(
+            return_value={
+                "Data": {"Models": [{"Name": "test-model", "Id": "m1", "Task": "llm"}], "TotalCount": 1},
+            }
+        )
         mock.raise_for_status = MagicMock()
         ctx = AsyncMock()
         ctx.get = AsyncMock(return_value=mock)
@@ -708,6 +790,7 @@ class TestModelscopeSearch:
         import httpx as _httpx
 
         from fusion_model_hub.repo.modelscope_search import search_modelscope
+
         ctx = AsyncMock()
         ctx.get = AsyncMock(side_effect=_httpx.ConnectError("net err"))
         ctx.__aenter__ = AsyncMock(return_value=ctx)
@@ -721,6 +804,7 @@ class TestModelscopeSearch:
         import httpx as _httpx
 
         from fusion_model_hub.repo.modelscope_search import search_modelscope
+
         mock = MagicMock()
         mock.status_code = 500
         mock.text = "err"
@@ -748,6 +832,7 @@ class TestCrudEdgeFuncs:
 
     async def test_create_and_get_security_scan(self):
         from fusion_model_hub.db import crud
+
         sf, engine = await self._session()
         async with sf() as session:
             m = await crud.create_model(session, name="sec-model")
@@ -759,6 +844,7 @@ class TestCrudEdgeFuncs:
 
     async def test_create_watermark(self):
         from fusion_model_hub.db import crud
+
         sf, engine = await self._session()
         async with sf() as session:
             m = await crud.create_model(session, name="wm-model")
@@ -768,18 +854,23 @@ class TestCrudEdgeFuncs:
 
     async def test_create_distributed_task(self):
         from fusion_model_hub.db import crud
+
         sf, engine = await self._session()
         async with sf() as session:
             m = await crud.create_model(session, name="dist-model")
             v = await crud.create_version(session, model_id=m.id, version="1.0")
             dt = await crud.create_distributed_task(
-                session, model_id=m.id, version_id=v.id, target_nodes='["n1"]',
+                session,
+                model_id=m.id,
+                version_id=v.id,
+                target_nodes='["n1"]',
             )
             assert dt.id
         await engine.dispose()
 
     async def test_list_models_pagination_and_filter(self):
         from fusion_model_hub.db import crud
+
         sf, engine = await self._session()
         async with sf() as session:
             for i in range(5):
@@ -795,6 +886,7 @@ class TestCrudEdgeFuncs:
 
     async def test_update_model_partial_whitelist(self):
         from fusion_model_hub.db import crud
+
         sf, engine = await self._session()
         async with sf() as session:
             m = await crud.create_model(session, name="upd-model")
@@ -805,12 +897,16 @@ class TestCrudEdgeFuncs:
 
     async def test_create_quantize_task(self):
         from fusion_model_hub.db import crud
+
         sf, engine = await self._session()
         async with sf() as session:
             m = await crud.create_model(session, name="qt-model")
             v = await crud.create_version(session, model_id=m.id, version="1.0")
             t = await crud.create_quantize_task(
-                session, source_version_id=v.id, target_format="mlx", quant_bits=4,
+                session,
+                source_version_id=v.id,
+                target_format="mlx",
+                quant_bits=4,
             )
             assert t.id
             assert t.quant_bits == 4
@@ -838,9 +934,13 @@ class TestModelsRoutersDeep:
 
     async def test_batch_tag_models(self, client):
         m1 = await self._seed(client, "bt-1")
-        r = await client.post("/api/v1/models/batch/tag", json={
-            "model_ids": [m1["id"]], "tags": [{"key": "k", "value": "v"}],
-        })
+        r = await client.post(
+            "/api/v1/models/batch/tag",
+            json={
+                "model_ids": [m1["id"]],
+                "tags": [{"key": "k", "value": "v"}],
+            },
+        )
         assert r.status_code == 200
 
     async def test_compare_models(self, client):
@@ -863,38 +963,58 @@ class TestModelsRoutersDeep:
     async def test_sync_models_dry_run(self, client):
         mock = MagicMock()
         mock.status_code = 200
-        mock.json = MagicMock(return_value={"items": [
-            {"name": "synced-1", "model_type": "llm", "description": "d"},
-        ]})
+        mock.json = MagicMock(
+            return_value={
+                "items": [
+                    {"name": "synced-1", "model_type": "llm", "description": "d"},
+                ]
+            }
+        )
         mock.raise_for_status = MagicMock()
         ctx = AsyncMock()
         ctx.get = AsyncMock(return_value=mock)
         ctx.__aenter__ = AsyncMock(return_value=ctx)
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("httpx.AsyncClient", return_value=ctx):
-            r = await client.post("/api/v1/models/sync", json={
-                "source_url": "https://example.com", "dry_run": True, "source": "huggingface",
-            })
+            r = await client.post(
+                "/api/v1/models/sync",
+                json={
+                    "source_url": "https://example.com",
+                    "dry_run": True,
+                    "source": "huggingface",
+                },
+            )
         assert r.status_code == 200
         assert r.json()["dry_run"] is True
         assert r.json()["new_count"] == 1
 
     async def test_sync_models_ssrf_rejected(self, client):
-        r = await client.post("/api/v1/models/sync", json={
-            "source_url": "http://127.0.0.1", "dry_run": True, "source": "huggingface",
-        })
+        r = await client.post(
+            "/api/v1/models/sync",
+            json={
+                "source_url": "http://127.0.0.1",
+                "dry_run": True,
+                "source": "huggingface",
+            },
+        )
         assert r.status_code == 400
 
     async def test_sync_models_fetch_error_502(self, client):
         import httpx as _httpx
+
         ctx = AsyncMock()
         ctx.get = AsyncMock(side_effect=_httpx.HTTPError("net err"))
         ctx.__aenter__ = AsyncMock(return_value=ctx)
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("httpx.AsyncClient", return_value=ctx):
-            r = await client.post("/api/v1/models/sync", json={
-                "source_url": "https://example.com", "dry_run": False, "source": "huggingface",
-            })
+            r = await client.post(
+                "/api/v1/models/sync",
+                json={
+                    "source_url": "https://example.com",
+                    "dry_run": False,
+                    "source": "huggingface",
+                },
+            )
         assert r.status_code == 502
 
     async def test_publish_model(self, client):
@@ -916,23 +1036,29 @@ class TestModelsRoutersDeep:
     async def test_import_hf(self, client):
         mock = MagicMock()
         mock.status_code = 200
-        mock.json = MagicMock(return_value={
-            "pipeline_tag": "text-generation",
-            "description": "test model",
-            "config": {"architectures": ["Qwen2ForCausalLM"]},
-            "safetensors": {"total": 7000000000},
-            "cardData": {"license": "apache-2.0", "language": ["en"]},
-            "author": "Qwen",
-        })
+        mock.json = MagicMock(
+            return_value={
+                "pipeline_tag": "text-generation",
+                "description": "test model",
+                "config": {"architectures": ["Qwen2ForCausalLM"]},
+                "safetensors": {"total": 7000000000},
+                "cardData": {"license": "apache-2.0", "language": ["en"]},
+                "author": "Qwen",
+            }
+        )
         mock.raise_for_status = MagicMock()
         ctx = AsyncMock()
         ctx.get = AsyncMock(return_value=mock)
         ctx.__aenter__ = AsyncMock(return_value=ctx)
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("httpx.AsyncClient", return_value=ctx):
-            r = await client.post("/api/v1/models/import/hf", json={
-                "hf_repo": "Qwen/Qwen2.5-7B", "download": False,
-            })
+            r = await client.post(
+                "/api/v1/models/import/hf",
+                json={
+                    "hf_repo": "Qwen/Qwen2.5-7B",
+                    "download": False,
+                },
+            )
         assert r.status_code == 201
         assert r.json()["name"] == "qwen2.5-7b"
 
@@ -951,9 +1077,12 @@ class TestRecommendRouter:
         from fusion_model_hub.recommend.types import (
             RecommendResponse,
         )
+
         if fake_resp is None:
             fake_resp = RecommendResponse(
-                recommendations=[], hardware_summary={"chip": "M2"}, total_evaluated=0,
+                recommendations=[],
+                hardware_summary={"chip": "M2"},
+                total_evaluated=0,
             )
         return MagicMock(recommend=AsyncMock(return_value=fake_resp))
 
@@ -962,14 +1091,28 @@ class TestRecommendRouter:
             ModelRecommendation,
             RecommendResponse,
         )
+
         fake_resp = RecommendResponse(
-            recommendations=[ModelRecommendation(
-                model_id="m1", name="x", task="llm", params_b=4, quant_type="Q4",
-                can_run=True, fit_type="full", vram_required_gb=4.0,
-                vram_available_gb=32.0, estimated_tok_per_sec=120.0,
-                rank_score=90.0, quality_score=80.0, speed_score=70.0,
-                hardware_score=95.0, popularity_score=50.0, reason="ok",
-            )],
+            recommendations=[
+                ModelRecommendation(
+                    model_id="m1",
+                    name="x",
+                    task="llm",
+                    params_b=4,
+                    quant_type="Q4",
+                    can_run=True,
+                    fit_type="full",
+                    vram_required_gb=4.0,
+                    vram_available_gb=32.0,
+                    estimated_tok_per_sec=120.0,
+                    rank_score=90.0,
+                    quality_score=80.0,
+                    speed_score=70.0,
+                    hardware_score=95.0,
+                    popularity_score=50.0,
+                    reason="ok",
+                )
+            ],
             hardware_summary={"chip": "M2", "vram_gb": 32.0, "ram_gb": 32.0},
             total_evaluated=1,
         )

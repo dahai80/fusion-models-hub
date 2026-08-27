@@ -682,6 +682,7 @@ async def verify_api_key(session: AsyncSession, raw_key: str) -> ApiKey | None:
         key_hash = cached
     else:
         import anyio
+
         key_hash = await anyio.to_thread.run_sync(_hash_key, raw_key)
         if len(_HASH_CACHE) >= _HASH_CACHE_MAX:
             for k in list(_HASH_CACHE.keys())[: _HASH_CACHE_MAX // 4]:
@@ -1398,7 +1399,11 @@ async def list_lora_merge_tasks(
 
 
 async def update_lora_merge_task(
-    session: AsyncSession, task_id: str, *, autocommit: bool = True, **fields,
+    session: AsyncSession,
+    task_id: str,
+    *,
+    autocommit: bool = True,
+    **fields,
 ) -> LoraMergeTask | None:
     result = await session.execute(select(LoraMergeTask).where(LoraMergeTask.id == task_id))
     task = result.scalar_one_or_none()

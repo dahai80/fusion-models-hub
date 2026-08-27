@@ -107,8 +107,12 @@ class _Hub:
         init_deps(self.settings, self.engine)
         app = create_app(self.settings)
         config = uvicorn.Config(
-            app, host="127.0.0.1", port=self.port,
-            log_level="warning", access_log=False, lifespan="on",
+            app,
+            host="127.0.0.1",
+            port=self.port,
+            log_level="warning",
+            access_log=False,
+            lifespan="on",
         )
         self.server = uvicorn.Server(config)
         # Run serve() in the background; should_exit stops it in teardown.
@@ -164,11 +168,14 @@ class TestMultiNodeCluster:
     async def test_register_and_list_node_cross_hub(self, two_hubs):
         hub_a, hub_b = two_hubs
         async with httpx.AsyncClient(base_url=hub_a.url, timeout=10.0) as a_client:
-            reg = await a_client.post("/api/v1/cluster/nodes", json={
-                "name": "hub-b",
-                "url": hub_b.url,
-                "capabilities": "inference,quantize",
-            })
+            reg = await a_client.post(
+                "/api/v1/cluster/nodes",
+                json={
+                    "name": "hub-b",
+                    "url": hub_b.url,
+                    "capabilities": "inference,quantize",
+                },
+            )
             assert reg.status_code == 201, reg.text
             node_id = reg.json()["id"]
 
@@ -197,24 +204,33 @@ class TestMultiNodeCluster:
         # the default mocked suite never exercises. COMPLETED needs MLX (Step2).
         hub_a, hub_b = two_hubs
         async with httpx.AsyncClient(base_url=hub_a.url, timeout=15.0) as a_client:
-            model = await a_client.post("/api/v1/models", json={
-                "name": "multi-node-model",
-                "model_type": "llm",
-            })
+            model = await a_client.post(
+                "/api/v1/models",
+                json={
+                    "name": "multi-node-model",
+                    "model_type": "llm",
+                },
+            )
             assert model.status_code == 201, model.text
             model_id = model.json()["id"]
 
-            reg = await a_client.post("/api/v1/cluster/nodes", json={
-                "name": "hub-b",
-                "url": hub_b.url,
-            })
+            reg = await a_client.post(
+                "/api/v1/cluster/nodes",
+                json={
+                    "name": "hub-b",
+                    "url": hub_b.url,
+                },
+            )
             assert reg.status_code == 201, reg.text
             node_id = reg.json()["id"]
 
-            submit = await a_client.post("/api/v1/cluster/distributed-tasks", json={
-                "model_id": model_id,
-                "target_nodes": [node_id],
-            })
+            submit = await a_client.post(
+                "/api/v1/cluster/distributed-tasks",
+                json={
+                    "model_id": model_id,
+                    "target_nodes": [node_id],
+                },
+            )
             assert submit.status_code == 202, submit.text
             task_id = submit.json()["task_id"]
 
