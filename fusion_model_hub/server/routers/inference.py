@@ -50,7 +50,10 @@ def _compute_file_hash(file_path: str) -> str:
     return compute_sha256(file_path)
 
 
-async def _check_module_access(model_id: str, request) -> None:
+async def _check_module_access(model_id: str, request, model=None, session=None) -> None:
+    # #12: accept the already-fetched model + the request's session so a chat
+    # call does not open a SECOND session just to re-read the same row. When
+    # neither is supplied (legacy callers), fall back to a fresh session.
     module = request.headers.get("X-Fusion-Module", "")
     if not module:
         return
@@ -58,38 +61,48 @@ async def _check_module_access(model_id: str, request) -> None:
     if module not in _VALID_MODULES:
         return
     try:
-        from ..deps import get_session_factory
-
-        sf = get_session_factory()
-        async with sf() as session:
-            m = await crud.get_model(session, model_id)
-            if not m or not m.model_modules:
-                return
-            allowed = {x.strip() for x in m.model_modules.split(",") if x.strip()}
-            if allowed and module not in allowed:
-                raise HTTPException(status_code=403, detail=f"Module '{module}' not allowed for this model")
+        if model is None:
+            if session is None:
+                sf = get_session_factory()
+                async with sf() as s:
+                    model = await crud.get_model(s, model_id)
+            else:
+                model = await crud.get_model(session, model_id)
+        if not model or not model.model_modules:
+            return
+        allowed = {x.strip() for x in model.model_modules.split(",") if x.strip()}
+        if allowed and module not in allowed:
+            raise HTTPException(status_code=403, detail=f"Module '{module}' not allowed for this model")
     except HTTPException:
         raise
     except Exception:
         logger.warning("Module access check failed for model=%s", model_id, exc_info=True)
 
 
-async def _resolve_model_name_for_inference(model_id: str) -> tuple[str, str | None]:
+async def _resolve_model_name_for_inference(model_id: str, session=None) -> tuple[str, str | None]:
+    # #12: reuse the caller's session when given (chat/completions/embeddings
+    # already hold one) so gray-route resolution does not open a fresh session
+    # per inference call. Falls back to a new session for legacy callers.
     try:
-        from ..deps import get_session_factory
-
-        sf = get_session_factory()
-        async with sf() as session:
-            deployments = await crud.list_deployments(session, model_id=model_id, status="running")
-            for d in deployments:
-                if d.gray_enabled and d.gray_version_id and random.randint(1, 100) <= d.gray_traffic_ratio:
-                    gray_ver = await crud.get_version(session, d.gray_version_id)
-                    if gray_ver:
-                        m = await crud.get_model(session, model_id)
-                        model_name = m.hf_repo or m.name if m else model_id
-                        return model_name, d.gray_version_id
+        if session is None:
+            sf = get_session_factory()
+            async with sf() as session:
+                return await _resolve_gray_route(session, model_id)
+        return await _resolve_gray_route(session, model_id)
     except Exception:
         logger.warning("Gray route resolution failed for model=%s, using default", model_id, exc_info=True)
+    return "", None
+
+
+async def _resolve_gray_route(session, model_id: str) -> tuple[str, str | None]:
+    deployments = await crud.list_deployments(session, model_id=model_id, status="running")
+    for d in deployments:
+        if d.gray_enabled and d.gray_version_id and random.randint(1, 100) <= d.gray_traffic_ratio:
+            gray_ver = await crud.get_version(session, d.gray_version_id)
+            if gray_ver:
+                m = await crud.get_model(session, model_id)
+                model_name = m.hf_repo or m.name if m else model_id
+                return model_name, d.gray_version_id
     return "", None
 
 
@@ -231,6 +244,24 @@ async def _write_inference_audit(model_id: str, action_type: str, latency_ms: fl
             )
     except Exception:
         logger.warning("Failed to write inference audit log for model=%s", model_id, exc_info=True)
+
+
+# #12: strong refs for deferred audit tasks so GC does not cancel them mid-write.
+_pending_audit_tasks: set[asyncio.Task] = set()
+
+
+def _fire_inference_audit(model_id: str, action_type: str, latency_ms: float, request: Request) -> None:
+    # #12: defer the per-inference audit insert to a background task so the
+    # inference response is not blocked on a DB write (the 5th roundtrip on
+    # the hot path). Audit is non-critical telemetry; a failure only logs.
+    try:
+        task = asyncio.create_task(_write_inference_audit(model_id, action_type, latency_ms, request))
+        _pending_audit_tasks.add(task)
+        task.add_done_callback(_pending_audit_tasks.discard)
+    except RuntimeError:
+        # No running loop (e.g. sync test path) — fall back to direct await-less
+        # best effort: schedule on the loop is impossible, so just log+skip.
+        logger.debug("No event loop to defer inference audit for model=%s", model_id)
 
 
 class ServeRequest(BaseModel):
@@ -502,7 +533,6 @@ async def unpin_model(model_id: str, session: SessionDep, request: Request):
 
 @router.post("/inference/{model_id}/chat")
 async def chat_completion(model_id: str, body: dict, settings: SettingsDep, request: Request, session: SessionDep):
-    await _check_module_access(model_id, request)
     # P0-C: tenant isolation — a key scoped to tenant A must not run inference
     # against tenant B's model by id (cross-tenant read -> 404, no existence leak).
     # A served model always has a DB row (serve_model creates-then-loads), so the
@@ -511,21 +541,24 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
     m = await crud.get_model(session, model_id)
     if m:
         _check_model_read(m, request)
+    # #12: re-use the already-fetched m for the module ACL check (avoids a
+    # second get_model) and pass the request session to gray-route resolution
+    # (avoids a second session). Collapses ~3 extra roundtrips to zero.
+    await _check_module_access(model_id, request, model=m, session=session)
     info = _loaded_models.get(model_id)
     if not info:
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")
 
     model_name = info["model_name"]
-    _, gray_ver = await _resolve_model_name_for_inference(model_id)
+    _, gray_ver = await _resolve_model_name_for_inference(model_id, session=session)
     if gray_ver:
         try:
-            sf = __import__("fusion_model_hub.server.deps", fromlist=["get_session_factory"]).get_session_factory()
-            async with sf() as s:
-                gv = await crud.get_version(s, gray_ver)
-                if gv:
-                    gm = await crud.get_model(s, gv.model_id)
-                    if gm:
-                        model_name = gm.hf_repo or gm.name
+            # #12: reuse the request session instead of opening a third one.
+            gv = await crud.get_version(session, gray_ver)
+            if gv:
+                gm = await crud.get_model(session, gv.model_id)
+                if gm:
+                    model_name = gm.hf_repo or gm.name
         except Exception:
             logger.warning("Gray version model lookup failed for model=%s", model_id, exc_info=True)
 
@@ -552,7 +585,7 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
             request.headers.get("X-Fusion-Module", "").lower(),
             key_id=getattr(request.state, "api_key_id", ""),
         )
-        await _write_inference_audit(model_id, "chat", latency_ms, request)
+        _fire_inference_audit(model_id, "chat", latency_ms, request)
         return result
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
@@ -567,28 +600,26 @@ async def chat_completion(model_id: str, body: dict, settings: SettingsDep, requ
 
 @router.post("/inference/{model_id}/completions")
 async def text_completion(model_id: str, body: dict, settings: SettingsDep, request: Request, session: SessionDep):
-    await _check_module_access(model_id, request)
     # P0-C: tenant isolation on inference read (cross-tenant -> 404). A served
     # model always has a DB row, so a miss is only the test-injected loaded
     # shortcut; production rows are checked and isolation enforced.
     m = await crud.get_model(session, model_id)
     if m:
         _check_model_read(m, request)
+    await _check_module_access(model_id, request, model=m, session=session)
     info = _loaded_models.get(model_id)
     if not info:
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")
 
     model_name = info["model_name"]
-    _, gray_ver = await _resolve_model_name_for_inference(model_id)
+    _, gray_ver = await _resolve_model_name_for_inference(model_id, session=session)
     if gray_ver:
         try:
-            sf = __import__("fusion_model_hub.server.deps", fromlist=["get_session_factory"]).get_session_factory()
-            async with sf() as s:
-                gv = await crud.get_version(s, gray_ver)
-                if gv:
-                    gm = await crud.get_model(s, gv.model_id)
-                    if gm:
-                        model_name = gm.hf_repo or gm.name
+            gv = await crud.get_version(session, gray_ver)
+            if gv:
+                gm = await crud.get_model(session, gv.model_id)
+                if gm:
+                    model_name = gm.hf_repo or gm.name
         except Exception:
             logger.warning("Gray version model lookup failed for model=%s", model_id, exc_info=True)
 
@@ -611,7 +642,7 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
             request.headers.get("X-Fusion-Module", "").lower(),
             key_id=getattr(request.state, "api_key_id", ""),
         )
-        await _write_inference_audit(model_id, "completions", latency_ms, request)
+        _fire_inference_audit(model_id, "completions", latency_ms, request)
         return result
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
@@ -626,13 +657,13 @@ async def text_completion(model_id: str, body: dict, settings: SettingsDep, requ
 
 @router.post("/inference/{model_id}/embeddings")
 async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: Request, session: SessionDep):
-    await _check_module_access(model_id, request)
     # P0-C: tenant isolation on inference read (cross-tenant -> 404). A served
     # model always has a DB row, so a miss is only the test-injected loaded
     # shortcut; production rows are checked and isolation enforced.
     m = await crud.get_model(session, model_id)
     if m:
         _check_model_read(m, request)
+    await _check_module_access(model_id, request, model=m, session=session)
     info = _loaded_models.get(model_id)
     if not info:
         raise HTTPException(status_code=400, detail="Model not loaded — serve it first")
@@ -657,7 +688,7 @@ async def embeddings(model_id: str, body: dict, settings: SettingsDep, request: 
             request.headers.get("X-Fusion-Module", "").lower(),
             key_id=getattr(request.state, "api_key_id", ""),
         )
-        await _write_inference_audit(model_id, "embeddings", latency_ms, request)
+        _fire_inference_audit(model_id, "embeddings", latency_ms, request)
         return result
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Fusion-MLX server unavailable")
