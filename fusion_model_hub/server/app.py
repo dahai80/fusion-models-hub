@@ -67,6 +67,27 @@ async def _reconcile_orphaned_tasks() -> None:
             )
             failed += 1
         pending_tasks, _ = await list_quantize_tasks(session, status=TaskStatus.PENDING.value, page_size=200)
+        # #3: reconcile orphaned evaluations. A RUNNING eval drove a
+        # Fusion-Bench task whose state is opaque to the hub after a restart
+        # (the bench may have completed/failed/evicted it) — fail it so the
+        # operator sees it and resubmits. A PENDING eval never started its
+        # bench task, so it is safe to resume (re-submit).
+        from ..db.crud import list_evaluations, update_evaluation
+        from ..db.models import EvaluationStatus
+
+        for st, fail_msg in ((EvaluationStatus.RUNNING, "Evaluation orphaned by server restart"),):
+            orphan_evals, _ = await list_evaluations(session, status=st.value, page_size=200)
+            for e in orphan_evals:
+                await update_evaluation(
+                    session,
+                    e.id,
+                    status=EvaluationStatus.FAILED,
+                    error_message=fail_msg,
+                    completed_at=None,
+                )
+                failed += 1
+        pending_evals, _ = await list_evaluations(session, status=EvaluationStatus.PENDING.value, page_size=200)
+        await session.commit()
         # E-D2: LoRA merge tasks have no resume path (the MLX merge may have
         # partially fused weights — resuming risks a half-merged version). Fail
         # both RUNNING and PENDING lora merges orphaned by restart so they do
@@ -122,6 +143,24 @@ async def _reconcile_orphaned_tasks() -> None:
                 restarted += 1
         except Exception:
             logger.exception("Failed to restart pending task: id=%s", t.id)
+    # #3: resume PENDING evaluations orphaned by restart (safe — their bench
+    # task never started). pending_evals was collected inside the session
+    # block above; resume after the session closes so each resume owns its
+    # own session via the runner.
+    for e in pending_evals:
+        try:
+            from .eval_tasks import resume_evaluation
+
+            resumed = await resume_evaluation(
+                eval_id=e.id,
+                model_id=e.model_id,
+                version_id=e.version_id or "",
+                benchmark_name=e.benchmark_name,
+            )
+            if resumed:
+                restarted += 1
+        except Exception:
+            logger.exception("Failed to restart pending evaluation: id=%s", e.id)
     if failed or restarted:
         logger.warning("Startup task recovery: %d orphaned failed, %d pending resumed", failed, restarted)
 

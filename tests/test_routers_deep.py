@@ -25,6 +25,11 @@ def settings():
         data_dir="/tmp/fmh_test_deep",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
+        # #3: keep the eval runner off so existing eval CRUD tests (which POST
+        # /evaluations and assert status=="pending") are not raced by a
+        # background bench-submission task. The runner is exercised by its own
+        # dedicated test with a mocked Fusion-Bench.
+        eval_runner_enabled=False,
     )
 
 

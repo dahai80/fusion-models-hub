@@ -54,6 +54,18 @@ async def create_evaluation(body: EvaluationCreate, session: SessionDep, request
         tenant_id=tenant_id,
         version_id=body.version_id,
     )
+    # #3: spawn the async runner so the row leaves PENDING. The runner submits
+    # a Fusion-Bench task, polls it to completion, and writes score/metrics
+    # back. Fire-and-forget — the client polls GET /evaluations/{id}. If the
+    # runner cannot start (e.g. bench unreachable) it flips the row to FAILED
+    # with a clear error_message; the 201 response still returns the row so
+    # the caller has the eval_id to poll.
+    try:
+        from ..eval_tasks import submit_evaluation
+
+        await submit_evaluation(e.id, body.model_id, body.version_id, body.benchmark_name)
+    except Exception:
+        logger.exception("Failed to submit evaluation runner: id=%s", e.id)
     return _eval_to_dict(e)
 
 
