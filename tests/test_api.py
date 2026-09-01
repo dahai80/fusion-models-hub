@@ -103,6 +103,29 @@ class TestModelCRUD:
         assert resp.json()["total"] >= 1
 
     @pytest.mark.asyncio
+    async def test_list_models_with_exact_name(self, client):
+        # #51: exact-name lookup. Name shares a token with another model so the
+        # fuzzy keyword path would match both; exact path must return only one.
+        await client.post("/api/v1/models", json={"name": "exact-match-foo"})
+        await client.post("/api/v1/models", json={"name": "exact-match-foo-bar"})
+        resp = await client.get("/api/v1/models", params={"name": "exact-match-foo"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert len(data["items"]) == 1
+        assert data["items"][0]["name"] == "exact-match-foo"
+
+    @pytest.mark.asyncio
+    async def test_list_models_with_exact_name_no_match(self, client):
+        # #51: exact-name lookup returns empty items when nothing matches, not a
+        # fuzzy superset.
+        resp = await client.get("/api/v1/models", params={"name": "exact-no-such-name-xyz"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["items"] == []
+
+    @pytest.mark.asyncio
     async def test_get_model(self, client):
         create_resp = await client.post("/api/v1/models", json={"name": "get-model"})
         model_id = create_resp.json()["id"]

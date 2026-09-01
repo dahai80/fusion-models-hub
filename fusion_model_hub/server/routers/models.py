@@ -193,12 +193,28 @@ async def list_models(
     session: SessionDep,
     request: Request,
     keyword: str = "",
+    name: str = "",
     model_type: str = "",
     architecture: str = "",
     page: int = 1,
     page_size: int = 20,
 ):
     tenant_id = getattr(request.state, "tenant_id", "") or ""
+    # #51: exact-name lookup for idempotent publish. A publisher that gets a 409
+    # on POST /models needs to tell an idempotent re-publish (same model, same
+    # base_model_id) from a real name collision. Keyword is fuzzy (ilike %x%),
+    # so it cannot distinguish "my adapter" from "another model sharing a token".
+    # `name=` uses the same crud.get_model_by_name the 409 collision check uses
+    # (exact, case-sensitive), then scopes to the caller's tenant so a foreign
+    # tenant's same-named model does not leak as an idempotent-success match.
+    if name:
+        exact = await crud.get_model_by_name(session, name)
+        if exact and (not tenant_id or exact.tenant_id == tenant_id):
+            items = [] if (model_type and exact.model_type.value != model_type) else [_model_to_dict(exact)]
+        else:
+            items = []
+        logger.info("Exact-name lookup: name=%s tenant=%s hits=%d", name, tenant_id or "-", len(items))
+        return {"items": items, "total": len(items), "page": 1, "page_size": len(items)}
     models, total = await crud.list_models(
         session,
         tenant_id=tenant_id,

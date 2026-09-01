@@ -351,24 +351,40 @@ class TestCompareQuantizeResults:
         tasks_mod._running_tasks.clear()
         m = await _create_model(client, "cmp-no-output")
         v = await _create_version(client, m["id"], "1.0.0")
-        r = await client.post(
-            "/api/v1/quantize",
-            json={
-                "source_version_id": v["id"],
-                "quant_bits": 4,
-            },
-        )
-        task_id = r.json()["task_id"]
-        await asyncio.sleep(0.3)
-        # Force a failed task (source deleted path leaves FAILED with no output_version_id).
-        # Easier: directly query a failed task from the not-found path.
-        from fusion_model_hub.db.crud import get_quantize_task
-        from fusion_model_hub.server.deps import get_session_factory
 
-        sf = get_session_factory()
-        async with sf() as session:
-            t = await get_quantize_task(session, task_id)
-            # The runner failed because we did not mock MLX -> status FAILED, no output.
+        # Deterministic fast-fail: mock the converter so the runner reaches FAILED
+        # without a real MLX HTTP round-trip. Under full-suite load the un-mocked
+        # path races the module-level _QUANTIZE_CONCURRENCY semaphore (queued
+        # behind earlier files' tasks) and a real MLX timeout, so a fixed sleep
+        # is flaky. Mocking removes both the MLX dependency and the timing.
+        async def _fail_quantize(*a, **kw):
+            return {"status": "error", "output_path": ""}
+
+        with patch(
+            "fusion_model_hub.server.tasks.ModelConverter.quantize",
+            new=AsyncMock(side_effect=_fail_quantize),
+        ):
+            r = await client.post(
+                "/api/v1/quantize",
+                json={
+                    "source_version_id": v["id"],
+                    "quant_bits": 4,
+                },
+            )
+            task_id = r.json()["task_id"]
+            from fusion_model_hub.db.crud import get_quantize_task
+            from fusion_model_hub.server.deps import get_session_factory
+
+            sf = get_session_factory()
+            t = None
+            for _ in range(150):
+                async with sf() as session:
+                    t = await get_quantize_task(session, task_id)
+                if t and t.status.value in ("failed", "completed"):
+                    break
+                await asyncio.sleep(0.1)
+            # The runner failed because the mocked converter returned error -> FAILED, no output.
+            assert t is not None
             assert t.status.value == "failed"
             assert not t.output_version_id
         resp = await client.get(f"/api/v1/quantize/{task_id}/compare")

@@ -3,6 +3,15 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.1.0] — 2026-09-01
+
+**General availability** release. Promotes `1.1.0rc1` (enterprise release-ready verdict) to GA with one follow-up fix. 1470 tests / 91% cov, P0=0 P1=0, ruff clean.
+
+### Fixes
+
+- **#51 exact-name lookup on `GET /api/v1/models`** — added `name=` query param for exact, case-sensitive match via the same `crud.get_model_by_name` the POST 409 collision check uses, tenant-scoped. A publisher that gets a 409 on `POST /models` could not previously tell an idempotent re-publish (same model) from a fuzzy `keyword=` superset sharing a token. `GET /api/v1/models?name=X` now returns at most one exact match (empty `items` if none), enabling idempotent publish detection. (`server/routers/models.py`)
+- **flaky `test_compare_no_output_version` under full-suite load** — the un-mocked quantize runner raced the module-level `_QUANTIZE_CONCURRENCY` semaphore and a real MLX HTTP timeout under full-suite load, so a fixed 0.3s sleep did not always reach FAILED. Mocked `ModelConverter.quantize` for a deterministic fast-fail and replaced the sleep with a poll loop. (`tests/test_cov_quantize_tasks.py`)
+
 ## [1.1.0rc1] — 2026-08-27
 
 First **release candidate** after the 6-dimension enterprise audit. Baseline `1.0.18` (commit `21310f6`, 890 tests / 81% cov, 2 P0 + 22 P1) → RC `1.1.0rc1` (commit `c5dbbde`, 1410 tests / 91% cov, P0=0 P1=0). Re-audit verdict: **enterprise release-ready** (report at `audit/fusion-model-hub-reaudit-0827.md`).
