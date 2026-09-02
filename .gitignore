@@ -17,6 +17,9 @@ htmlcov/
 venv/
 *.part
 *.db
+*.db-shm
+*.db-wal
+data/
 .env
 CLAUDE.md
 PRD.md
