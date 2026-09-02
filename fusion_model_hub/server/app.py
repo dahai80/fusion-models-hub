@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from .. import __version__
 from ..db.database import get_engine, init_db
 from . import backup, metrics
-from .auth import auth_middleware, set_auth_enabled
+from .auth import auth_middleware, set_auth_enabled, set_gateway_origin_enforced
 from .config import Settings
 from .deps import init_deps
 from .routers import (
@@ -191,6 +191,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             logger.exception("init_db failed — starting in degraded mode; DB ops will error until recovered")
         init_deps(settings, engine)
         set_auth_enabled(settings.auth_enabled)
+        # #53: initialize the gateway-origin enforcement flag from settings so
+        # the middleware reads module state (not get_settings on every request).
+        set_gateway_origin_enforced(settings.gateway_origin_enforced)
         await _reconcile_orphaned_tasks()
         # H10: probe Fusion-MLX version compatibility at startup. Best-effort
         # (MLX may start after the hub) — a mismatch or unreachable MLX is

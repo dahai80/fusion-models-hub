@@ -946,6 +946,7 @@ Environment variables:
 | `FMH_DOWNLOAD_SPEED_LIMIT` | `0` | Download speed limit (kbps, 0=unlimited) |
 | `FMH_EXPOSE_METRICS` | `false` | Expose Prometheus `/metrics` endpoint (opt-in; 404s when off) |
 | `FMH_AUTH_BOOTSTRAP_TOKEN` | `` | Token gating first API-key creation (open bootstrap if unset) |
+| `FMH_GATEWAY_ORIGIN_ENFORCED` | `false` | Require `X-Fusion-Route: gateway-decision` on `/api/v1/*` and honor `X-Fusion-Tenant` as authoritative tenant. Enable in gateway-fronted multi-tenant deployments (#53). |
 | `FUSION_MLX_API_KEY` | `` | Bearer token for Hub→MLX requests (MLX_INTERNAL_API_KEY as deprecated fallback) |
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`

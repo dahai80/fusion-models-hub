@@ -61,6 +61,15 @@ class Settings:
     # knobs so an operator can match pool size to expected concurrency.
     db_pool_size: int = 10
     db_max_overflow: int = 20
+    # #53: enforce gateway-origin + authoritative tenant on inbound requests.
+    # When True, a request to /api/v1/* MUST carry X-Fusion-Route: gateway-decision
+    # (the gateway stamps this on every outbound request) so direct-port access
+    # cannot bypass the gateway's tenant derivation. X-Fusion-Tenant, when
+    # present, overrides the api_key's tenant_id as the authoritative tenant for
+    # the request (the gateway derives it from the key->team binding). Default
+    # OFF so single-tenant dev / direct-CLI access keeps working; an operator
+    # enables it in any gateway-fronted, multi-tenant deployment.
+    gateway_origin_enforced: bool = False
 
     def __post_init__(self):
         # P1-21: wire FMH_HOST/FMH_PORT/FMH_LOG_LEVEL/FMH_DB_URL. Previously the
@@ -233,3 +242,7 @@ class Settings:
             self.db_pool_size = int(os.environ.get("FMH_DB_POOL_SIZE", "10"))
         if not self.db_max_overflow:
             self.db_max_overflow = int(os.environ.get("FMH_DB_MAX_OVERFLOW", "20"))
+        # #53: wire FMH_GATEWAY_ORIGIN_ENFORCED (default false for single-tenant
+        # dev). Operators enable it in gateway-fronted multi-tenant deployments.
+        if os.environ.get("FMH_GATEWAY_ORIGIN_ENFORCED", "").lower() in ("true", "1", "yes"):
+            self.gateway_origin_enforced = True

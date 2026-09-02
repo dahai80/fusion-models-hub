@@ -3,6 +3,15 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.1.1] — 2026-09-02
+
+Patch release: Dockerfile build fix + gateway-origin tenant-scoping enforcement.
+
+### Fixes
+
+- **#52 Dockerfile build fails on `python:3.12-slim`** — the Dockerfile installed the full monorepo `requirements.lock` (~200 pins spanning every fusion-* sub-project), including sdist-only packages (`miniaudio`, `mflux`) that need a C++ compiler absent on the slim base, so `docker build` died on `FileNotFoundError: 'c++'`. Replaced the monorepo lock install with `pip install .` (resolves model-hub's own 10 runtime deps, all prebuilt wheels, no compiler needed). model-hub is not an MLX node, so the "every node identical" lock rationale does not apply; a per-service dep set is more correct and yields a smaller image. The Dockerfile build context is now the sub-project dir (no monorepo root needed). Verified: image builds clean, `/api/v1/system/health` returns 200 in a container. (`Dockerfile`)
+- **#53 enforce gateway-origin + `X-Fusion-Tenant` scoping** — backend-side half of fusion-gateway #150 (Gap 1c, multi-tenant isolation). Added `gateway_origin_enforced` setting (env `FMH_GATEWAY_ORIGIN_ENFORCED`, default OFF for single-tenant dev). When ON, a `/api/v1/*` request MUST carry `X-Fusion-Route: gateway-decision` (the header the gateway stamps on every outbound request) or it is rejected 403, blocking direct-port bypass of the gateway's tenant derivation. `X-Fusion-Tenant`, when present, overrides the api_key's `tenant_id` as the authoritative tenant for the request (gateway derives it from the key→team binding); `X-Space-Id` is treated as non-authoritative passthrough (never read). Health/docs stay public so liveness probes and the OpenAPI UI keep working behind a gateway. (`server/auth.py`, `server/config.py`, `server/app.py`)
+
 ## [1.1.0] — 2026-09-01
 
 **General availability** release. Promotes `1.1.0rc1` (enterprise release-ready verdict) to GA with one follow-up fix. 1470 tests / 91% cov, P0=0 P1=0, ruff clean.

@@ -169,6 +169,26 @@ async def auth_middleware(request: Request, call_next):
     # post-bootstrap (admin key) callers.
     is_public = _is_public_path(request.url.path)
 
+    # #53: gateway-origin enforcement. When enabled, reject any /api/v1/* request
+    # that did not originate from the gateway (identified by the
+    # X-Fusion-Route: gateway-decision header the gateway stamps on every
+    # outbound request). This blocks direct-port access from bypassing the
+    # gateway's authoritative tenant derivation. Health/docs stay public so
+    # liveness probes and the OpenAPI UI keep working behind a gateway.
+    if _is_gateway_origin_enforced() and not is_public and request.url.path.startswith("/api/v1/"):
+        route_origin = request.headers.get("X-Fusion-Route", "")
+        if route_origin != "gateway-decision":
+            logger.warning(
+                "Rejected non-gateway-origin request: path=%s route=%r tenant=%r",
+                request.url.path,
+                route_origin,
+                request.headers.get("X-Fusion-Tenant", ""),
+            )
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Gateway-origin required: missing or invalid X-Fusion-Route header"},
+            )
+
     api_key_str = request.headers.get("X-API-Key", "")
     if not api_key_str:
         if is_public or not _is_auth_enabled():
@@ -218,7 +238,17 @@ async def auth_middleware(request: Request, call_next):
 
         request.state.api_key_id = ak.id
         request.state.api_key_name = ak.name
-        request.state.tenant_id = ak.tenant_id
+        # #53: X-Fusion-Tenant is the authoritative tenant when the gateway
+        # stamps it (derived from the key->team binding server-side). It
+        # overrides the api_key's own tenant_id so cross-tenant data isolation
+        # follows the gateway's decision, not the key's static binding. When
+        # absent (direct local access with enforcement off), the key's tenant
+        # stands. X-Space-Id is a non-authoritative passthrough — never read.
+        gw_tenant = request.headers.get("X-Fusion-Tenant", "")
+        if gw_tenant:
+            request.state.tenant_id = gw_tenant
+        else:
+            request.state.tenant_id = ak.tenant_id
         request.state.user_role = ak.role.value
 
     response = await call_next(request)
@@ -272,6 +302,28 @@ def set_auth_enabled(enabled: bool):
 
 def _is_auth_enabled() -> bool:
     return _auth_enabled
+
+
+_gateway_origin_enforced = False
+
+
+def set_gateway_origin_enforced(enabled: bool):
+    global _gateway_origin_enforced
+    _gateway_origin_enforced = enabled
+
+
+def _is_gateway_origin_enforced() -> bool:
+    # #53: prefer the module flag (tests toggle it without rebuilding Settings);
+    # fall back to Settings so a real server reads FMH_GATEWAY_ORIGIN_ENFORCED
+    # via the config resolution chain. The flag is initialized at init_deps.
+    if _gateway_origin_enforced:
+        return True
+    try:
+        from .deps import get_settings
+
+        return bool(get_settings().gateway_origin_enforced)
+    except Exception:
+        return False
 
 
 def _extract_resource_type(path: str) -> str:

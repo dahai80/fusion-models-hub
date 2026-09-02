@@ -887,6 +887,66 @@ class TestAuthMiddleware:
             set_auth_enabled(False)
 
     @pytest.mark.asyncio
+    async def test_gateway_origin_rejects_missing_route_header(self, client):
+        # #53: with gateway-origin enforcement ON, a /api/v1/* request lacking
+        # X-Fusion-Route: gateway-decision is rejected 403 (direct-port bypass
+        # blocked). Health stays reachable.
+        from fusion_model_hub.server.auth import set_gateway_origin_enforced
+
+        set_gateway_origin_enforced(True)
+        try:
+            resp = await client.get("/api/v1/models")
+            assert resp.status_code == 403
+            assert "Gateway-origin required" in resp.json()["detail"]
+            # public health path stays open behind the gateway.
+            health = await client.get("/api/v1/system/health")
+            assert health.status_code == 200
+        finally:
+            set_gateway_origin_enforced(False)
+
+    @pytest.mark.asyncio
+    async def test_gateway_origin_allows_gateway_decision_header(self, client):
+        # #53: a request carrying X-Fusion-Route: gateway-decision passes the
+        # origin check.
+        from fusion_model_hub.server.auth import set_gateway_origin_enforced
+
+        set_gateway_origin_enforced(True)
+        try:
+            resp = await client.get(
+                "/api/v1/models",
+                headers={"X-Fusion-Route": "gateway-decision"},
+            )
+            assert resp.status_code == 200
+        finally:
+            set_gateway_origin_enforced(False)
+
+    @pytest.mark.asyncio
+    async def test_gateway_tenant_overrides_key_tenant(self, client):
+        # #53: X-Fusion-Tenant is authoritative — it overrides the api_key's own
+        # tenant_id on request.state so downstream scoping follows the gateway's
+        # key->team derivation, not the key's static binding.
+        from fusion_model_hub.server.auth import set_auth_enabled, set_gateway_origin_enforced
+
+        set_auth_enabled(True)
+        set_gateway_origin_enforced(True)
+        try:
+            key_resp = await client.post("/api/v1/auth/keys", json={"name": "gw-key"})
+            api_key = key_resp.json()["key"]
+            # Request through the gateway with a stamped tenant.
+            resp = await client.get(
+                "/api/v1/models",
+                headers={
+                    "X-API-Key": api_key,
+                    "X-Fusion-Route": "gateway-decision",
+                    "X-Fusion-Tenant": "tenant-from-gateway",
+                },
+            )
+            assert resp.status_code == 200
+        finally:
+            set_auth_enabled(False)
+            set_gateway_origin_enforced(False)
+
+    @pytest.mark.asyncio
     async def test_tenanted_admin_cannot_forge_cross_tenant_key(self, client):
         # P1-12: a tenanted admin must be pinned to its own tenant when creating
         # keys; setting a different body.tenant_id is a cross-tenant forge that
