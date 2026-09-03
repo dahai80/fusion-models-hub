@@ -70,6 +70,21 @@ class Settings:
     # OFF so single-tenant dev / direct-CLI access keeps working; an operator
     # enables it in any gateway-fronted, multi-tenant deployment.
     gateway_origin_enforced: bool = False
+    # #54: fusion-identity integration. When enabled, inbound requests are
+    # authenticated by fusion-identity (the sole JWT issuer + tenant registry,
+    # multi-tenant PRD §3/§4) via `install_tenant_middleware` from fusion-core.
+    # The middleware enforces X-Tenant-Id presence + JWT `tid`<->header match
+    # (401 on mismatch), replacing the #53 blind-trust of X-Fusion-Tenant.
+    # Role is read from the verify response (not the local key row); local
+    # API-key verify is kept only for hub-local model/module ACL policy keyed
+    # by the centrally-resolved tid. Default OFF — single-tenant dev / direct
+    # CLI access keeps using the local X-API-Key path unchanged. Operators
+    # enable it in any fusion-identity-fronted, multi-tenant deployment.
+    identity_integration_enabled: bool = False
+    identity_url: str = "http://127.0.0.1:11470"
+    identity_service_token: str = ""
+    identity_jwt_issuer: str = "fusion-identity"
+    identity_jwt_audience: str = "fusion-cluster"
 
     def __post_init__(self):
         # P1-21: wire FMH_HOST/FMH_PORT/FMH_LOG_LEVEL/FMH_DB_URL. Previously the
@@ -246,3 +261,18 @@ class Settings:
         # dev). Operators enable it in gateway-fronted multi-tenant deployments.
         if os.environ.get("FMH_GATEWAY_ORIGIN_ENFORCED", "").lower() in ("true", "1", "yes"):
             self.gateway_origin_enforced = True
+        # #54: wire fusion-identity integration env. Default OFF; operators
+        # enable in multi-tenant deployments fronted by fusion-identity.
+        if os.environ.get("FMH_IDENTITY_INTEGRATION_ENABLED", "").lower() in ("true", "1", "yes"):
+            self.identity_integration_enabled = True
+        env_identity_url = os.environ.get("FMH_IDENTITY_URL", "")
+        if env_identity_url:
+            self.identity_url = env_identity_url
+        if not self.identity_service_token:
+            self.identity_service_token = os.environ.get("FUSION_IDENTITY_SERVICE_TOKEN", "")
+        env_iss = os.environ.get("FUSION_IDENTITY_JWT_ISSUER", "")
+        if env_iss:
+            self.identity_jwt_issuer = env_iss
+        env_aud = os.environ.get("FUSION_IDENTITY_JWT_AUDIENCE", "")
+        if env_aud:
+            self.identity_jwt_audience = env_aud

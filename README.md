@@ -843,6 +843,7 @@ fusion_model_hub/
 │   ├── config.py          # Settings dataclass (env vars + MinIO + backup + TLS config)
 │   ├── deps.py            # Dependency injection (Session, Store[Backend], Settings)
 │   ├── auth.py            # Auth middleware with RBAC + owner enforcement
+│   ├── identity.py        # #54 fusion-identity integration (tenant middleware + JWT verify)
 │   ├── tasks.py           # Async task manager (quantize tasks with calibration)
 │   ├── backup.py          # Auto backup scheduler (configurable interval, JSON dump)
 │   ├── metrics.py         # Prometheus metrics middleware + /metrics endpoint
@@ -947,6 +948,11 @@ Environment variables:
 | `FMH_EXPOSE_METRICS` | `false` | Expose Prometheus `/metrics` endpoint (opt-in; 404s when off) |
 | `FMH_AUTH_BOOTSTRAP_TOKEN` | `` | Token gating first API-key creation (open bootstrap if unset) |
 | `FMH_GATEWAY_ORIGIN_ENFORCED` | `false` | Require `X-Fusion-Route: gateway-decision` on `/api/v1/*` and honor `X-Fusion-Tenant` as authoritative tenant. Enable in gateway-fronted multi-tenant deployments (#53). |
+| `FMH_IDENTITY_INTEGRATION_ENABLED` | `false` | Authenticate inbound requests via fusion-identity (`install_tenant_middleware` from fusion-core): enforce `X-Tenant-Id` presence + JWT `tid`↔header match (401 on mismatch), replacing the #53 blind-trust of `X-Fusion-Tenant`; role read from the verify response. Enable in fusion-identity-fronted multi-tenant deployments (#54). |
+| `FMH_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity `/api/v1/auth/verify` base URL |
+| `FUSION_IDENTITY_SERVICE_TOKEN` | `` | Bearer service token for Hub→fusion-identity `/verify` calls (required when integration enabled) |
+| `FUSION_IDENTITY_JWT_ISSUER` | `fusion-identity` | Expected JWT issuer claim |
+| `FUSION_IDENTITY_JWT_AUDIENCE` | `fusion-cluster` | Expected JWT audience claim |
 | `FUSION_MLX_API_KEY` | `` | Bearer token for Hub→MLX requests (MLX_INTERNAL_API_KEY as deprecated fallback) |
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`

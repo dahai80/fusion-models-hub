@@ -3,6 +3,14 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.0] — 2026-09-03
+
+Feature release: optional fusion-identity integration (multi-tenant PRD §3/§4).
+
+### Added
+
+- **#54 integrate fusion-identity: retire blind-trust of `X-Fusion-Tenant`** — config-gated security core. New `identity_integration_enabled` setting (env `FMH_IDENTITY_INTEGRATION_ENABLED`, default OFF — zero breakage to single-tenant dev / direct-CLI access). When ON, `install_tenant_middleware` from `fusion_core.tenant` is wired as the outermost middleware (last-added = runs first): it enforces `X-Tenant-Id` header presence (401 if missing), calls fusion-identity `POST /api/v1/auth/verify` (Bearer service token, `FUSION_IDENTITY_SERVICE_TOKEN`) to verify the inbound JWT, and rejects a forged `X-Tenant-Id` that does not match the JWT `tid` claim (401 on mismatch) — replacing the #53 blind-trust of the client-supplied `X-Fusion-Tenant`. The verified `tid` becomes the authoritative tenant; `role` is read from the verify response (not the local key row). The local `X-API-Key` path is retained only for hub-local model/module ACL policy keyed by the centrally-resolved tid; a request with a valid JWT but no local key passes through. Health/docs stay exempt so liveness probes keep working. Build decision is purely per-`Settings` (per-app `app.state.identity_integration_enabled`), never a module global — an identity-enabled test app cannot leak into another app's auth path under pytest-randomly reordering. Companion env: `FMH_IDENTITY_URL`, `FUSION_IDENTITY_SERVICE_TOKEN`, `FUSION_IDENTITY_JWT_ISSUER`, `FUSION_IDENTITY_JWT_AUDIENCE`. 8 tests (`tests/test_identity_integration.py`) mock fusion-identity HTTP: missing tenant header rejected, missing token rejected, forged tenant-header mismatch rejected, revoked/invalid token rejected, valid token + matching tenant allowed, role from verify response, health stays public, cross-tenant model access denied. Quota/usage/gRPC-lease deferred as follow-up. (`server/identity.py` new, `server/config.py`, `server/app.py`, `server/auth.py`)
+
 ## [1.1.1] — 2026-09-02
 
 Patch release: Dockerfile build fix + gateway-origin tenant-scoping enforcement.

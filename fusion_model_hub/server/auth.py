@@ -169,6 +169,31 @@ async def auth_middleware(request: Request, call_next):
     # post-bootstrap (admin key) callers.
     is_public = _is_public_path(request.url.path)
 
+    identity_enabled = _is_identity_integration_enabled(request)
+
+    # #54: when fusion-identity integration is ON, the TenantMiddleware
+    # (outermost) has already verified the Bearer JWT against fusion-identity,
+    # enforced X-Tenant-Id presence + JWT `tid`<->header match, and set the
+    # TenantContext contextvar. That is now the authoritative tenant + role.
+    # The forgeable X-Fusion-Tenant header is no longer trusted — the
+    # middleware's tid match is the cross-tenant guard.
+    if identity_enabled:
+        from .identity import current_tenant_context
+
+        ctx = current_tenant_context()
+        if ctx is not None:
+            request.state.tenant_id = ctx.tenant_id
+            if ctx.role is not None:
+                request.state.user_role = ctx.role
+            # A request that arrived with a valid JWT but no local X-API-Key
+            # has passed central auth — let it through without a local key.
+            # Hub-local model/module ACL is opt-in policy on the local key.
+            api_key_str = request.headers.get("X-API-Key", "")
+            if not api_key_str:
+                return await call_next(request)
+        # ctx is None only on exempt paths (middleware skipped them); fall
+        # through to the normal public/no-key handling below.
+
     # #53: gateway-origin enforcement. When enabled, reject any /api/v1/* request
     # that did not originate from the gateway (identified by the
     # X-Fusion-Route: gateway-decision header the gateway stamps on every
@@ -238,18 +263,25 @@ async def auth_middleware(request: Request, call_next):
 
         request.state.api_key_id = ak.id
         request.state.api_key_name = ak.name
-        # #53: X-Fusion-Tenant is the authoritative tenant when the gateway
-        # stamps it (derived from the key->team binding server-side). It
-        # overrides the api_key's own tenant_id so cross-tenant data isolation
-        # follows the gateway's decision, not the key's static binding. When
-        # absent (direct local access with enforcement off), the key's tenant
-        # stands. X-Space-Id is a non-authoritative passthrough — never read.
-        gw_tenant = request.headers.get("X-Fusion-Tenant", "")
-        if gw_tenant:
-            request.state.tenant_id = gw_tenant
+        # #53/#54: tenant resolution. When fusion-identity integration is ON,
+        # the TenantMiddleware already set the authoritative tid from the
+        # verified JWT (above) — do NOT let a forgeable X-Fusion-Tenant header
+        # override it. When integration is OFF, keep the #53 behavior:
+        # X-Fusion-Tenant (gateway-stamped, derived server-side from the
+        # key->team binding) overrides the api_key's static tenant_id; absent
+        # it, the key's tenant stands. X-Space-Id is non-authoritative, never read.
+        if identity_enabled:
+            if not getattr(request.state, "tenant_id", ""):
+                request.state.tenant_id = ak.tenant_id
+            if not getattr(request.state, "user_role", ""):
+                request.state.user_role = ak.role.value
         else:
-            request.state.tenant_id = ak.tenant_id
-        request.state.user_role = ak.role.value
+            gw_tenant = request.headers.get("X-Fusion-Tenant", "")
+            if gw_tenant:
+                request.state.tenant_id = gw_tenant
+            else:
+                request.state.tenant_id = ak.tenant_id
+            request.state.user_role = ak.role.value
 
     response = await call_next(request)
 
@@ -324,6 +356,15 @@ def _is_gateway_origin_enforced() -> bool:
         return bool(get_settings().gateway_origin_enforced)
     except Exception:
         return False
+
+
+def _is_identity_integration_enabled(request: Request | None = None) -> bool:
+    # #54: read per-app state (set by install_identity_middleware) so the flag
+    # never leaks across app instances / test files. No module-level fallback
+    # — the integration is decided at app build from Settings, not a global.
+    if request is not None:
+        return bool(getattr(request.app.state, "identity_integration_enabled", False))
+    return False
 
 
 def _extract_resource_type(path: str) -> str:

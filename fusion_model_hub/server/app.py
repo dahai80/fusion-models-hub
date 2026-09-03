@@ -12,6 +12,7 @@ from . import backup, metrics
 from .auth import auth_middleware, set_auth_enabled, set_gateway_origin_enforced
 from .config import Settings
 from .deps import init_deps
+from .identity import install_identity_middleware, set_identity_integration_enabled
 from .routers import (
     adapt,
     analyze,
@@ -194,6 +195,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # #53: initialize the gateway-origin enforcement flag from settings so
         # the middleware reads module state (not get_settings on every request).
         set_gateway_origin_enforced(settings.gateway_origin_enforced)
+        # #54: initialize the fusion-identity integration flag from settings.
+        set_identity_integration_enabled(settings.identity_integration_enabled)
         await _reconcile_orphaned_tasks()
         # H10: probe Fusion-MLX version compatibility at startup. Best-effort
         # (MLX may start after the hub) — a mismatch or unreachable MLX is
@@ -342,6 +345,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.middleware("http")(auth_middleware)
     app.middleware("http")(metrics.metrics_middleware)
+
+    # #54: install the fusion-identity tenant middleware LAST so it is the
+    # outermost middleware (last-added = outermost = runs first). It enforces
+    # X-Tenant-Id presence + JWT `tid`<->header match (401 on mismatch) before
+    # auth_middleware runs, and sets the TenantContext contextvar that
+    # auth_middleware reads as the authoritative tenant/role when enabled.
+    # Decision is purely per-app from Settings — NO module-level flag — so an
+    # identity-enabled test app can never leak into another app's build.
+    if settings.identity_integration_enabled:
+        try:
+            install_identity_middleware(app)
+        except Exception:
+            logger.exception(
+                "fusion-identity tenant middleware failed to install — "
+                "falling back to local X-API-Key auth (multi-tenant guards inactive)"
+            )
 
     @app.get("/metrics", tags=["system"])
     async def prometheus_metrics():
