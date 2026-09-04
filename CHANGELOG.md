@@ -3,6 +3,14 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.1] — 2026-09-04
+
+Patch release: identity-aware combo mode (Authorization: Bearer + X-Tenant-Id alongside X-API-Key), completing the fusion-studio integration (#55).
+
+### Added
+
+- **#55 Accept `Authorization: Bearer` + `X-Tenant-Id` alongside `X-API-Key` (identity-aware combo mode)** — fusion-studio's `ModelHubAPIClient` attaches identity headers to all requests when the user is logged in via fusion-identity, in addition to the existing `X-API-Key`. In identity-aware mode (`FMH_IDENTITY_INTEGRATION_ENABLED=true`), the TenantMiddleware (installed in #54) already verifies the Bearer JWT and enforces the `tid`↔`X-Tenant-Id` match. This release closes the remaining gaps so the three-header combo is correct and safe: (1) `/api/v1/auth/keys` is no longer exempt from the tenant middleware in identity mode, so API-key provisioning receives the verified JWT `tid` and keys are minted tenant-scoped — previously every key was tenant-less in identity mode and the cross-tenant check had nothing to compare; (2) `auth_middleware` now rejects a local `X-API-Key` whose `tenant_id` does not match the JWT `tid` (401, "API key tenant does not match authenticated tenant"), blocking cross-tenant key reuse — `verify_api_key` has no tenant filter, so the match is enforced post-verify; a legacy tenant-less key is allowed through, only a concrete mismatch is rejected; (3) fusion-identity JWT roles (`tenant_admin`/`admin`/`developer`/`member`/`viewer`) are normalized onto the local `admin`/`developer`/`viewer` ladder so the create-key admin-or-bootstrap guard and tenanted-admin pinning work under identity roles — an unmapped role falls back to viewer (fail-closed). `X-API-Key`-only mode (identity disabled, the default) is unchanged. 3 new tests cover matching-tenant combo (200), cross-tenant key rejected (401), and X-API-Key-only preserved when identity off. (`server/identity.py`, `server/auth.py`, `server/routers/auth.py`, `tests/test_identity_integration.py`)
+
 ## [1.2.0] — 2026-09-03
 
 Feature release: optional fusion-identity integration (multi-tenant PRD §3/§4).

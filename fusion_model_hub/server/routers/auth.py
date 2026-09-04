@@ -32,8 +32,26 @@ def _caller_tenant(request: Request) -> str:
     return getattr(request.state, "tenant_id", "") or ""
 
 
+# #55: fusion-identity JWT roles (tenant_admin / admin / developer / member /
+# viewer) are the role source in identity-aware mode, while local mode uses the
+# UserRole enum value (admin / developer / viewer). Normalize the identity role
+# space onto the local admin/developer/viewer ladder so the create-key route's
+# admin-or-bootstrap guard and the tenanted-admin pinning work under both. A
+# role that does not map is treated as viewer (least privilege, fail-closed).
+_IDENTITY_ROLE_MAP = {
+    "tenant_admin": "admin",
+    "admin": "admin",
+    "developer": "developer",
+    "member": "viewer",
+    "viewer": "viewer",
+}
+
+
 def _caller_role(request: Request) -> str:
-    return getattr(request.state, "user_role", "") or ""
+    role = getattr(request.state, "user_role", "") or ""
+    if role in _IDENTITY_ROLE_MAP:
+        return _IDENTITY_ROLE_MAP[role]
+    return role
 
 
 def _client_ip(request: Request) -> str:

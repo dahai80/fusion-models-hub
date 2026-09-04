@@ -226,6 +226,29 @@ async def auth_middleware(request: Request, call_next):
         if not ak:
             return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
 
+        # #55: in identity-aware mode the JWT `tid` (stamped onto request.state
+        # above by the TenantMiddleware) is the authoritative tenant. A local
+        # X-API-Key presented alongside the Bearer token MUST belong to the same
+        # tenant — otherwise a caller with a tenant-B key could reuse it under a
+        # tenant-A JWT (or vice versa), bypassing tenant isolation at the key
+        # layer. verify_api_key has no tenant filter, so enforce the match here.
+        # A key with no tenant_id (legacy / pre-tenant) is allowed through; only
+        # a concrete mismatch is rejected.
+        if identity_enabled:
+            jwt_tid = getattr(request.state, "tenant_id", "")
+            if jwt_tid and ak.tenant_id and ak.tenant_id != jwt_tid:
+                logger.warning(
+                    "Cross-tenant API key rejected: key_tenant=%s jwt_tenant=%s key_id=%s path=%s",
+                    ak.tenant_id,
+                    jwt_tid,
+                    ak.id,
+                    request.url.path,
+                )
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "API key tenant does not match authenticated tenant"},
+                )
+
         # Role ACL applies to all methods (F-04.5): viewer blocked from writes;
         # developer blocked from delete; admin full. GET passes for all roles.
         if request.method in WRITE_METHODS:

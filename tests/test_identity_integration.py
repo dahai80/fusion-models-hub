@@ -42,6 +42,21 @@ async def client(app, settings):
         yield c
 
 
+@pytest.fixture
+async def auth_client(app, settings):
+    # #55: identity-aware app with local auth ENABLED so a presented X-API-Key
+    # is verified and the #55 cross-tenant key check is exercised.
+    from fusion_model_hub.server.auth import set_auth_enabled
+
+    set_auth_enabled(True)
+    engine = get_engine(settings.db_url)
+    await init_db(engine)
+    init_deps(settings, engine)
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
 def _patch_verify(monkeypatch, *, tid="tenant-A", role="member", scopes=None):
     from fusion_model_hub.server import identity as ident
 
@@ -200,3 +215,93 @@ class TestIdentityIntegration:
         assert listed.status_code == 200
         names = {m["name"] for m in listed.json()["items"]}
         assert "tenantB-only-model" not in names
+
+
+class TestIdentityApiKeyCombo:
+    # #55: identity-aware mode where the studio attaches BOTH
+    # Authorization: Bearer <jwt> + X-Tenant-Id AND the existing X-API-Key.
+    # Acceptance: valid JWT + matching-tenant key -> tenant-scoped access;
+    # valid JWT + mismatched-tenant key -> 401 (cross-tenant key reuse blocked).
+
+    @pytest.mark.asyncio
+    async def test_bearer_plus_matching_key_allowed(self, auth_client, monkeypatch):
+        _patch_verify(monkeypatch, tid="tenant-A", role="tenant_admin")
+        # Create a key under tenant-A (JWT tid stamps request.state.tenant_id,
+        # and auth/keys derives the key tenant from the caller tenant).
+        create = await auth_client.post(
+            "/api/v1/auth/keys",
+            json={"name": "combo-key-A", "role": "admin"},
+            headers={"Authorization": "Bearer good-token", "X-Tenant-Id": "tenant-A"},
+        )
+        assert create.status_code == 201, create.text
+        raw_key = create.json()["key"]
+        assert create.json()["tenant_id"] == "tenant-A"
+
+        # Bearer + X-Tenant-Id + X-API-Key all present, tenants agree -> 200.
+        resp = await auth_client.get(
+            "/api/v1/models",
+            headers={
+                "Authorization": "Bearer good-token",
+                "X-Tenant-Id": "tenant-A",
+                "X-API-Key": raw_key,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+    @pytest.mark.asyncio
+    async def test_cross_tenant_key_rejected(self, auth_client, monkeypatch):
+        # Seed a tenant-B key.
+        _patch_verify(monkeypatch, tid="tenant-B", role="tenant_admin")
+        create_b = await auth_client.post(
+            "/api/v1/auth/keys",
+            json={"name": "combo-key-B", "role": "admin"},
+            headers={"Authorization": "Bearer good-token", "X-Tenant-Id": "tenant-B"},
+        )
+        assert create_b.status_code == 201, create_b.text
+        b_key = create_b.json()["key"]
+        assert create_b.json()["tenant_id"] == "tenant-B"
+
+        # Now authenticate as tenant-A but present tenant-B's key -> 401.
+        _patch_verify(monkeypatch, tid="tenant-A", role="tenant_admin")
+        resp = await auth_client.get(
+            "/api/v1/models",
+            headers={
+                "Authorization": "Bearer good-token",
+                "X-Tenant-Id": "tenant-A",
+                "X-API-Key": b_key,
+            },
+        )
+        assert resp.status_code == 401
+        assert "tenant" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_apikey_only_preserved_when_identity_off(self, monkeypatch):
+        # #55 acceptance: X-API-Key-only (no identity headers) preserves current
+        # behavior. Built on a SEPARATE identity-disabled app so the tenant
+        # middleware is not installed and no Bearer is required.
+        settings = Settings(
+            host="127.0.0.1",
+            port=11444,
+            data_dir="/tmp/fmh_test_identity_off",
+            db_url="sqlite+aiosqlite:///:memory:",
+            log_level="WARNING",
+            eval_runner_enabled=False,
+            identity_integration_enabled=False,
+        )
+        app = create_app(settings)
+        from fusion_model_hub.server.auth import set_auth_enabled
+
+        set_auth_enabled(True)
+        engine = get_engine(settings.db_url)
+        await init_db(engine)
+        init_deps(settings, engine)
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            # Bootstrap a key on a public path (auth/keys is public w/ zero keys).
+            create = await c.post("/api/v1/auth/keys", json={"name": "legacy-key", "role": "admin"})
+            assert create.status_code == 201, create.text
+            raw_key = create.json()["key"]
+
+            # No Authorization, no X-Tenant-Id — just X-API-Key -> 200.
+            resp = await c.get("/api/v1/models", headers={"X-API-Key": raw_key})
+            assert resp.status_code == 200, resp.text

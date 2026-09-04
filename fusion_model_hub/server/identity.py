@@ -79,7 +79,15 @@ def install_identity_middleware(app) -> None:
     # middleware.
     from fusion_core.tenant.middleware import _DEFAULT_EXEMPT
 
-    exempt = frozenset(_DEFAULT_EXEMPT | PUBLIC_PATHS)
+    # #55: in identity-aware mode the JWT `tid` is the authoritative tenant, and
+    # API-key provisioning must be tenant-scoped (a caller's key carries their
+    # JWT tid). /auth/keys is public in local mode for bootstrap, but in identity
+    # mode it must go THROUGH the tenant middleware so the verified tid reaches
+    # the route's _caller_tenant — otherwise every key is minted tenant-less and
+    # the #55 cross-tenant key check has nothing to compare against. Health/docs
+    # stay exempt so liveness probes keep working without a JWT.
+    identity_exempt = PUBLIC_PATHS - {"/api/v1/auth/keys"}
+    exempt = frozenset(_DEFAULT_EXEMPT | identity_exempt)
     install_tenant_middleware(
         app,
         exempt_paths=exempt,

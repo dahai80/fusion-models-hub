@@ -948,7 +948,7 @@ Environment variables:
 | `FMH_EXPOSE_METRICS` | `false` | Expose Prometheus `/metrics` endpoint (opt-in; 404s when off) |
 | `FMH_AUTH_BOOTSTRAP_TOKEN` | `` | Token gating first API-key creation (open bootstrap if unset) |
 | `FMH_GATEWAY_ORIGIN_ENFORCED` | `false` | Require `X-Fusion-Route: gateway-decision` on `/api/v1/*` and honor `X-Fusion-Tenant` as authoritative tenant. Enable in gateway-fronted multi-tenant deployments (#53). |
-| `FMH_IDENTITY_INTEGRATION_ENABLED` | `false` | Authenticate inbound requests via fusion-identity (`install_tenant_middleware` from fusion-core): enforce `X-Tenant-Id` presence + JWT `tid`↔header match (401 on mismatch), replacing the #53 blind-trust of `X-Fusion-Tenant`; role read from the verify response. Enable in fusion-identity-fronted multi-tenant deployments (#54). |
+| `FMH_IDENTITY_INTEGRATION_ENABLED` | `false` | Authenticate inbound requests via fusion-identity (`install_tenant_middleware` from fusion-core): enforce `X-Tenant-Id` presence + JWT `tid`↔header match (401 on mismatch), replacing the #53 blind-trust of `X-Fusion-Tenant`; role read from the verify response. Accepts `Authorization: Bearer` + `X-Tenant-Id` alongside `X-API-Key` (identity-aware combo mode, #55): a local key whose tenant does not match the JWT `tid` is rejected 401. Enable in fusion-identity-fronted multi-tenant deployments (#54, #55). |
 | `FMH_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity `/api/v1/auth/verify` base URL |
 | `FUSION_IDENTITY_SERVICE_TOKEN` | `` | Bearer service token for Hub→fusion-identity `/verify` calls (required when integration enabled) |
 | `FUSION_IDENTITY_JWT_ISSUER` | `fusion-identity` | Expected JWT issuer claim |
