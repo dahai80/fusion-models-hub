@@ -108,6 +108,22 @@ fusion-model-hub import -i backup.json
 fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 ```
 
+## Web Console (union-web shell module)
+
+`web/` ships a web UI package (issue #56, PRD N-4) that mounts into the
+union-web shell at `/shell/fusion-models-hub/` or runs standalone:
+
+```bash
+cd web
+bun install
+bun run dev        # vite on 11475, proxies /api → 11444
+bun run build      # typecheck + vite build → dist/
+```
+
+Pages: model repository browsing (search + versions + HF import), download
+tasks (progress / speed / ETA / HF_MIRROR source badge / cancel), quantize
+task status, storage usage. See `web/README.md`.
+
 ## API Endpoints
 
 ### Models
