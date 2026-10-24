@@ -6,6 +6,13 @@ from fusion_model_hub.server.app import create_app
 from fusion_model_hub.server.config import Settings
 from fusion_model_hub.server.deps import init_deps
 
+# These tests exercise the fusion_core.tenant middleware (#54/#55) — present
+# in the shared monorepo venv but NOT in unit CI, which installs only this
+# package (fusion-core lives in a sibling repo, not on PyPI). The app itself
+# degrades gracefully when fusion_core is missing (WARN + local X-API-Key
+# fallback, server/app.py), so the tests skip rather than fail there.
+pytest.importorskip("fusion_core.tenant", reason="fusion-core not installed")
+
 
 @pytest.fixture
 def settings():
