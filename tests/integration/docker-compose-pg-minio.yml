@@ -25,7 +25,7 @@ services:
       - /var/lib/postgresql/data
 
   fmh-minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: fmh-int-minio
     command: server /data --console-address ":9001"
     environment:
