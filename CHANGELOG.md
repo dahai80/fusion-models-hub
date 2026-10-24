@@ -3,6 +3,19 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.2] — 2026-10-24
+
+Patch release: union-web shell module UI package (#56) + CI unblocks (MinIO image removal, identity tests).
+
+### Added
+
+- **#56 `web/` union-web shell module UI package (PRD N-4)** — model hub management console that mounts into the union-web shell at `/shell/fusion-models-hub/` or runs standalone. Stack per spec §10.1: React 18 + Vite 5 + TypeScript + Tailwind (fusion preset) + Bun, sharing `@fusion/web-ui` (DataTable/MetricTile/StatusBadge/KVPanel/ConfirmDialog/states) and `@fusion/web-sdk` via `file:vendor/@fusion`. Four pages over the REST API: **Models** (keyword search, detail panel with versions/tags, HF import via hf-mirror.com), **Downloads** (progress, client-derived speed/ETA, HF_MIRROR source badge, cancel behind danger confirm — spec §7.3/S5), **Quantize** (task submit + live status table), **Storage** (usage tiles + Fusion-MLX health). `web/manifest.json` per PRD §5.1 (id `fusion-models-hub`, category `platform`, devices desktop + mobile-ready); dev port 11475 registered in `architecture/port-registry.yaml`; four states on every data view; no auth logic in the UI (S8 — gateway injects `X-API-Key` embedded, `VITE_HUB_API_KEY` standalone dev). Verified E2E against a live server: real download created/completed through the UI, quantize task submitted through the UI, `?embedded=1` hides standalone nav; 34 unit tests, lint/typecheck/build green, bundle 56KB gzip. (`web/`, `README.md`, `README_CN.md`)
+
+### Fixes
+
+- **CI MinIO service start (both Docker Hub and quay.io pulls 401)** — MinIO removed all free community container images (2026 StorageSuite pivot): `minio/minio:latest` on Docker Hub returns "repository does not exist" and `quay.io/minio/minio` anonymous pulls are disabled. Switched the CI manual `docker run` and the pg-minio compose file to `cgr.dev/chainguard/minio` (same binary, env vars and `/minio/health/ready` endpoint; manifest pull verified 200): distroless `latest` + `--tmpfs /data:uid=65532,gid=65532` in CI, `latest-dev` (busybox shell) with a wget healthcheck in compose (the minimal image has no `mc`/shell). (`.github/workflows/ci.yml`, `tests/integration/docker-compose-pg-minio.yml`)
+- **unit CI `test` job red on main since #54 (2026-09-03)** — `tests/test_identity_integration.py` builds the app with `identity_integration_enabled=True` and asserts the TenantMiddleware's fail-closed 401s, but unit CI installs only this package; `fusion-core` lives in a sibling repo (not on PyPI), so `fusion_core.tenant` cannot import and the app degrades to the local X-API-Key fallback, turning the assertions into 200s. The runtime fallback is intentional (`server/app.py` WARN); the tests now `pytest.importorskip("fusion_core.tenant")` so they run in full wherever fusion-core is installed (the monorepo venv — 11 tests locally) and skip in the unit CI env. (`tests/test_identity_integration.py`)
+
 ## [1.2.1] — 2026-09-04
 
 Patch release: identity-aware combo mode (Authorization: Bearer + X-Tenant-Id alongside X-API-Key), completing the fusion-studio integration (#55).
