@@ -89,12 +89,18 @@ jobs:
         with:
           python-version: "3.12"
       - name: Start MinIO (server /data)
+        # MinIO removed all free community images (Docker Hub + quay.io, 2026).
+        # Chainguard's minio build is the drop-in replacement (same binary, env
+        # vars, /minio/health/ready endpoint). It runs as nonroot (uid 65532),
+        # so /data is a tmpfs owned by that user — the image itself has no
+        # writable default data dir.
         run: |
           docker run -d --name fmh-minio \
             -p 9000:9000 \
+            --tmpfs /data:uid=65532,gid=65532 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:latest server /data
+            cgr.dev/chainguard/minio:latest server /data
       - name: Wait for MinIO ready
         run: |
           for i in $(seq 1 30); do

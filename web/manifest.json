@@ -1,0 +1,42 @@
+{
+    "id": "fusion-models-hub",
+    "title": "模型仓库管理",
+    "title_en": "Model Hub",
+    "description": "模型仓库浏览、HF 下载任务（进度/速度/HF_MIRROR 来源/可取消）、量化任务状态、存储用量。",
+    "description_en": "Model repository browsing, HF download tasks (progress/speed/HF_MIRROR source/cancellable), quantize task status, storage usage.",
+    "version": "0.1.0",
+    "path": "/model-hub",
+    "icon": "Boxes",
+    "entry": "/shell/fusion-models-hub/",
+    "health": "http://127.0.0.1:11432/shell/fusion-models-hub/api/v1/system/health",
+    "backend": "http://127.0.0.1:11432/shell/fusion-models-hub/",
+    "upstream": "http://127.0.0.1:11475",
+    "api_key_env": "FUSION_MODEL_HUB_WEB_API_KEY",
+    "devices": [
+        "desktop",
+        "mobile-ready"
+    ],
+    "category": "platform",
+    "pages": [
+        {
+            "route": "/models",
+            "title": "模型",
+            "title_en": "Models"
+        },
+        {
+            "route": "/downloads",
+            "title": "下载",
+            "title_en": "Downloads"
+        },
+        {
+            "route": "/quantize",
+            "title": "量化",
+            "title_en": "Quantize"
+        },
+        {
+            "route": "/storage",
+            "title": "存储",
+            "title_en": "Storage"
+        }
+    ]
+}

@@ -86,6 +86,19 @@ fusion-model-hub import -i backup.json
 fusion-model-hub migrate --db-url sqlite+aiosqlite:///data/fmh.db
 ```
 
+## Web 控制台（统一前端 shell 模块）
+
+`web/` 提供 Web UI 包（issue #56，PRD N-4），可挂载到统一前端 shell（`/shell/fusion-models-hub/`）或独立运行：
+
+```bash
+cd web
+bun install
+bun run dev        # vite 11475，代理 /api → 11444
+bun run build      # typecheck + vite build → dist/
+```
+
+页面：模型仓库浏览（搜索/版本/HF 导入）、下载任务（进度/速度/剩余时间/HF_MIRROR 来源标识/取消）、量化任务状态、存储用量。详见 `web/README_CN.md`。
+
 ## API 端点
 
 ### 模型
