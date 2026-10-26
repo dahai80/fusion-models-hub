@@ -36,7 +36,8 @@ async def list_benchmarks(
     quant: str | None = None,
     settings: SettingsDep = None,
 ):
-    mlx_url = settings.mlx_url.rstrip("/")
+    # #58: /v1/benchmarks is a tool endpoint not routed by the gateway.
+    mlx_url = settings.mlx_tool_url.rstrip("/")
     params: dict = {}
     if chip:
         params["chip"] = chip
@@ -73,7 +74,8 @@ async def compare_benchmarks(
     ids = [m.strip() for m in model_ids.split(",") if m.strip()]
     if not ids:
         raise HTTPException(status_code=400, detail="model_ids is required (comma-separated)")
-    mlx_url = settings.mlx_url.rstrip("/")
+    # #58: /v1/benchmarks is a tool endpoint not routed by the gateway.
+    mlx_url = settings.mlx_tool_url.rstrip("/")
     params: dict = {}
     if chip:
         params["chip"] = chip
@@ -110,7 +112,8 @@ async def get_benchmark(
     quant: str | None = None,
     settings: SettingsDep = None,
 ):
-    mlx_url = settings.mlx_url.rstrip("/")
+    # #58: /v1/benchmarks is a tool endpoint not routed by the gateway.
+    mlx_url = settings.mlx_tool_url.rstrip("/")
     params: dict = {}
     if chip:
         params["chip"] = chip

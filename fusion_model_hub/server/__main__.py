@@ -199,7 +199,17 @@ def main():
     serve_parser.add_argument("--port", type=int, default=11444, help="Bind port (default: 11444)")
     serve_parser.add_argument("--data-dir", default="", help="Data directory (default: ./data)")
     serve_parser.add_argument("--db-url", default="", help="Database URL")
-    serve_parser.add_argument("--mlx-url", default="http://localhost:11434", help="Fusion-MLX API URL")
+    # #58: LLM traffic defaults to fusion-gateway; :11434 only for debugging.
+    serve_parser.add_argument(
+        "--mlx-url",
+        default="http://127.0.0.1:11432",
+        help="LLM API URL — fusion-gateway by default (#58); direct :11434 only for debugging",
+    )
+    serve_parser.add_argument(
+        "--mlx-tool-url",
+        default="http://127.0.0.1:11434",
+        help="Direct fusion-mlx URL for tool endpoints (hardware/recommend/convert/quantize)",
+    )
     serve_parser.add_argument("--log-level", default="INFO", help="Log level")
     serve_parser.add_argument("--tls-certfile", default="", help="TLS certificate file path")
     serve_parser.add_argument("--tls-keyfile", default="", help="TLS private key file path")
@@ -249,6 +259,7 @@ def main():
             data_dir=args.data_dir,
             db_url=args.db_url,
             mlx_url=args.mlx_url,
+            mlx_tool_url=args.mlx_tool_url,
             log_level=args.log_level,
             tls_certfile=args.tls_certfile,
             tls_keyfile=args.tls_keyfile,

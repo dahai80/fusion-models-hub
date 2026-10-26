@@ -3,6 +3,14 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.3] — 2026-10-26
+
+Patch release: route Hub LLM calls through fusion-gateway (:11432) instead of direct fusion-mlx (:11434) defaults (#58, tracked from fusion-gateway#301 AC3).
+
+### Changed
+
+- **#58 Dual-URL MLX routing — LLM traffic defaults to fusion-gateway** — `mlx_url` now defaults to `http://127.0.0.1:11432` (the gateway owns routing policy, overflow ceilings, audit and rate limits, so Hub chat/completions/embeddings/health must not silently bypass it), with a new `FMH_MLX_GATEWAY_API_KEY` setting (env `FMH_MLX_GATEWAY_API_KEY`, falls back to `mlx_internal_api_key` for single-key installs) presented as the Bearer on LLM-surface calls — the gateway's key store rejects the raw MLX admin key. New `mlx_tool_url` (env `FMH_MLX_TOOL_URL`, CLI `--mlx-tool-url`) keeps the non-LLM tool surface (hardware/recommend/analyze/adapt/convert/quantize/benchmarks, `api/base_binding.py`) on direct fusion-mlx `:11434`, explicit rather than silent, because the gateway does not route those endpoints (upstream fusion-gateway issue filed for passthrough routes). Model load/unload, cluster-local calls (health/load/chat, peer-node requests) and deployment load/unload/metrics also go direct via `mlx_tool_url` with the MLX internal key — the gateway's `/v1/models/{id}/load|unload` intercept rewrites into the Hub's own `POST /api/v1/models/{id}/serve`, so routing Hub load/unload through the gateway 404s on unknown IDs and would recurse forever on known ones. `FMH_MLX_URL` env now overrides the CLI serve default (same P1-21 env-hook pattern as host/port). Verified E2E against a live gateway + MLX: health through the gateway (mlxConnected true), hardware/recommend via direct MLX, serve→load via direct MLX 200, chat through the gateway 200. (`server/config.py`, `server/__main__.py`, `server/routers/{inference,cluster,deployments,system,hardware,recommend,adapt,analyze,benchmarks,quantize}.py`, `server/tasks.py`, `cli/{main,recommend,analyze}.py`, `api/base_binding.py`, `tests/test_config.py`, `CLAUDE.md`, `README.md`, `README_CN.md`)
+
 ## [1.2.2] — 2026-10-24
 
 Patch release: union-web shell module UI package (#56) + CI unblocks (MinIO image removal, identity tests).

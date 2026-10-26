@@ -20,11 +20,17 @@ def _get_detector(settings: SettingsDep) -> HardwareDetector:
     # 5-min hardware cache on rebuild so a hot-reload-swapped MLX URL does not
     # keep serving stale hardware. api_key is carried so /v1/hardware auths when
     # MLX enforces auth.
-    if _detector is None or _detector.mlx_url != settings.mlx_url or _detector.api_key != settings.mlx_internal_api_key:
+    # #58: /v1/hardware is a tool endpoint not routed by the gateway — target
+    # the direct fusion-mlx tool URL.
+    if (
+        _detector is None
+        or _detector.mlx_url != settings.mlx_tool_url
+        or _detector.api_key != settings.mlx_internal_api_key
+    ):
         if _detector is not None:
             _detector.invalidate_cache()
-        _detector = HardwareDetector(settings.mlx_url, api_key=settings.mlx_internal_api_key)
-        logger.info("HardwareDetector (re)built for mlx_url=%s", settings.mlx_url)
+        _detector = HardwareDetector(settings.mlx_tool_url, api_key=settings.mlx_internal_api_key)
+        logger.info("HardwareDetector (re)built for mlx_tool_url=%s", settings.mlx_tool_url)
     return _detector
 
 

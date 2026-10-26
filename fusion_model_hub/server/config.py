@@ -8,7 +8,21 @@ class Settings:
     port: int = 11444
     data_dir: str = ""
     db_url: str = ""
-    mlx_url: str = "http://127.0.0.1:11434"
+    # #58: LLM traffic defaults to fusion-gateway (:11432) — the gateway owns
+    # routing policy, overflow ceilings, audit and rate limits, so hub chat /
+    # embeddings / health / load-unload must not silently bypass it. The
+    # gateway proxies the OpenAI v1 surface + /v1/models/{id}/load|unload.
+    mlx_url: str = "http://127.0.0.1:11432"
+    # #58: non-LLM tool endpoints (hardware / recommend / analyze / adapt /
+    # convert / quantize / benchmarks) are NOT routed by the gateway yet
+    # (upstream fusion-gateway issue) — they stay on direct fusion-mlx until
+    # the gateway grows passthrough routes. Explicit, not silent: operators
+    # point both at the gateway once it routes the tool surface.
+    mlx_tool_url: str = "http://127.0.0.1:11434"
+    # #58: key the gateway accepts for hub LLM calls. Empty = reuse
+    # mlx_internal_api_key (single-key installs where the gateway is configured
+    # with auth.accept_backend_keys or shares the MLX admin key).
+    mlx_gateway_api_key: str = ""
     log_level: str = "INFO"
     # E-E11: default CORS to an empty origin list (deny all cross-origin).
     # The prior ["*"] let any web origin read API responses. Same-origin and
@@ -127,8 +141,15 @@ class Settings:
                 self.db_url = env_db
             else:
                 self.db_url = f"sqlite+aiosqlite:///{os.path.join(self.data_dir, 'hub.db')}"
-        if not self.mlx_url:
-            self.mlx_url = os.environ.get("FMH_MLX_URL", "http://127.0.0.1:11434")
+        # #58: default through fusion-gateway (:11432). FMH_MLX_URL can still
+        # point straight at fusion-mlx (:11434) for debugging. Like the P1-21
+        # host/port hooks, the CLI serve parser passes a non-empty default, so
+        # compare against the default too — otherwise FMH_MLX_URL would be
+        # silently ignored when launched via `fusion-model-hub serve`.
+        if not self.mlx_url or self.mlx_url == "http://127.0.0.1:11432":
+            self.mlx_url = os.environ.get("FMH_MLX_URL", "http://127.0.0.1:11432")
+        if not self.mlx_tool_url or self.mlx_tool_url == "http://127.0.0.1:11434":
+            self.mlx_tool_url = os.environ.get("FMH_MLX_TOOL_URL", "http://127.0.0.1:11434")
         if not self.storage_type:
             self.storage_type = os.environ.get("FMH_STORAGE_TYPE", "local")
         if not self.minio_endpoint:
@@ -225,6 +246,13 @@ class Settings:
             logging.getLogger(__name__).warning(
                 "FUSION_MLX_API_KEY not set — Hub→MLX requests will have no Bearer token"
             )
+        # #58: gateway-accepted key for hub LLM calls through mlx_url. Resolve
+        # after mlx_internal_api_key so the fallback picks up its final value
+        # (env FUSION_MLX_API_KEY > ~/.fusion-mlx/settings.json).
+        if not self.mlx_gateway_api_key:
+            self.mlx_gateway_api_key = os.environ.get("FMH_MLX_GATEWAY_API_KEY", "")
+        if not self.mlx_gateway_api_key:
+            self.mlx_gateway_api_key = self.mlx_internal_api_key
         if not self.api_key_pepper:
             import hashlib
             import logging

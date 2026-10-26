@@ -24,7 +24,7 @@ async def _assess(model_id: str) -> dict:
     from ..server.config import Settings
 
     settings = Settings()
-    engine = AdaptDecisionEngine(settings.mlx_url)
+    engine = AdaptDecisionEngine(settings.mlx_tool_url)
     result = await engine.assess(model_id)
     logger.info("Assessment for %s: level=%s", model_id, result.level.value)
     return result.model_dump()
@@ -43,7 +43,7 @@ async def _plan(model_id: str) -> dict:
     from ..server.config import Settings
 
     settings = Settings()
-    engine = AdaptDecisionEngine(settings.mlx_url)
+    engine = AdaptDecisionEngine(settings.mlx_tool_url)
     plan = await engine.assess_and_plan(model_id)
     logger.info("Migration plan for %s: level=%s steps=%d", model_id, plan.level.value, len(plan.steps))
     return plan.model_dump()

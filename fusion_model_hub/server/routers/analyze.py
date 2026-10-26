@@ -23,7 +23,8 @@ async def analyze_model(request: AnalyzeRequest, settings: SettingsDep):
     if not request.model_path and not request.hf_repo:
         raise HTTPException(status_code=400, detail="At least one of model_path or hf_repo is required")
 
-    mlx_url = settings.mlx_url.rstrip("/")
+    # #58: /v1/analyze is a tool endpoint not routed by the gateway.
+    mlx_url = settings.mlx_tool_url.rstrip("/")
     payload: dict = {}
     if request.model_path:
         payload["model_path"] = request.model_path

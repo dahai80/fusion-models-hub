@@ -719,7 +719,9 @@ fusion_model_hub/
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `FMH_DATA_DIR` | `./data` | 数据目录（DB 和文件） |
-| `FMH_MLX_URL` | `http://localhost:11434` | Fusion-MLX 服务 URL |
+| `FMH_MLX_URL` | `http://127.0.0.1:11432` | LLM API URL（#58 起默认走 fusion-gateway；chat/completions/embeddings/health 经网关路由） |
+| `FMH_MLX_TOOL_URL` | `http://127.0.0.1:11434` | 工具端点直连 Fusion-MLX URL（hardware/recommend/analyze/adapt/convert/quantize/benchmarks 及模型 load/unload——网关不路由这些端点） |
+| `FMH_MLX_GATEWAY_API_KEY` | 空 | 网关接受的 Hub LLM 调用密钥。为空时复用 Fusion-MLX 内部密钥（单密钥部署） |
 | `FMH_AUTH_ENABLED` | `false` | 启用 API Key 认证 |
 | `FMH_CORS_ORIGINS` | `*` | 允许的 CORS 来源 |
 | `FMH_MAX_UPLOAD_SIZE_MB` | `500` | 最大上传文件大小 |

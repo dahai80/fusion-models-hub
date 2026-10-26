@@ -40,9 +40,11 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
 
     mlx_status = "unavailable"
     mlx_info: dict = {}
+    # #58: mlx_url defaults to the gateway — /health is public there but send
+    # the gateway key for consistency with the rest of the LLM surface.
     mlx_headers = {"X-Fusion-Source": "model-hub"}
-    if settings.mlx_internal_api_key:
-        mlx_headers["Authorization"] = f"Bearer {settings.mlx_internal_api_key}"
+    if settings.mlx_gateway_api_key:
+        mlx_headers["Authorization"] = f"Bearer {settings.mlx_gateway_api_key}"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{settings.mlx_url}/health", headers=mlx_headers)

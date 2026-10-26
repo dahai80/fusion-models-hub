@@ -8,7 +8,7 @@ from ...db import crud
 from ...db.models import DeploymentStatus
 from ..deps import SessionDep, SettingsDep
 from .cluster import _effective_status, get_cluster_node
-from .inference import _mlx_headers
+from .inference import _mlx_tool_headers
 
 logger = logging.getLogger(__name__)
 
@@ -20,22 +20,25 @@ async def _resolve_node_url(session, node_id: str, settings) -> str:
     # placed on. "local"/"" → local MLX; otherwise look up the ClusterNode.
     # Falls back to the local MLX URL if the node row is gone (deleted node),
     # logged — better than a hard failure on unload.
+    # #58: local MLX = direct mlx_tool_url — load/unload through the gateway
+    # would loop back into the hub's own /serve.
     node_id = (node_id or "local").strip()
     if not node_id or node_id == "local":
-        return settings.mlx_url
+        return settings.mlx_tool_url
     node = await get_cluster_node(session, node_id)
     if not node:
         logger.warning("Deployment node %s no longer registered; falling back to local MLX", node_id)
-        return settings.mlx_url
+        return settings.mlx_tool_url
     return node.url
 
 
 async def _load_model_via_mlx(settings, model_name: str, node_url: str | None = None) -> bool:
     # H3: node_url lets a deployment load its model on a specific cluster
     # node's MLX instead of always the local one. None/empty falls back to
-    # settings.mlx_url (legacy behavior).
-    base_url = (node_url or settings.mlx_url).rstrip("/")
-    headers = _mlx_headers(settings)
+    # the direct local MLX tool URL (#58 — never the gateway, whose
+    # /v1/models/{id}/load routes back into the hub).
+    base_url = (node_url or settings.mlx_tool_url).rstrip("/")
+    headers = _mlx_tool_headers(settings)
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
@@ -82,8 +85,9 @@ async def _fetch_mlx_inference_metrics(settings, model_name: str, node_url: str 
     # Tolerates 404 (endpoint absent until #541 merges) by returning {} so the
     # caller keeps the keys null — shape stays stable.
     # H3: node_url queries the node the deployment is actually placed on.
-    base_url = (node_url or settings.mlx_url).rstrip("/")
-    headers = _mlx_headers(settings)
+    # #58: /v1/metrics/json is not routed by the gateway — direct MLX.
+    base_url = (node_url or settings.mlx_tool_url).rstrip("/")
+    headers = _mlx_tool_headers(settings)
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
@@ -224,7 +228,7 @@ async def create_deployment(body: DeploymentCreate, session: SessionDep, request
     # load the model on THAT node's URL, not the local one. Without this the
     # deployment always fell on the local MLX regardless of replicas/node.
     node_id = (body.node_id or "local").strip()
-    node_url = settings.mlx_url
+    node_url = settings.mlx_tool_url
     if node_id and node_id != "local":
         node = await get_cluster_node(session, node_id)
         if not node:
@@ -317,7 +321,7 @@ async def delete_deployment(deployment_id: str, session: SessionDep, settings: S
             async with httpx.AsyncClient(timeout=30.0) as client:
                 await client.post(
                     f"{node_url}/v1/models/{model_name}/unload",
-                    headers=_mlx_headers(settings),
+                    headers=_mlx_tool_headers(settings),
                 )
         except Exception as e:
             logger.warning("MLX unload call failed: %s", e)
@@ -345,7 +349,7 @@ async def stop_deployment(deployment_id: str, session: SessionDep, settings: Set
             async with httpx.AsyncClient(timeout=30.0) as client:
                 await client.post(
                     f"{node_url}/v1/models/{model_name}/unload",
-                    headers=_mlx_headers(settings),
+                    headers=_mlx_tool_headers(settings),
                 )
         except Exception as e:
             logger.warning("MLX unload on stop failed: %s", e)
@@ -439,7 +443,7 @@ async def get_deployment_metrics(deployment_id: str, session: SessionDep, settin
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
                     f"{node_url}/v1/models/status",
-                    headers=_mlx_headers(settings),
+                    headers=_mlx_tool_headers(settings),
                 )
                 if resp.status_code == 200:
                     status_data = resp.json()

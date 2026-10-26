@@ -20,6 +20,21 @@ router = APIRouter(tags=["inference"])
 
 
 def _mlx_headers(settings) -> dict[str, str]:
+    # #58: mlx_url defaults to the gateway, which authenticates with its own
+    # key store — send the gateway key, not the raw fusion-mlx admin key.
+    # mlx_gateway_api_key falls back to mlx_internal_api_key when unset.
+    headers = {"X-Fusion-Source": "model-hub"}
+    if settings.mlx_gateway_api_key:
+        headers["Authorization"] = f"Bearer {settings.mlx_gateway_api_key}"
+    return headers
+
+
+def _mlx_tool_headers(settings) -> dict[str, str]:
+    # #58: load/unload are management calls on fusion-mlx itself, and the
+    # gateway's /v1/models/{id}/load|unload routes back INTO the hub
+    # (rewritten to POST /api/v1/models/{id}/serve) — so the hub must never
+    # send them through mlx_url (404 on unknown id, infinite loop on known).
+    # They go direct to mlx_tool_url with the MLX internal key.
     headers = {"X-Fusion-Source": "model-hub"}
     if settings.mlx_internal_api_key:
         headers["Authorization"] = f"Bearer {settings.mlx_internal_api_key}"
@@ -160,8 +175,8 @@ async def _cleanup_loaded_models() -> None:
                     settings = get_settings()
                     async with httpx.AsyncClient(timeout=15.0) as client:
                         await client.post(
-                            f"{settings.mlx_url}/v1/models/{model_name}/unload",
-                            headers=_mlx_headers(settings),
+                            f"{settings.mlx_tool_url}/v1/models/{model_name}/unload",
+                            headers=_mlx_tool_headers(settings),
                         )
                 except Exception as e:
                     logger.warning("MLX unload during TTL eviction failed for %s: %s", model_id, e)
@@ -341,9 +356,9 @@ async def serve_model(model_id: str, body: ServeRequest, session: SessionDep, se
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                f"{settings.mlx_url}/v1/models/{model_name}/load",
+                f"{settings.mlx_tool_url}/v1/models/{model_name}/load",
                 json={"gpu": body.gpu},
-                headers=_mlx_headers(settings),
+                headers=_mlx_tool_headers(settings),
             )
             resp.raise_for_status()
     except httpx.ConnectError:
@@ -410,9 +425,9 @@ async def hot_reload_model(
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                f"{settings.mlx_url}/v1/models/{model_name}/load",
+                f"{settings.mlx_tool_url}/v1/models/{model_name}/load",
                 json={"gpu": True},
-                headers=_mlx_headers(settings),
+                headers=_mlx_tool_headers(settings),
             )
             if resp.status_code not in (200, 409):
                 logger.warning("Hot-reload preload returned %d for %s", resp.status_code, model_name)
@@ -479,8 +494,8 @@ async def unload_model(model_id: str, settings: SettingsDep, session: SessionDep
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             await client.post(
-                f"{settings.mlx_url}/v1/models/{model_name}/unload",
-                headers=_mlx_headers(settings),
+                f"{settings.mlx_tool_url}/v1/models/{model_name}/unload",
+                headers=_mlx_tool_headers(settings),
             )
     except Exception as e:
         logger.warning("MLX unload failed: %s", e)
