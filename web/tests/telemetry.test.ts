@@ -85,9 +85,9 @@ describe("downloadSource", () => {
     });
 
     test("modelscope", () => {
-        expect(downloadSource("https://modelscope.cn/models/qwen/Qwen2.5")).toBe(
-            "MODELSCOPE",
-        );
+        expect(
+            downloadSource("https://modelscope.cn/models/qwen/Qwen2.5"),
+        ).toBe("MODELSCOPE");
     });
 
     test("anything else", () => {
