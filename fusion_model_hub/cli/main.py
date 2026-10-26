@@ -37,7 +37,7 @@ async def _show_hardware() -> str:
     from ..server.config import Settings
 
     settings = Settings()
-    detector = HardwareDetector(settings.mlx_url)
+    detector = HardwareDetector(settings.mlx_tool_url)
     profile = await detector.detect()
 
     lines = ["=== Hardware Profile ==="]

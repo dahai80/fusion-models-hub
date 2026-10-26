@@ -104,3 +104,110 @@ class TestOpsEnvWiring:
         monkeypatch.setenv("FMH_HOST", "0.0.0.0")
         s = Settings(host="10.0.0.5")
         assert s.host == "10.0.0.5"
+
+
+class TestGatewayDefaults:
+    # #58: mlx_url defaults to fusion-gateway (:11432) so LLM traffic goes
+    # through routing/audit; tool endpoints stay on direct fusion-mlx via
+    # mlx_tool_url until the gateway routes them. FMH_MLX_URL /
+    # FMH_MLX_TOOL_URL override; the env must win over the CLI serve parser's
+    # non-empty default (P1-21 pattern). mlx_gateway_api_key falls back to
+    # mlx_internal_api_key for single-key installs.
+
+    def _clear_url_env(self, monkeypatch):
+        for var in (
+            "FMH_MLX_URL",
+            "FMH_MLX_TOOL_URL",
+            "FMH_MLX_GATEWAY_API_KEY",
+            "FUSION_MLX_API_KEY",
+            "MLX_INTERNAL_API_KEY",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_mlx_url_defaults_to_gateway(self, monkeypatch):
+        self._clear_url_env(monkeypatch)
+        s = Settings()
+        assert s.mlx_url == "http://127.0.0.1:11432"
+        assert s.mlx_tool_url == "http://127.0.0.1:11434"
+
+    def test_env_overrides_cli_serve_default(self, monkeypatch):
+        # `fusion-model-hub serve` passes the non-empty parser default into
+        # Settings() — FMH_MLX_URL must still win (P1-21 pattern).
+        self._clear_url_env(monkeypatch)
+        monkeypatch.setenv("FMH_MLX_URL", "http://127.0.0.1:11434")
+        monkeypatch.setenv("FMH_MLX_TOOL_URL", "http://10.0.0.5:11434")
+        s = Settings(mlx_url="http://127.0.0.1:11432", mlx_tool_url="http://127.0.0.1:11434")
+        assert s.mlx_url == "http://127.0.0.1:11434"
+        assert s.mlx_tool_url == "http://10.0.0.5:11434"
+
+    def test_explicit_non_default_arg_beats_env(self, monkeypatch):
+        self._clear_url_env(monkeypatch)
+        monkeypatch.setenv("FMH_MLX_URL", "http://127.0.0.1:11432")
+        s = Settings(mlx_url="http://127.0.0.1:19999")
+        assert s.mlx_url == "http://127.0.0.1:19999"
+
+    def test_gateway_key_falls_back_to_internal_key(self, monkeypatch, tmp_path):
+        self._clear_url_env(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("FUSION_MLX_API_KEY", "shared-key")
+        s = Settings()
+        assert s.mlx_gateway_api_key == "shared-key"
+        assert s.mlx_internal_api_key == "shared-key"
+
+    def test_gateway_key_env_wins(self, monkeypatch, tmp_path):
+        self._clear_url_env(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("FUSION_MLX_API_KEY", "mlx-key")
+        monkeypatch.setenv("FMH_MLX_GATEWAY_API_KEY", "gateway-key")
+        s = Settings()
+        assert s.mlx_gateway_api_key == "gateway-key"
+        assert s.mlx_internal_api_key == "mlx-key"
+
+
+class TestMlxHeadersGatewayKey:
+    # #58: LLM-surface routers send the gateway-accepted key, not the raw
+    # fusion-mlx admin key — the gateway's key store rejects the latter.
+
+    def test_headers_use_gateway_key(self):
+        from fusion_model_hub.server.routers.inference import _mlx_headers
+
+        class S:
+            mlx_gateway_api_key = "gw-key"
+            mlx_internal_api_key = "mlx-key"
+
+        h = _mlx_headers(S())
+        assert h["Authorization"] == "Bearer gw-key"
+        assert h["X-Fusion-Source"] == "model-hub"
+
+    def test_headers_omit_bearer_when_no_key(self):
+        from fusion_model_hub.server.routers.inference import _mlx_headers
+
+        class S:
+            mlx_gateway_api_key = ""
+            mlx_internal_api_key = ""
+
+        h = _mlx_headers(S())
+        assert "Authorization" not in h
+
+    def test_tool_headers_use_internal_key(self):
+        # load/unload go direct to MLX — the internal key, never the gateway key
+        from fusion_model_hub.server.routers.inference import _mlx_tool_headers
+
+        class S:
+            mlx_gateway_api_key = "gw-key"
+            mlx_internal_api_key = "mlx-key"
+
+        h = _mlx_tool_headers(S())
+        assert h["Authorization"] == "Bearer mlx-key"
+
+    def test_cluster_headers_use_internal_key(self):
+        # #58: cluster targets (local MLX + peer nodes) are direct fusion-mlx
+        # servers — internal key, not the gateway key.
+        from fusion_model_hub.server.routers.cluster import _mlx_headers
+
+        class S:
+            mlx_gateway_api_key = "gw-key"
+            mlx_internal_api_key = "mlx-key"
+
+        h = _mlx_headers(S())
+        assert h["Authorization"] == "Bearer mlx-key"

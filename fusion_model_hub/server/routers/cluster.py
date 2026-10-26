@@ -82,6 +82,10 @@ class NodeCreate(BaseModel):
 
 
 def _mlx_headers(settings) -> dict[str, str]:
+    # #58: every cluster target (local MLX + registered peer nodes) is a
+    # direct fusion-mlx server, never the gateway — and the gateway's
+    # /v1/models/{id}/load|unload loops back into the hub. Present the MLX
+    # internal key and call mlx_tool_url, not mlx_url.
     headers = {"X-Fusion-Source": "model-hub"}
     if settings.mlx_internal_api_key:
         headers["Authorization"] = f"Bearer {settings.mlx_internal_api_key}"
@@ -142,12 +146,14 @@ async def _check_alive(url: str, settings) -> bool:
 
 
 def _local_node_dict(settings, alive: bool) -> dict:
-    host, port = _parse_host_port(settings.mlx_url)
+    # #58: the "local" cluster node is the direct fusion-mlx server, not the
+    # gateway — cluster peers speak to MLX directly.
+    host, port = _parse_host_port(settings.mlx_tool_url)
     now = datetime.now(UTC).isoformat() if alive else None
     return {
         "id": "local",
         "name": "local-mlx",
-        "url": settings.mlx_url,
+        "url": settings.mlx_tool_url,
         "host": host or "127.0.0.1",
         "port": port or 11434,
         "status": "active" if alive else "inactive",
@@ -204,7 +210,7 @@ async def add_node(body: NodeCreate, session: SessionDep):
 async def get_nodes(session: SessionDep, settings: SettingsDep):
     await _reap_stale_nodes(session)
     nodes = await list_cluster_nodes(session)
-    alive = await _check_alive(settings.mlx_url, settings)
+    alive = await _check_alive(settings.mlx_tool_url, settings)
     node_dicts = [_local_node_dict(settings, alive), *[_node_to_dict(n) for n in nodes]]
     logger.info("Listed cluster nodes: %d registered + 1 local (alive=%s)", len(nodes), alive)
     return {"nodes": node_dicts, "total": len(node_dicts)}
@@ -353,7 +359,7 @@ class SyncModelRequest(BaseModel):
 @router.get("/cluster/topology")
 async def cluster_topology(session: SessionDep, settings: SettingsDep):
     nodes = await list_cluster_nodes(session)
-    alive = await _check_alive(settings.mlx_url, settings)
+    alive = await _check_alive(settings.mlx_tool_url, settings)
     node_dicts = [_local_node_dict(settings, alive), *[_node_to_dict(n) for n in nodes]]
     edges = [{"id": "hub-local", "from": "hub", "to": "local", "latency": 0.0, "bandwidth": 0.0}]
     for node in nodes:
@@ -398,14 +404,14 @@ async def sync_model_to_cluster(body: SyncModelRequest, session: SessionDep, set
     # the remote-sync POST hang to its timeout and inflate remote_failed.
     nodes = [n for n in nodes if _effective_status(n) == "active"]
 
-    alive = await _check_alive(settings.mlx_url, settings)
+    alive = await _check_alive(settings.mlx_tool_url, settings)
     local_ok = False
     want_local = not body.target_nodes or "local" in body.target_nodes
     if alive and want_local:
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
-                    f"{settings.mlx_url}/v1/models/{model_name}/load",
+                    f"{settings.mlx_tool_url}/v1/models/{model_name}/load",
                     headers=_mlx_headers(settings),
                 )
                 local_ok = resp.status_code in (200, 409)
@@ -413,7 +419,7 @@ async def sync_model_to_cluster(body: SyncModelRequest, session: SessionDep, set
                 if resp.status_code == 404:
                     logger.info("MLX /load 404 (upstream route shadowing), falling back to chat auto-load")
                     chat_resp = await client.post(
-                        f"{settings.mlx_url}/v1/chat/completions",
+                        f"{settings.mlx_tool_url}/v1/chat/completions",
                         json={
                             "model": model_name,
                             "messages": [{"role": "user", "content": "."}],
@@ -500,12 +506,12 @@ async def route_inference(body: RouteInferenceRequest, session: SessionDep, sett
     model_name = m.hf_repo or m.name
     mode = (body.mode or "auto").lower()
 
-    alive = await _check_alive(settings.mlx_url, settings)
+    alive = await _check_alive(settings.mlx_tool_url, settings)
     use_local = alive if mode == "local" else (False if mode == "cluster" else alive)
 
     if use_local:
         try:
-            result = await _chat(settings.mlx_url, settings, model_name, body.messages)
+            result = await _chat(settings.mlx_tool_url, settings, model_name, body.messages)
             logger.info("Route-inference local: model=%s", model_name)
             return _chat_to_response(result, "local", "local", model_name)
         except httpx.ConnectError:
@@ -562,7 +568,7 @@ async def remote_sync_inbox(body: RemoteSyncRequest, session: SessionDep, settin
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                f"{settings.mlx_url}/v1/models/{model_name}/load",
+                f"{settings.mlx_tool_url}/v1/models/{model_name}/load",
                 headers=_mlx_headers(settings),
             )
             accepted = resp.status_code in (200, 409)

@@ -942,7 +942,9 @@ Environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FMH_DATA_DIR` | `./data` | Data directory for DB and files |
-| `FMH_MLX_URL` | `http://127.0.0.1:11434` | Fusion-MLX server URL (direct, not gateway) |
+| `FMH_MLX_URL` | `http://127.0.0.1:11432` | LLM API URL — fusion-gateway by default (#58); chat/completions/embeddings/health route through it |
+| `FMH_MLX_TOOL_URL` | `http://127.0.0.1:11434` | Direct Fusion-MLX URL for tool endpoints (hardware/recommend/analyze/adapt/convert/quantize/benchmarks) and model load/unload — the gateway does not route these |
+| `FMH_MLX_GATEWAY_API_KEY` | `` | Key the gateway accepts for Hub LLM calls. Empty = reuse the Fusion-MLX internal key (single-key installs) |
 | `FMH_AUTH_ENABLED` | `true` | Enable API key authentication (default: enabled) |
 | `FMH_CORS_ORIGINS` | `*` | Allowed CORS origins |
 | `FMH_MAX_UPLOAD_SIZE_MB` | `500` | Max upload file size |
@@ -971,7 +973,7 @@ Environment variables:
 | `FUSION_IDENTITY_JWT_AUDIENCE` | `fusion-cluster` | Expected JWT audience claim |
 | `FUSION_MLX_API_KEY` | `` | Bearer token for Hub→MLX requests (MLX_INTERNAL_API_KEY as deprecated fallback) |
 
-CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
+CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--mlx-tool-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
 
 ### Production secrets
 
@@ -1007,7 +1009,7 @@ Run through this before exposing a Hub on a network. Every item is a hard gate f
 - [ ] `FMH_BACKUP_DIR` set if auto-backup desired (disabled if unset).
 
 **Runtime**
-- [ ] Fusion-MLX reachable at `FMH_MLX_URL`; `start.sh status` shows healthy + model loaded.
+- [ ] fusion-gateway reachable at `FMH_MLX_URL` (LLM surface) with `FMH_MLX_GATEWAY_API_KEY` accepted, AND Fusion-MLX reachable at `FMH_MLX_TOOL_URL` (tool surface + load/unload); `start.sh status` shows healthy + model loaded.
 - [ ] Python 3.12+ (declared in `pyproject.toml` `requires-python` and the monorepo `.python-version`). A 3.14 venv works but the contract is 3.12; pin to avoid surprise stdlib/dep breaks.
 - [ ] `pytest` green (864 unit tests, default run) and `ruff check .` clean before tagging a release.
 - [ ] Integration suites pass in CI when changed: `test_integration_multinode`, `test_integration_pg_minio`, `test_integration_migration` (see `.github/workflows/ci.yml`). MLX integration (`test_integration_mlx`) is manual — Apple Silicon only.

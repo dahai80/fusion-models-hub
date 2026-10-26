@@ -250,7 +250,7 @@ async def start_lora_merge(body: LoraMergeRequest, session: SessionDep):
                 try:
                     async with httpx.AsyncClient(timeout=300.0) as client:
                         resp = await client.post(
-                            f"{settings.mlx_url}/v1/merge-adapter",
+                            f"{settings.mlx_tool_url}/v1/merge-adapter",
                             json=merge_payload,
                             headers=headers,
                         )
@@ -351,7 +351,8 @@ async def get_lora_merge_status(task_id: str, session: SessionDep):
 
 @router.post("/quantize/layered", status_code=202)
 async def start_layered_quantize(body: LayeredQuantizeRequest, settings: SettingsDep):
-    mlx_url = settings.mlx_url.rstrip("/")
+    # #58: /v1/quantize* are tool endpoints not routed by the gateway.
+    mlx_url = settings.mlx_tool_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Upstream contract (fusion-mlx#646): MLX exposes POST /v1/quantize
@@ -420,7 +421,8 @@ async def start_layered_quantize(body: LayeredQuantizeRequest, settings: Setting
 
 @router.get("/quantize/layered/jobs/{job_id}")
 async def get_layered_quantize_job(job_id: str, settings: SettingsDep):
-    mlx_url = settings.mlx_url.rstrip("/")
+    # #58: /v1/quantize* are tool endpoints not routed by the gateway.
+    mlx_url = settings.mlx_tool_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Upstream contract (fusion-mlx#646): MLX exposes GET
@@ -448,7 +450,8 @@ async def get_layered_quantize_job(job_id: str, settings: SettingsDep):
 
 @router.get("/quantize/layered/jobs")
 async def list_layered_quantize_jobs(settings: SettingsDep):
-    mlx_url = settings.mlx_url.rstrip("/")
+    # #58: /v1/quantize* are tool endpoints not routed by the gateway.
+    mlx_url = settings.mlx_tool_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Upstream contract (fusion-mlx#646): MLX exposes GET
@@ -474,7 +477,8 @@ async def list_layered_quantize_jobs(settings: SettingsDep):
 
 @router.post("/quantize/evaluate")
 async def evaluate_quantize(body: QuantizeEvaluateRequest, settings: SettingsDep):
-    mlx_url = settings.mlx_url.rstrip("/")
+    # #58: /v1/quantize* are tool endpoints not routed by the gateway.
+    mlx_url = settings.mlx_tool_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(

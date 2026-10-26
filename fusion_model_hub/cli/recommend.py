@@ -29,7 +29,7 @@ async def _recommend(task: str, preference: str, max_results: int, min_params: f
     from ..server.config import Settings
 
     settings = Settings()
-    engine = RecommendEngine(settings.mlx_url)
+    engine = RecommendEngine(settings.mlx_tool_url)
     request = RecommendRequest(
         task=task,
         preference=preference,

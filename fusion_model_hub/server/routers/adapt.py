@@ -32,13 +32,15 @@ def _get_engine(settings: SettingsDep) -> AdaptDecisionEngine:
     # engine authenticates against the new credential. On rebuild, drop the old
     # engine's embedded HardwareDetector 5-min cache so a swapped MLX URL does
     # not keep serving the prior MLX's stale hardware profile.
-    if _engine is None or _engine.mlx_url != settings.mlx_url or _engine.api_key != settings.mlx_internal_api_key:
+    # #58: /v1/migration-level + /v1/analyze are tool endpoints not routed by
+    # the gateway — target the direct fusion-mlx tool URL.
+    if _engine is None or _engine.mlx_url != settings.mlx_tool_url or _engine.api_key != settings.mlx_internal_api_key:
         if _engine is not None:
             _engine.invalidate_cache()
-        _engine = AdaptDecisionEngine(settings.mlx_url, api_key=settings.mlx_internal_api_key)
+        _engine = AdaptDecisionEngine(settings.mlx_tool_url, api_key=settings.mlx_internal_api_key)
         logger.info(
-            "AdaptDecisionEngine (re)built for mlx_url=%s",
-            settings.mlx_url,
+            "AdaptDecisionEngine (re)built for mlx_tool_url=%s",
+            settings.mlx_tool_url,
         )
     return _engine
 
@@ -106,7 +108,8 @@ async def execute_adaptation(request: ExecuteRequest, settings: SettingsDep):
                 logger.warning("Adapt execution aborted: model %s is L4 (unsupported)", request.model_id)
                 return
 
-            mlx_url = settings.mlx_url.rstrip("/")
+            # #58: /v1/convert is a tool endpoint not routed by the gateway.
+            mlx_url = settings.mlx_tool_url.rstrip("/")
             hf_source = request.hf_repo or request.model_id
 
             async with httpx.AsyncClient(timeout=300.0) as client:
