@@ -3,6 +3,17 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.4] — 2026-10-27
+
+Patch release: re-sync vendored `@fusion/web-sdk` to upstream v0.1.2 (#60).
+
+### Fixed
+
+- **#60 Vendored `@fusion/web-sdk` re-synced to v0.1.2** — picked up two upstream fixes while keeping the local #1298 (`?embedded=1` deep-link posture) and #20 (direct-request content-type/timeout) enhancements:
+  - Host bridge TypeError (fusion-web-shell#75, v0.1.1): `'__httpError' in (result as object)` threw `TypeError: Cannot use 'in' operator` when a bridge method returned a bare string (e.g. `theme` → `'light'`), so the module never received its response. Now guarded by the `isHttpErrorResult()` type predicate.
+  - Stale `theme.get()` in embedded mode (fusion-web-shell#77, v0.1.2): `theme.get()` read the module's own `documentElement`, which never carries the host theme class. Now a synchronous cached read (`createThemeState` in new `src/theme.ts`), seeded from the module document, corrected by a background host pull at init, kept fresh by host push events; same-value updates don't re-notify. API unchanged: `get(): ThemeMode` stays sync, `subscribe` is the source of truth. Local extension: the background host pull is skipped when there is no parent frame (#1298 deep-link posture) — no host can answer, so the pull would just dangle on its 5s timeout.
+  - Vendored `package.json` bumped 0.1.0 → 0.1.2; upstream `tests/host.test.ts` + `tests/theme.test.ts` vendored alongside the existing suite (web tests 34 → 42, all pass; `tsc --noEmit` + `bun run build` clean). No wire-format or API changes; the module app had no hand-rolled theme pulls to migrate.
+
 ## [1.2.3] — 2026-10-26
 
 Patch release: route Hub LLM calls through fusion-gateway (:11432) instead of direct fusion-mlx (:11434) defaults (#58, tracked from fusion-gateway#301 AC3).
