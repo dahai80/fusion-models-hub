@@ -47,7 +47,16 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
         mlx_headers["Authorization"] = f"Bearer {settings.mlx_gateway_api_key}"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.mlx_url}/health", headers=mlx_headers)
+            # #71: probe the lightweight /healthz first. The gateway's full
+            # /health fans out to every backend including this hub, so probing
+            # it from here nests the recursion
+            # (gateway /health -> hub /health -> gateway /health -> ...),
+            # truncated only by stacked 5s timeouts. /healthz has no backend
+            # fan-out. Fall back to /health for targets without a /healthz
+            # (e.g. direct fusion-mlx).
+            resp = await client.get(f"{settings.mlx_url}/healthz", headers=mlx_headers)
+            if resp.status_code == 404:
+                resp = await client.get(f"{settings.mlx_url}/health", headers=mlx_headers)
             if resp.status_code == 200:
                 mlx_status = "available"
                 try:

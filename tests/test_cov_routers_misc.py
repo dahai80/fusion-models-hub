@@ -526,6 +526,45 @@ class TestSystemHealth:
         assert resp.status_code == 200
         assert resp.json()["mlx"]["status"] == "error"
 
+    async def test_health_probes_lightweight_healthz_first(self, client):
+        # #71: the hub must probe the gateway's /healthz (no backend fan-out),
+        # not the full /health which fans out back to the hub itself.
+        mock_resp = _resp(200, {"ok": True})
+        mock_inst = _mock_httpx_client(get_resp=mock_resp)
+        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+            resp = await client.get("/api/v1/system/health")
+        assert resp.status_code == 200
+        assert resp.json()["mlx"]["status"] == "available"
+        calls = [c.args[0] for c in mock_inst.get.call_args_list]
+        assert calls == [c for c in calls if c.endswith("/healthz")]
+        assert len(calls) == 1
+
+    async def test_health_falls_back_to_health_when_healthz_missing(self, client):
+        # #71: direct fusion-mlx has no /healthz — 404 falls back to /health.
+        healthz_404 = _resp(404, text="not found")
+        health_ok = _resp(200, {"version": "0.1"})
+        mock_inst = _mock_httpx_client(get_side=[healthz_404, health_ok])
+        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+            resp = await client.get("/api/v1/system/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["mlx"]["status"] == "available"
+        assert data["mlx"]["info"] == {"version": "0.1"}
+        calls = [c.args[0] for c in mock_inst.get.call_args_list]
+        assert calls[0].endswith("/healthz")
+        assert calls[1].endswith("/health")
+
+    async def test_health_healthz_error_status_propagates(self, client):
+        # #71: a non-404 /healthz failure must NOT trigger the /health
+        # fallback (that would re-open the recursion for erroring gateways).
+        mock_resp = _resp(500, text="err")
+        mock_inst = _mock_httpx_client(get_resp=mock_resp)
+        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+            resp = await client.get("/api/v1/system/health")
+        assert resp.status_code == 200
+        assert resp.json()["mlx"]["status"] == "error_500"
+        assert mock_inst.get.call_count == 1
+
     async def test_health_model_count_query(self, client):
         await _create_model(client, "health-model-1")
         mock_resp = _resp(200, {"version": "0.1"})
