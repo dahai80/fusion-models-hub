@@ -1625,11 +1625,15 @@ class TestConfigEnvWiring:
         s = Settings(mlx_internal_api_key="")
         assert s.mlx_internal_api_key == "secret-token"
 
-    def test_mlx_api_key_deprecated_env(self, monkeypatch):
-        monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    def test_mlx_api_key_deprecated_env_ignored(self, monkeypatch, tmp_path):
+        # #68: bare MLX_INTERNAL_API_KEY is no longer read — resolution moved
+        # to fusion_core.config (FUSION_MLX_API_KEY > settings.json > client key).
+        for var in ("FUSION_MLX_API_KEY", "FUSION_CLIENT_KEY", "MLX_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("MLX_INTERNAL_API_KEY", "old-token")
         s = Settings(mlx_internal_api_key="")
-        assert s.mlx_internal_api_key == "old-token"
+        assert s.mlx_internal_api_key == ""
 
     def test_api_key_pepper_from_env(self, monkeypatch):
         monkeypatch.setenv("FMH_API_KEY_PEPPER", "custom-pepper")
