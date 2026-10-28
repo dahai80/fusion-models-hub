@@ -2,13 +2,13 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ...db import crud
+from ..config import resolve_service_secret
 from ..deps import SessionDep, StoreDep
 
 logger = logging.getLogger(__name__)
@@ -19,10 +19,10 @@ router = APIRouter(tags=["watermark"])
 # Schema: Watermark ORM in db/models.py
 # E-S6: the prior default signing secret was a source-public constant, so a
 # watermark could be forged by anyone with the source. Now refuse to sign unless
-# a non-default FMH_WATERMARK_SECRET is configured. Verification uses a
-# constant-time compare (hmac.compare_digest) so signature-mismatch does not
-# leak timing.
-_DEFAULT_SECRET = "fusion-model-hub-default-secret"  # noqa: S105 - sentinel, not a real secret
+# an FMH_WATERMARK_SECRET is configured. #63: no default literal at all — unset
+# means empty; prod raises at resolve time, dev warns and the endpoint 503s.
+# Verification uses a constant-time compare (hmac.compare_digest) so
+# signature-mismatch does not leak timing.
 
 # #1: the sidecar filename written into the version dir so the watermark
 # travels with the model files and verifies without the Hub DB.
@@ -30,11 +30,11 @@ _SIDECAR_NAME = "watermark.json"
 
 
 def _resolve_wm_secret() -> str:
-    secret = os.environ.get("FMH_WATERMARK_SECRET", "")
-    if not secret or secret == _DEFAULT_SECRET:
+    secret = resolve_service_secret("FMH_WATERMARK_SECRET", "generate a high-entropy secret and export it")
+    if not secret:
         raise HTTPException(
             status_code=503,
-            detail="Watermark disabled: set a non-default FMH_WATERMARK_SECRET env "
+            detail="Watermark disabled: set the FMH_WATERMARK_SECRET env "
             "(high entropy) before embedding/verifying watermarks",
         )
     return secret

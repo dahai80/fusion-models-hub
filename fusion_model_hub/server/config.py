@@ -304,3 +304,23 @@ class Settings:
         env_aud = os.environ.get("FUSION_IDENTITY_JWT_AUDIENCE", "")
         if env_aud:
             self.identity_jwt_audience = env_aud
+
+
+def resolve_service_secret(env: str, how_to: str) -> str:
+    # #63: config-conventions §3 — default secret literals are illegal in
+    # non-test code. Unset means empty, never a fallback constant: prod raises
+    # (guessable default = auth bypass), dev warns and the caller disables the
+    # dependent feature with a clear message.
+    import logging
+
+    value = os.environ.get(env, "")
+    if value:
+        return value
+    if os.getenv("FUSION_PROFILE", "dev") == "prod":
+        raise RuntimeError(f"{env} not set — {how_to}, see architecture/config-conventions.md")
+    logging.getLogger(__name__).warning(
+        "%s not set — empty under dev profile; set it to enable the dependent "
+        "feature (see architecture/config-conventions.md)",
+        env,
+    )
+    return ""

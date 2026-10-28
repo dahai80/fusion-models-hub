@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ...db import crud
+from ..config import resolve_service_secret
 from ..deps import SessionDep, StoreDep
 
 logger = logging.getLogger(__name__)
@@ -21,8 +22,9 @@ router = APIRouter(tags=["encryption"])
 # E-S5: the prior default key was a source-public constant, so an unset
 # FMH_ENCRYPTION_KEY silently produced ciphertext anyone with the source could
 # decrypt — "encrypted: true" was a false guarantee. Now refuse to operate
-# unless a non-default key is configured. Fail loud, not false security.
-_DEFAULT_KEY = "fusion-model-hub-default-encryption-key-32b"
+# unless a key is configured. #63: no default literal at all — unset means
+# empty; prod raises at resolve time, dev warns and the endpoint 503s.
+# Fail loud, not false security.
 # P1-4: chunked streaming so GB-scale model files no longer hit a 512MB in-mem
 # cap. Each chunk is Fernet-encrypted independently and framed with a 4-byte
 # big-endian length prefix; a magic header distinguishes the chunked format
@@ -42,11 +44,13 @@ class DecryptRequest(BaseModel):
 def _resolve_fernet() -> Any:
     from cryptography.fernet import Fernet
 
-    key = os.environ.get("FMH_ENCRYPTION_KEY", "")
-    if not key or key == _DEFAULT_KEY:
+    key = resolve_service_secret(
+        "FMH_ENCRYPTION_KEY", "generate a key with Fernet.generate_key() and export it"
+    )
+    if not key:
         raise HTTPException(
             status_code=503,
-            detail="Encryption disabled: set a non-default FMH_ENCRYPTION_KEY env "
+            detail="Encryption disabled: set the FMH_ENCRYPTION_KEY env "
             "(>=32 bytes, high entropy) before encrypting/decrypting model files",
         )
     key_bytes = key.encode()[:32].ljust(32, b"\0")
