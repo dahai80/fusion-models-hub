@@ -3,6 +3,15 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.6] — 2026-10-28
+
+Patch release: config governance (#68).
+
+### Changed
+- **#68**: `mlx_internal_api_key` resolution delegated to `fusion_core.config` (fusion-core#31) — env `FUSION_MLX_API_KEY` > `~/.fusion-mlx/settings.json` `auth.api_key` > `FUSION_CLIENT_KEY`/`MLX_API_KEY` chain. Under `FUSION_PROFILE=prod` an unresolvable key now fails fast at startup (config-conventions §3) instead of silently sending no Bearer; dev keeps the warn-and-continue behavior.
+- **#68 (BREAKING for stale deployments)**: the deprecated bare `MLX_INTERNAL_API_KEY` env alias is removed — it is no longer read. Migrate to `FUSION_MLX_API_KEY` (or rely on the settings.json fallback) before upgrading.
+- `fusion-core` added as an explicit dependency (git-pinned `v0.7.0`, fusion-bench pattern); the E-S13 lax-perms warning on `~/.fusion-mlx/settings.json` stays local because `fusion_core.config` does not check file permissions.
+
 ## [1.2.5] — 2026-10-28
 
 Patch release: security remediation + operability.
