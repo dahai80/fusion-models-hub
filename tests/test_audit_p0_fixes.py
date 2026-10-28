@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import shutil
 from pathlib import Path
 
@@ -590,6 +591,46 @@ class TestDownloadCooperativeCancel:
 # ============================================================================
 # P1 audit fixes: E-S5~S13 (security) + E-D4~D8 (data integrity)
 # ============================================================================
+
+
+class TestServiceSecretProfile:
+    # #63: default secret literals removed. Unset means empty — prod fails
+    # fast with a guidance message, dev warns and returns "".
+    def test_resolve_secret_prod_raises(self, monkeypatch):
+        from fusion_model_hub.server.config import resolve_service_secret
+
+        monkeypatch.delenv("FMH_WATERMARK_SECRET", raising=False)
+        monkeypatch.setenv("FUSION_PROFILE", "prod")
+        with pytest.raises(RuntimeError, match="FMH_WATERMARK_SECRET"):
+            resolve_service_secret("FMH_WATERMARK_SECRET", "generate a high-entropy secret")
+
+    def test_resolve_secret_prod_message_has_three_elements(self, monkeypatch):
+        from fusion_model_hub.server.config import resolve_service_secret
+
+        monkeypatch.delenv("FMH_ENCRYPTION_KEY", raising=False)
+        monkeypatch.setenv("FUSION_PROFILE", "prod")
+        with pytest.raises(RuntimeError) as exc_info:
+            resolve_service_secret("FMH_ENCRYPTION_KEY", "generate with Fernet.generate_key()")
+        msg = str(exc_info.value)
+        assert "FMH_ENCRYPTION_KEY" in msg
+        assert "Fernet.generate_key()" in msg
+        assert "architecture/config-conventions.md" in msg
+
+    def test_resolve_secret_dev_warns_and_returns_empty(self, monkeypatch, caplog):
+        from fusion_model_hub.server.config import resolve_service_secret
+
+        monkeypatch.delenv("FMH_ENCRYPTION_KEY", raising=False)
+        monkeypatch.delenv("FUSION_PROFILE", raising=False)
+        with caplog.at_level(logging.WARNING):
+            value = resolve_service_secret("FMH_ENCRYPTION_KEY", "generate a key")
+        assert value == ""
+        assert any("FMH_ENCRYPTION_KEY" in r.message for r in caplog.records)
+
+    def test_resolve_secret_set_value_passthrough(self, monkeypatch):
+        from fusion_model_hub.server.config import resolve_service_secret
+
+        monkeypatch.setenv("FMH_WATERMARK_SECRET", "a-real-high-entropy-secret")
+        assert resolve_service_secret("FMH_WATERMARK_SECRET", "x") == "a-real-high-entropy-secret"
 
 
 class TestEncryptionKeyGuard:
