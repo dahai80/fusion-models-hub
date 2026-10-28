@@ -193,59 +193,24 @@ class Settings:
         if cors_env:
             self.cors_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
         if not self.mlx_internal_api_key:
+            # #68: single-point key resolution lives in fusion_core.config
+            # (config-conventions §2, fusion-core#31). resolve_api_key() covers
+            # the MLX-native sources — env FUSION_MLX_API_KEY then
+            # ~/.fusion-mlx/settings.json auth.api_key — so a local install
+            # keeps working without separately configuring the key (MLX gates
+            # on that file; without a matching Bearer every hub→MLX call 401s).
+            # client_key() adds the FUSION_CLIENT_KEY/MLX_API_KEY chain with
+            # the §3 dev-warn / prod-raise semantics when neither source yields
+            # a key. The deprecated bare MLX_INTERNAL_API_KEY alias is gone.
             import logging
+
+            from fusion_core.config import client_key, resolve_api_key
 
             logger = logging.getLogger(__name__)
-            if os.environ.get("FUSION_MLX_API_KEY"):
-                self.mlx_internal_api_key = os.environ["FUSION_MLX_API_KEY"]
-                logger.info("MLX API key loaded from env FUSION_MLX_API_KEY")
-            elif os.environ.get("MLX_INTERNAL_API_KEY"):
-                self.mlx_internal_api_key = os.environ["MLX_INTERNAL_API_KEY"]
-                logger.warning(
-                    "MLX API key loaded from deprecated env MLX_INTERNAL_API_KEY — migrate to FUSION_MLX_API_KEY"
-                )
-        if not self.mlx_internal_api_key:
-            # Env unset — fall back to the Fusion-MLX server's own settings so a
-            # local install works without separately configuring the key. MLX
-            # gates on ~/.fusion-mlx/settings.json auth.api_key; without a
-            # matching Bearer every hub→MLX call 401s (mlx_metrics empty, model
-            # never loads, cluster nodes inactive). Mirror the resolution order
-            # fusion-mlx/start.sh uses.
-            import json
-            import logging
-
-            logger = logging.getLogger(__name__)
-            mlx_settings = os.path.expanduser("~/.fusion-mlx/settings.json")
-            try:
-                with open(mlx_settings) as f:
-                    key = json.load(f).get("auth", {}).get("api_key", "")
-                if key:
-                    # E-S13: warn if the settings file is world/group-readable —
-                    # it holds the MLX auth key. We do not refuse to load (the
-                    # install would break) but surface the lax perms loudly.
-                    try:
-                        mode = os.stat(mlx_settings).st_mode & 0o777
-                        if mode & 0o077:
-                            logger.warning(
-                                "MLX settings file %s is group/other accessible "
-                                "(mode %o); tighten to 0600 to protect the auth key",
-                                mlx_settings,
-                                mode,
-                            )
-                    except OSError:
-                        pass
-                    self.mlx_internal_api_key = key
-                    logger.info("MLX API key loaded from %s", mlx_settings)
-            except FileNotFoundError:
-                pass
-            except Exception as e:
-                logger.warning("Failed to read MLX settings %s: %s", mlx_settings, e)
-        if not self.mlx_internal_api_key:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "FUSION_MLX_API_KEY not set — Hub→MLX requests will have no Bearer token"
-            )
+            _warn_lax_mlx_settings_perms(logger)
+            self.mlx_internal_api_key = resolve_api_key() or client_key()
+            if self.mlx_internal_api_key:
+                logger.info("MLX API key resolved via fusion_core.config")
         # #58: gateway-accepted key for hub LLM calls through mlx_url. Resolve
         # after mlx_internal_api_key so the fallback picks up its final value
         # (env FUSION_MLX_API_KEY > ~/.fusion-mlx/settings.json).
@@ -324,3 +289,21 @@ def resolve_service_secret(env: str, how_to: str) -> str:
         env,
     )
     return ""
+
+
+def _warn_lax_mlx_settings_perms(logger) -> None:
+    # E-S13: ~/.fusion-mlx/settings.json holds the MLX auth key. Warn loudly
+    # when it is group/other-readable; do not refuse to load (the install
+    # would break). fusion_core.config does not check file perms, so the check
+    # stays here at the consumer (#68).
+    mlx_settings = os.path.expanduser("~/.fusion-mlx/settings.json")
+    try:
+        mode = os.stat(mlx_settings).st_mode & 0o777
+    except OSError:
+        return
+    if mode & 0o077:
+        logger.warning(
+            "MLX settings file %s is group/other accessible (mode %o); tighten to 0600 to protect the auth key",
+            mlx_settings,
+            mode,
+        )

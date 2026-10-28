@@ -1,18 +1,22 @@
 import json
 
+import pytest
+
 from fusion_model_hub.server.config import Settings
 
 
 class TestMlxApiKeyResolution:
-    # mlx_internal_api_key resolution order (config.py __post_init__):
-    #   FUSION_MLX_API_KEY env > MLX_INTERNAL_API_KEY env >
-    #   ~/.fusion-mlx/settings.json auth.api_key > unset (warn).
+    # #68: mlx_internal_api_key resolves via fusion_core.config —
+    #   resolve_api_key(): env FUSION_MLX_API_KEY > ~/.fusion-mlx/settings.json
+    #   auth.api_key, then client_key(): FUSION_CLIENT_KEY > MLX_API_KEY chain
+    #   with dev-warn / prod-raise semantics (config-conventions §2/§3).
+    # The deprecated bare MLX_INTERNAL_API_KEY alias is gone.
     # MLX gates on its settings.json api_key; a hub without a matching Bearer
     # gets 401 on every hub->MLX call. Pin each resolution branch so a refactor
     # cannot silently drop the local-install fallback.
 
     def _clear_key_env(self, monkeypatch):
-        for var in ("FUSION_MLX_API_KEY", "MLX_INTERNAL_API_KEY"):
+        for var in ("FUSION_MLX_API_KEY", "MLX_INTERNAL_API_KEY", "FUSION_CLIENT_KEY", "MLX_API_KEY", "FUSION_PROFILE"):
             monkeypatch.delenv(var, raising=False)
 
     def test_env_fusion_mlx_api_key_wins(self, monkeypatch):
@@ -21,11 +25,21 @@ class TestMlxApiKeyResolution:
         s = Settings()
         assert s.mlx_internal_api_key == "env-key-123"
 
-    def test_deprecated_mlx_internal_api_key_used_when_primary_unset(self, monkeypatch):
+    def test_deprecated_mlx_internal_api_key_alias_ignored(self, monkeypatch, tmp_path):
+        # #68: bare MLX_INTERNAL_API_KEY is no longer read — a stale alias must
+        # not resurrect a key the operator believed removed.
         self._clear_key_env(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("MLX_INTERNAL_API_KEY", "legacy-key-456")
         s = Settings()
-        assert s.mlx_internal_api_key == "legacy-key-456"
+        assert s.mlx_internal_api_key == ""
+
+    def test_fusion_client_key_used_when_mlx_sources_empty(self, monkeypatch, tmp_path):
+        self._clear_key_env(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("FUSION_CLIENT_KEY", "client-key-789")
+        s = Settings()
+        assert s.mlx_internal_api_key == "client-key-789"
 
     def test_falls_back_to_mlx_settings_json(self, monkeypatch, tmp_path):
         self._clear_key_env(monkeypatch)
@@ -46,6 +60,18 @@ class TestMlxApiKeyResolution:
         s = Settings()
         assert s.mlx_internal_api_key == "env-wins"
 
+    def test_mlx_settings_json_beats_fusion_client_key(self, monkeypatch, tmp_path):
+        # The hub talks the MLX tool surface directly, so the MLX-native
+        # settings.json key outranks the gateway-issued client key.
+        self._clear_key_env(monkeypatch)
+        mlx_dir = tmp_path / ".fusion-mlx"
+        mlx_dir.mkdir()
+        (mlx_dir / "settings.json").write_text(json.dumps({"auth": {"api_key": "mlx-native"}}))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("FUSION_CLIENT_KEY", "client-key")
+        s = Settings()
+        assert s.mlx_internal_api_key == "mlx-native"
+
     def test_no_key_when_neither_env_nor_settings(self, monkeypatch, tmp_path):
         self._clear_key_env(monkeypatch)
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -58,6 +84,26 @@ class TestMlxApiKeyResolution:
         # no ~/.fusion-mlx/settings.json — must not raise
         s = Settings()
         assert s.mlx_internal_api_key == ""
+
+    def test_prod_profile_missing_key_raises(self, monkeypatch, tmp_path):
+        # config-conventions §3: prod + unresolvable key = RuntimeError, never
+        # a silent no-Bearer mode.
+        self._clear_key_env(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("FUSION_PROFILE", "prod")
+        with pytest.raises(RuntimeError, match="FUSION_CLIENT_KEY"):
+            Settings()
+
+    def test_prod_profile_key_from_settings_json_ok(self, monkeypatch, tmp_path):
+        # prod + settings.json key = fine, no raise (local-install fallback)
+        self._clear_key_env(monkeypatch)
+        mlx_dir = tmp_path / ".fusion-mlx"
+        mlx_dir.mkdir()
+        (mlx_dir / "settings.json").write_text(json.dumps({"auth": {"api_key": "prod-ok"}}))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("FUSION_PROFILE", "prod")
+        s = Settings()
+        assert s.mlx_internal_api_key == "prod-ok"
 
 
 class TestOpsEnvWiring:
@@ -121,6 +167,9 @@ class TestGatewayDefaults:
             "FMH_MLX_GATEWAY_API_KEY",
             "FUSION_MLX_API_KEY",
             "MLX_INTERNAL_API_KEY",
+            "FUSION_CLIENT_KEY",
+            "MLX_API_KEY",
+            "FUSION_PROFILE",
         ):
             monkeypatch.delenv(var, raising=False)
 

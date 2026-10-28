@@ -9,12 +9,12 @@
 | Secret | Env var | Default / fallback | Used for | Rotation blast radius |
 |--------|---------|--------------------|----------|-----------------------|
 | `api_key_pepper` | `FMH_API_KEY_PEPPER` | derived `sha256("fmh-pepted\|{data_dir}")` (dev only) | salt for PBKDF2-HMAC-SHA256 (200k iters) hashing of every API key | **invalidates ALL API keys** — every stored `key_hash` stops matching; all clients 401 until keys are re-issued |
-| `mlx_internal_api_key` | `FUSION_MLX_API_KEY` (deprecated: `MLX_INTERNAL_API_KEY`) | `~/.fusion-mlx/settings.json` `auth.api_key` | `Authorization: Bearer` on every Hub→Fusion-MLX call (health, load, inference, quantize, cluster) | Hub↔MLX mutual breakage until both sides carry the **same** new value; mismatch → 401 on every MLX call |
+| `mlx_internal_api_key` | `FUSION_MLX_API_KEY` (fallback: `FUSION_CLIENT_KEY` / `MLX_API_KEY`) | `~/.fusion-mlx/settings.json` `auth.api_key` | `Authorization: Bearer` on every Hub→Fusion-MLX call (health, load, inference, quantize, cluster) | Hub↔MLX mutual breakage until both sides carry the **same** new value; mismatch → 401 on every MLX call |
 | `auth_bootstrap_token` | `FMH_AUTH_BOOTSTRAP_TOKEN` | unset (open bootstrap, IP-rate-limited) | gate on the **first** API-key creation (`POST /api/v1/auth/keys` while zero active keys) | none in steady state; only matters for re-bootstrap (fresh install / all keys revoked) |
 
 **Load order** (all resolved in `server/config.py:Settings.__post_init__`, at process start):
 
-- `mlx_internal_api_key`: explicit field > env `FUSION_MLX_API_KEY` > deprecated env `MLX_INTERNAL_API_KEY` > `~/.fusion-mlx/settings.json` `auth.api_key` > unset (Hub→MLX calls go out with no Bearer → MLX 401s).
+- `mlx_internal_api_key`: explicit field > env `FUSION_MLX_API_KEY` > `~/.fusion-mlx/settings.json` `auth.api_key` > `FUSION_CLIENT_KEY` / `MLX_API_KEY` chain > unset (dev warns; prod raises at startup per config-conventions §3). Resolution delegated to `fusion_core.config` (#68).
 - `api_key_pepper`: explicit field > env `FMH_API_KEY_PEPPER` > derived per-install pepper (dev only; logs a WARNING — never ship this to production).
 - `auth_bootstrap_token`: explicit field > env `FMH_AUTH_BOOTSTRAP_TOKEN` > unset.
 
@@ -112,7 +112,7 @@
 
 **Rollback:** set both sides back to the *old* key value and restart both. Order does not matter as long as both end on the same value — but until they agree, MLX delegation is down.
 
-**Deprecation note:** the env alias `MLX_INTERNAL_API_KEY` still works (logs a deprecation warning) but is scheduled for removal; migrate every deployment to `FUSION_MLX_API_KEY` during the next rotation.
+**Removal note (#68):** the deprecated env alias `MLX_INTERNAL_API_KEY` has been REMOVED — it is no longer read. Any deployment still setting it must migrate to `FUSION_MLX_API_KEY` (or `~/.fusion-mlx/settings.json` `auth.api_key`) before upgrading.
 
 **Multi-node:** every Hub node points at the same (or different) Fusion-MLX instances, but each Hub→MLX pair must share the matching key. If all nodes share one MLX, roll the MLX key once and update `FUSION_MLX_API_KEY` on every Hub node. If nodes have per-node MLX instances, rotate each pair independently.
 

@@ -290,8 +290,9 @@ Studio integration requires these contracts:
   unchanged (studio `Double?`/`Int?` decode `null` → `nil`).
 
   **Auth:** hub→MLX requests carry `Authorization: Bearer <key>` from
-  `mlx_internal_api_key`, resolved in order `FUSION_MLX_API_KEY` env →
-  `MLX_INTERNAL_API_KEY` env → `~/.fusion-mlx/settings.json` `auth.api_key`.
+  `mlx_internal_api_key`, resolved via `fusion_core.config` (#68): env
+  `FUSION_MLX_API_KEY` → `~/.fusion-mlx/settings.json` `auth.api_key` →
+  `FUSION_CLIENT_KEY` / `MLX_API_KEY` chain (dev warns, prod raises).
   MLX rejects keyless callers with 401; without a matching key `mlx_metrics` is
   empty and model load silently fails. `start.sh` resolves the same way before
   launch.
@@ -971,7 +972,7 @@ Environment variables:
 | `FUSION_IDENTITY_SERVICE_TOKEN` | `` | Bearer service token for Hub→fusion-identity `/verify` calls (required when integration enabled) |
 | `FUSION_IDENTITY_JWT_ISSUER` | `fusion-identity` | Expected JWT issuer claim |
 | `FUSION_IDENTITY_JWT_AUDIENCE` | `fusion-cluster` | Expected JWT audience claim |
-| `FUSION_MLX_API_KEY` | `` | Bearer token for Hub→MLX requests (MLX_INTERNAL_API_KEY as deprecated fallback) |
+| `FUSION_MLX_API_KEY` | `` | Bearer token for Hub→MLX requests (resolved via `fusion_core.config`; `FUSION_CLIENT_KEY`/`MLX_API_KEY` chain as fallback, #68) |
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--mlx-tool-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
 
