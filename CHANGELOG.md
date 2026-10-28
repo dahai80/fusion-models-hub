@@ -3,6 +3,13 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.7] — 2026-10-28
+
+Patch release: health-check recursion fix (#71).
+
+### Fixed
+- **#71**: `/api/v1/system/health` probed the gateway's full `/health`, which fans out to every backend including the hub itself — an unbounded probe cycle (gateway → hub → gateway → …) truncated only by stacked 5s timeouts (13-20s observed). The MLX subcheck now probes the gateway's lightweight `/healthz` (no backend fan-out) first, falling back to `/health` only on 404 (direct fusion-mlx targets have no `/healthz`). Non-404 `/healthz` failures do not trigger the fallback, so an erroring gateway cannot re-open the recursion. Health now returns in milliseconds with the gateway running.
+
 ## [1.2.6] — 2026-10-28
 
 Patch release: config governance (#68).
