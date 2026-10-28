@@ -251,6 +251,17 @@ def main():
     command = args.command or "serve"
 
     if command == "serve":
+        # #62: title the process so ps/Activity Monitor show the product name,
+        # not a bare homebrew "Python" (operator cannot tell services apart).
+        # exec -a is unreliable on macOS — Python.app overwrites argv[0] — so
+        # setproctitle is the proven in-repo pattern (fusion-gupiao cli.py,
+        # fusion-k12-teacher cli.py). Fallback safe when the module is missing.
+        try:
+            import setproctitle
+
+            setproctitle.setproctitle(f"fusion-model-hub serve :{args.port}")
+        except Exception:
+            logger.debug("setproctitle unavailable — process title stays default", exc_info=True)
         from .config import Settings
 
         settings = Settings(
