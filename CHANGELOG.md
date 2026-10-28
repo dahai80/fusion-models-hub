@@ -3,6 +3,16 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.5] — 2026-10-28
+
+Patch release: security remediation + operability.
+
+### Fixed
+
+- **#63 Hardcoded default secrets removed from encryption/watermark routers** — `FMH_ENCRYPTION_KEY` / `FMH_WATERMARK_SECRET` no longer compare against source-public default literals (flagged by `scripts/check-env.py`, audit §1.2). New shared helper `resolve_service_secret()` in `server/config.py` implements config-conventions §3 profile semantics: `FUSION_PROFILE=prod` with a missing secret raises `RuntimeError` with a three-element guidance message (variable name + how to obtain + doc path); dev (default) allows empty with a prominent `logger.warning` and the endpoints keep their 503 refusal. `scripts/check-env.py` no longer reports this repo in non-baseline secret errors.
+- **#62 Process title set to `fusion-model-hub serve :<port>`** — the serve process previously showed as bare homebrew `Python` in `ps`/Activity Monitor. Now titled via `setproctitle` (try/except fallback; `setproctitle>=1.3.0,<2.0.0` added to core dependencies), matching the fusion-gupiao / fusion-k12-teacher pattern.
+- **Test flake: bootstrap rate limiter state leaked across tests** — the module-global in-memory rate limiter (60s window) tripped `429 Bootstrap rate limit exceeded` for tests hitting `/api/v1/auth/keys` later in the same window under `pytest-randomly` (~2/3 of full-suite runs had 1-2 failures, each green in isolation). Autouse conftest fixture now calls `reset_rate_limits()` around every test; full suite green 3/3 consecutive runs.
+
 ## [1.2.4] — 2026-10-27
 
 Patch release: re-sync vendored `@fusion/web-sdk` to upstream v0.1.2 (#60).
