@@ -195,13 +195,14 @@ class Settings:
         if not self.mlx_internal_api_key:
             # #68: single-point key resolution lives in fusion_core.config
             # (config-conventions §2, fusion-core#31). resolve_api_key() covers
-            # the MLX-native sources — env FUSION_MLX_API_KEY then
+            # the MLX-native sources — the MLX env name then
             # ~/.fusion-mlx/settings.json auth.api_key — so a local install
             # keeps working without separately configuring the key (MLX gates
             # on that file; without a matching Bearer every hub→MLX call 401s).
-            # client_key() adds the FUSION_CLIENT_KEY/MLX_API_KEY chain with
-            # the §3 dev-warn / prod-raise semantics when neither source yields
-            # a key. The deprecated bare MLX_INTERNAL_API_KEY alias is gone.
+            # client_key() adds the FUSION_CLIENT_KEY chain with the §3
+            # dev-warn / prod-raise semantics when neither source yields a key.
+            # The alias chain and the deprecated bare MLX_INTERNAL_API_KEY
+            # alias live in fusion-core and nowhere else (#74).
             import logging
 
             from fusion_core.config import client_key, resolve_api_key
@@ -213,7 +214,7 @@ class Settings:
                 logger.info("MLX API key resolved via fusion_core.config")
         # #58: gateway-accepted key for hub LLM calls through mlx_url. Resolve
         # after mlx_internal_api_key so the fallback picks up its final value
-        # (env FUSION_MLX_API_KEY > ~/.fusion-mlx/settings.json).
+        # (fusion_core.config resolution: MLX env name > settings.json).
         if not self.mlx_gateway_api_key:
             self.mlx_gateway_api_key = os.environ.get("FMH_MLX_GATEWAY_API_KEY", "")
         if not self.mlx_gateway_api_key:
