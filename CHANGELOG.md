@@ -3,6 +3,15 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.8] — 2026-10-30
+
+Patch release: config governance Phase 3 (#74).
+
+### Fixed
+- **#74 (restored)**: `start.sh` was accidentally dropped from version control in #52 and later matched a `.gitignore` line — a fresh clone could not start the service. Re-tracked; `.gitignore` entry removed.
+- **#74**: legacy key-name cleanup ahead of the 2027-01-01 check-env escalation. `start.sh` `resolve_mlx_api_key` reads/exports canonical `FUSION_CLIENT_KEY` only (picked up via `fusion_core.config.client_key()`); `server/config.py` comments no longer spell out the legacy env names. `scripts/check-env.py` reports 0 `[legacy]` warns for this repo (was 2 files / 7 lines).
+- **#74**: `start.sh` register-then-start self-check (Phase 3.3) — `check_port_registry()` verifies the `fusion-model-hub` entry in `port-registry.yaml` before serving. Unregistered/mismatched port refuses to start; `FUSION_SKIP_REGISTRY_CHECK=1` bypasses; missing registry file warns and continues (standalone deploy). New `tests/test_start_sh.py` (8 tests) covers all paths plus no-legacy-name guards.
+
 ## [1.2.7] — 2026-10-28
 
 Patch release: health-check recursion fix (#71).
