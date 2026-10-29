@@ -96,7 +96,7 @@
    export FUSION_MLX_API_KEY="$NEW"
    ./start.sh restart
    ```
-   `start.sh` itself resolves `FUSION_MLX_API_KEY` from env or `~/.fusion-mlx/settings.json` (see `start.sh` lines 45-60), so setting both to `$NEW` is belt-and-suspenders.
+   `start.sh` itself resolves `FUSION_CLIENT_KEY` from env or `~/.fusion-mlx/settings.json` (#74: canonical name only — the legacy alias chain lives in `fusion_core.config`), so setting both to `$NEW` is belt-and-suspenders. The server picks the settings-file value up directly via `fusion_core.config.resolve_api_key()` either way.
 4. **Verify the Hub↔MLX link is restored:**
    ```bash
    ~/claude-home/fusion-mlx/start.sh status          # MLX up, models loaded
