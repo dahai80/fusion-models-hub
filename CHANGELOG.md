@@ -3,6 +3,18 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.9] — 2026-10-30
+
+Patch release: shared PostgreSQL data plane (#77).
+
+### Added
+- **#77**: `DATABASE_URL` is now read on the native plane (canonical, DB-3, env-only; supervisor compose plane injects exactly this name). Resolution order: `--db-url` CLI arg > `DATABASE_URL` > `FMH_DB_URL` (legacy alias) > SQLite default. Bare `postgresql://` URLs are normalized to `postgresql+asyncpg://` for the async engine; `asyncpg` promoted from the `integration` extra to core dependencies.
+- **#77**: `REDIS_URL` accepted into `Settings.redis_url` (hub logical DB `/1` per DB-7) — logged, reserved, no consumer yet (rate limiter stays node-local in-memory, R10).
+- **#77**: `.env.example` with `DATABASE_URL` / `REDIS_URL` placeholders (no credentials, DB-4) and README "Shared PostgreSQL data plane" section — first-run `createdb` + automatic idempotent `create_all` schema creation (DB-9), CI-only 5433 clarification (DB-6).
+
+### Fixed
+- **#77 (latent)**: local `logger =` inside `Settings.__post_init__` shadowed the module logger for the whole function (`UnboundLocalError` for any earlier use); config now uses a module-level logger.
+
 ## [1.2.8] — 2026-10-30
 
 Patch release: config governance Phase 3 (#74).
