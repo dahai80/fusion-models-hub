@@ -260,3 +260,53 @@ class TestMlxHeadersGatewayKey:
 
         h = _mlx_headers(S())
         assert h["Authorization"] == "Bearer mlx-key"
+
+
+class TestSharedDataPlaneEnv:
+    # #77: DB-3 native plane — DATABASE_URL is canonical, FMH_DB_URL the
+    # legacy alias, REDIS_URL accepted (reserved, no consumer yet).
+
+    def _clear_db_env(self, monkeypatch):
+        for var in ("DATABASE_URL", "FMH_DB_URL", "REDIS_URL", "FMH_DATA_DIR"):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_database_url_wins(self, monkeypatch, tmp_path):
+        self._clear_db_env(monkeypatch)
+        monkeypatch.setenv("DATABASE_URL", "postgresql://127.0.0.1:5432/fusion_model_hub")
+        monkeypatch.setenv("FMH_DB_URL", "postgresql+asyncpg://legacy/db")
+        from fusion_model_hub.server.config import Settings
+
+        s = Settings(data_dir=str(tmp_path))
+        assert s.db_url == "postgresql+asyncpg://127.0.0.1:5432/fusion_model_hub"
+
+    def test_bare_postgresql_url_normalized_to_asyncpg(self, monkeypatch, tmp_path):
+        self._clear_db_env(monkeypatch)
+        monkeypatch.setenv("DATABASE_URL", "postgresql://127.0.0.1:5432/fusion_model_hub")
+        from fusion_model_hub.server.config import Settings
+
+        s = Settings(data_dir=str(tmp_path))
+        assert s.db_url.startswith("postgresql+asyncpg://")
+
+    def test_fmh_db_url_still_works_as_alias(self, monkeypatch, tmp_path):
+        self._clear_db_env(monkeypatch)
+        monkeypatch.setenv("FMH_DB_URL", "postgresql+asyncpg://legacy/db")
+        from fusion_model_hub.server.config import Settings
+
+        s = Settings(data_dir=str(tmp_path))
+        assert s.db_url == "postgresql+asyncpg://legacy/db"
+
+    def test_sqlite_default_when_no_env(self, monkeypatch, tmp_path):
+        self._clear_db_env(monkeypatch)
+        from fusion_model_hub.server.config import Settings
+
+        s = Settings(data_dir=str(tmp_path))
+        assert s.db_url.startswith("sqlite+aiosqlite:///")
+        assert s.redis_url == ""
+
+    def test_redis_url_accepted(self, monkeypatch, tmp_path):
+        self._clear_db_env(monkeypatch)
+        monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6379/1")
+        from fusion_model_hub.server.config import Settings
+
+        s = Settings(data_dir=str(tmp_path))
+        assert s.redis_url == "redis://127.0.0.1:6379/1"

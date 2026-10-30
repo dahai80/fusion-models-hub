@@ -1646,9 +1646,11 @@ class TestConfigEnvWiring:
         assert s.auth_bootstrap_token == "boot-secret"
 
     def test_db_url_env_overrides_default(self, monkeypatch):
+        # #77: bare postgresql:// from any env source is normalized to
+        # postgresql+asyncpg:// for the async engine.
         monkeypatch.setenv("FMH_DB_URL", "postgresql://u:p@host/db")
         s = Settings(db_url="")
-        assert s.db_url == "postgresql://u:p@host/db"
+        assert s.db_url == "postgresql+asyncpg://u:p@host/db"
 
     def test_storage_type_env(self, monkeypatch):
         monkeypatch.setenv("FMH_STORAGE_TYPE", "minio")

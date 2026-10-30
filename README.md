@@ -949,7 +949,9 @@ Environment variables:
 | `FMH_AUTH_ENABLED` | `true` | Enable API key authentication (default: enabled) |
 | `FMH_CORS_ORIGINS` | `*` | Allowed CORS origins |
 | `FMH_MAX_UPLOAD_SIZE_MB` | `500` | Max upload file size |
-| `FMH_DB_URL` | `sqlite+aiosqlite:///data/fmh.db` | Database URL (supports PostgreSQL) |
+| `DATABASE_URL` | `` | Canonical database URL (DB-3, env-only; checked **before** `FMH_DB_URL`). Bare `postgresql://` URLs are normalized to `postgresql+asyncpg://` for the async engine |
+| `REDIS_URL` | `` | Shared Redis URL (DB-7; hub logical DB is `/1`). Accepted on the native plane, reserved — no consumer yet (the rate limiter is node-local in-memory by design) |
+| `FMH_DB_URL` | `sqlite+aiosqlite:///data/fmh.db` | Database URL (legacy alias; supports PostgreSQL, overridden by `DATABASE_URL`) |
 | `FMH_ALEMBIC_URL` | `sqlite://` | Sync DB URL for Alembic migrations |
 | `FMH_STORAGE_TYPE` | `local` | Storage backend type (`local` or `minio`) |
 | `FMH_MINIO_ENDPOINT` | `` | MinIO endpoint (when storage_type=minio) |
@@ -975,6 +977,29 @@ Environment variables:
 | `FUSION_MLX_API_KEY` | `` | Bearer token for Hub→MLX requests (resolved via `fusion_core.config`; `FUSION_CLIENT_KEY`/`MLX_API_KEY` chain as fallback, #68) |
 
 CLI options override env vars: `--host`, `--port`, `--data-dir`, `--db-url`, `--mlx-url`, `--mlx-tool-url`, `--log-level`, `--tls-certfile`, `--tls-keyfile`
+
+### Shared PostgreSQL data plane
+
+Per the workspace data-layer conventions (`architecture/fusion-db-conventions-1030.md`), all services share **one PostgreSQL instance at `127.0.0.1:5432`** with **one database per app** (DB-2). The Hub's database is `fusion_model_hub`. A manual (native-plane) start with the env set connects to the shared instance — no compose/supervisor required:
+
+```bash
+# First run only (idempotent per DB-9 — re-running CREATE DATABASE on an
+# existing database errors harmlessly; createdb fails cleanly):
+createdb fusion_model_hub
+# or: psql -d postgres -c 'CREATE DATABASE fusion_model_hub'
+
+export DATABASE_URL="postgresql://127.0.0.1:5432/fusion_model_hub"
+./start.sh start
+```
+
+Behavior notes:
+
+- **Schema creation is automatic on connect** — startup runs SQLAlchemy `create_all` (idempotent, DB-9). Only the database itself must pre-exist; a `postgresql://` URL cannot create it.
+- **URL normalization** — bare `postgresql://` URLs are rewritten to `postgresql+asyncpg://` for the async engine, so the conventions-doc form works verbatim. `asyncpg` is a core dependency for this reason.
+- **Resolution order** — explicit `--db-url` CLI arg > `DATABASE_URL` env (canonical, DB-3) > `FMH_DB_URL` env (legacy alias) > SQLite default (`data/hub.db`).
+- **Credentials** — never in the repo; use env or a `0600` env file (DB-4). See `.env.example` for the template.
+- **Redis** — `REDIS_URL=redis://127.0.0.1:6379/1` (hub logical DB `/1`, DB-7) is accepted and logged, but has no consumer yet: the rate limiter is node-local in-memory by design (R10). Reserved for a future shared limiter.
+- **CI only** — the GitHub Actions test PostgreSQL maps host port **5433** (DB-6: CI-isolated, never the shared plane). No code path resolves to 5433 outside CI; it appears only in `.github/workflows/ci.yml` and the integration-test compose file.
 
 ### Production secrets
 
@@ -1005,7 +1030,7 @@ Run through this before exposing a Hub on a network. Every item is a hard gate f
 
 **Storage & data**
 - [ ] `FMH_STORAGE_TYPE` chosen: `local` (single node) or `minio` (shared/S3). For `minio`, set all `FMH_MINIO_*`.
-- [ ] `FMH_DB_URL` points at PostgreSQL for multi-node/shared deployments (SQLite is single-node only). Run `fusion-model-hub migrate` after pointing `FMH_ALEMBIC_URL` at the same PG.
+- [ ] `DATABASE_URL` (or legacy `FMH_DB_URL`) points at PostgreSQL for multi-node/shared deployments (SQLite is single-node only), e.g. `postgresql://127.0.0.1:5432/fusion_model_hub` on the shared instance. Run `fusion-model-hub migrate` after pointing `FMH_ALEMBIC_URL` at the same PG.
 - [ ] `FMH_DATA_DIR` on persistent, backed-up storage.
 - [ ] `FMH_BACKUP_DIR` set if auto-backup desired (disabled if unset).
 
