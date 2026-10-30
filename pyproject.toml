@@ -12,6 +12,10 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "sqlalchemy[asyncio]>=2.0.0",
     "aiosqlite>=0.20.0",
+    # #77: async driver for the shared-PostgreSQL plane (DATABASE_URL). Core,
+    # not an integration extra — a manual start with DATABASE_URL set must
+    # work without remembering an extra (DB-3 native plane).
+    "asyncpg>=0.29.0",
     "python-multipart>=0.0.9",
     "prometheus_client>=0.20.0",
     "cryptography>=42.0.0",

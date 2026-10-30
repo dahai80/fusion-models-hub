@@ -1,5 +1,8 @@
+import logging
 import os
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -24,6 +27,12 @@ class Settings:
     # with auth.accept_backend_keys or shares the MLX admin key).
     mlx_gateway_api_key: str = ""
     log_level: str = "INFO"
+    # #77: DB-7 conventions reserve a per-app Redis logical DB on the shared
+    # instance (hub = /1). Accepted on the native plane so supervisor
+    # compose-plane injection and manual starts behave identically; no
+    # consumer yet (rate limiter is node-local in-memory by design, R10) —
+    # reserved for a future shared limiter, not wired speculatively.
+    redis_url: str = ""
     # E-E11: default CORS to an empty origin list (deny all cross-origin).
     # The prior ["*"] let any web origin read API responses. Same-origin and
     # non-browser clients (curl/fusion-cli/SDK) are unaffected by CORS; only
@@ -132,15 +141,28 @@ class Settings:
         if not self.data_dir:
             self.data_dir = os.environ.get("FMH_DATA_DIR", str(os.path.join(os.getcwd(), "data")))
         if not self.db_url:
-            # P1-21: prefer an explicit FMH_DB_URL env (PostgreSQL/MySQL in a
-            # container) before deriving the SQLite path. Before this, the env
-            # was silently ignored — a container with FMH_DB_URL=postgresql://...
-            # still wrote to ./data/hub.db.
-            env_db = os.environ.get("FMH_DB_URL", "")
+            # #77: canonical native-plane env first (DB-3, env-only; the
+            # supervisor compose plane injects exactly this name), then the
+            # legacy FMH_DB_URL alias (P1-21), then the SQLite default. Before
+            # this, DATABASE_URL was silently ignored on manual starts — the
+            # supervisor-injected value only worked by accident where compose
+            # also set FMH_DB_URL.
+            env_db = os.environ.get("DATABASE_URL", "") or os.environ.get("FMH_DB_URL", "")
             if env_db:
+                # Async SQLAlchemy needs an async driver; the conventions doc
+                # writes bare postgresql:// URLs. Normalize instead of failing
+                # at first connect with "await wasn't used" style errors.
+                if env_db.startswith("postgresql://"):
+                    env_db = "postgresql+asyncpg://" + env_db[len("postgresql://"):]
+                    logger.info("DATABASE_URL normalized to postgresql+asyncpg:// for the async engine")
                 self.db_url = env_db
             else:
                 self.db_url = f"sqlite+aiosqlite:///{os.path.join(self.data_dir, 'hub.db')}"
+        if not self.redis_url:
+            env_redis = os.environ.get("REDIS_URL", "")
+            if env_redis:
+                self.redis_url = env_redis
+                logger.info("REDIS_URL accepted (reserved, no consumer yet — DB-7)")
         # #58: default through fusion-gateway (:11432). FMH_MLX_URL can still
         # point straight at fusion-mlx (:11434) for debugging. Like the P1-21
         # host/port hooks, the CLI serve parser passes a non-empty default, so
@@ -203,11 +225,8 @@ class Settings:
             # dev-warn / prod-raise semantics when neither source yields a key.
             # The alias chain and the deprecated bare MLX_INTERNAL_API_KEY
             # alias live in fusion-core and nowhere else (#74).
-            import logging
-
             from fusion_core.config import client_key, resolve_api_key
 
-            logger = logging.getLogger(__name__)
             _warn_lax_mlx_settings_perms(logger)
             self.mlx_internal_api_key = resolve_api_key() or client_key()
             if self.mlx_internal_api_key:
