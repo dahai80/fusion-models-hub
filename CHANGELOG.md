@@ -3,6 +3,13 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.10] — 2026-10-31
+
+Patch release: fusion-core dependency governance (#80).
+
+### Fixed
+- **#80**: `fusion-core` dependency relaxed from an exact git URL pin (`@v0.7.0`) to the version constraint `fusion-core>=0.9.0`. fusion-core is not on PyPI, so `uv pip install -e fusion-models-hub` treated the workspace's editable fusion-core (0.9.0+) as a different distribution and silently replaced it with a stale non-editable v0.7.0 — losing `service_port` prefix normalization and making fusion-agent-studio (`fusion-core>=0.8.0`) uninstallable. The source is now decided by the environment (workspace editable install satisfies the constraint); CI installs the git tag explicitly (`FUSION_CORE_REF=v0.10.0`, all 4 jobs), the Dockerfile installs it before `pip install .`, and README/README_CN document the pre-install for standalone checkouts.
+
 ## [1.2.9] — 2026-10-30
 
 Patch release: shared PostgreSQL data plane (#77).
