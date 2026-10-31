@@ -21,7 +21,12 @@ COPY fusion_model_hub/ fusion_model_hub/
 COPY alembic/ alembic/
 COPY alembic.ini ./
 
-RUN pip install --no-cache-dir .
+# #80: fusion-core is not on PyPI and pyproject declares a version constraint
+# only (a git URL pin clobbered the workspace editable install). Install the
+# pinned tag first so the constraint resolves; bump alongside CI's
+# FUSION_CORE_REF when fusion-core tags move.
+RUN pip install --no-cache-dir "fusion-core @ git+https://github.com/dahai80/fusion-core.git@v0.10.0" \
+    && pip install --no-cache-dir .
 
 ENV FMH_DATA_DIR=/data
 # P1-20: bind 0.0.0.0 so the API is reachable outside the container; 127.0.0.1

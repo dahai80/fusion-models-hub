@@ -86,7 +86,8 @@ Unified model repository and management center for the Fusion-MLX ecosystem on m
 ## Quick Start
 
 ```bash
-# Install
+# Install (fusion-core is not on PyPI — install the git tag first)
+pip install "fusion-core @ git+https://github.com/dahai80/fusion-core.git@v0.10.0"
 pip install -e ".[test]"
 
 # Start the API server
@@ -1075,6 +1076,8 @@ fmh version
 
 ```bash
 source .venv/bin/activate
+# In the fusion monorepo the shared .venv already has fusion-core (editable).
+# Standalone checkout: pip install "fusion-core @ git+https://github.com/dahai80/fusion-core.git@v0.10.0" first.
 pip install -e ".[test]"
 
 # Run all tests
