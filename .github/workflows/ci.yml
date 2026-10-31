@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# #80: fusion-core is not on PyPI, so the pyproject dependency is a version
+# constraint only (an exact git URL pin clobbered the workspace editable
+# install). Every job installs the pinned git tag BEFORE the editable install
+# of this package — pip then sees the constraint already satisfied.
+env:
+  FUSION_CORE_REF: v0.10.0
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -17,6 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install ruff
+          pip install "fusion-core @ git+https://github.com/dahai80/fusion-core.git@${FUSION_CORE_REF}"
           pip install -e ".[test]"
       - name: Ruff check
         run: ruff check fusion_model_hub/ tests/
@@ -31,7 +39,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: |
+          pip install "fusion-core @ git+https://github.com/dahai80/fusion-core.git@${FUSION_CORE_REF}"
+          pip install -e ".[test]"
       - name: Run tests with coverage
         run: |
           python -m pytest tests/ --cov=fusion_model_hub --cov-report=term-missing --cov-fail-under=60 -q
@@ -48,7 +58,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: |
+          pip install "fusion-core @ git+https://github.com/dahai80/fusion-core.git@${FUSION_CORE_REF}"
+          pip install -e ".[test]"
       - name: Run multi-node integration tests
         run: |
           python -m pytest tests/test_integration_multinode.py -o addopts="" -q
@@ -111,7 +123,9 @@ jobs:
           done
           echo "MinIO not ready"; docker logs fmh-minio; exit 1
       - name: Install dependencies
-        run: pip install -e ".[test,integration]"
+        run: |
+          pip install "fusion-core @ git+https://github.com/dahai80/fusion-core.git@${FUSION_CORE_REF}"
+          pip install -e ".[test,integration]"
       - name: Install psql client (migration gate uses the psql CLI)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
       - name: Run PG/MinIO integration tests

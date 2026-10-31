@@ -5,7 +5,14 @@ description = "Fusion-Model-Hub — Unified model repository & manager for the F
 license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
-    "fusion-core @ git+https://github.com/dahai80/fusion-core.git@v0.7.0",
+    # #80: version constraint, not a direct git URL pin. fusion-core is not on
+    # PyPI — an exact URL pin made `uv pip install -e fusion-models-hub` treat
+    # the workspace's editable fusion-core as a different distribution and
+    # silently replace it with a stale non-editable copy from git. The source
+    # is decided by the environment: workspace venv = editable install
+    # (source == lock, requirements.lock convention); CI installs the git tag
+    # explicitly before this package (see .github/workflows/ci.yml).
+    "fusion-core>=0.9.0",
     "httpx>=0.27.0",
     "pydantic>=2.0.0",
     "fastapi>=0.115.0",

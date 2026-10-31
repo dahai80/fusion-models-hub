@@ -64,7 +64,8 @@ macOS Apple Silicon 上 Fusion-MLX 生态的统一模型仓库与管理中心。
 ## 快速开始
 
 ```bash
-# 安装
+# 安装（fusion-core 不在 PyPI 上——先安装 git tag）
+pip install "fusion-core @ git+https://github.com/dahai80/fusion-core.git@v0.10.0"
 pip install -e ".[test]"
 
 # 启动 API 服务
@@ -774,6 +775,8 @@ fmh version
 
 ```bash
 source .venv/bin/activate
+# fusion monorepo 共享 .venv 已带 fusion-core（editable 安装）。
+# 独立检出：先 pip install "fusion-core @ git+https://github.com/dahai80/fusion-core.git@v0.10.0"。
 pip install -e ".[test]"
 
 # 运行全部测试
