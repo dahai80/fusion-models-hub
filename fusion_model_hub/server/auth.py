@@ -30,6 +30,21 @@ _last_used_cache: dict[str, float] = {}
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
+def _extract_bearer(request: Request) -> str:
+    authz = request.headers.get("Authorization", "")
+    if authz.startswith("Bearer "):
+        return authz[len("Bearer "):].strip()
+    return ""
+
+
+def shell_accept_keys(data_dir: str) -> list[str]:
+    # #83: thin wrapper so tests can monkeypatch the registry module without
+    # touching auth.
+    from .shell_registry import shell_accept_keys as _keys
+
+    return _keys(data_dir)
+
+
 def _is_public_path(path: str) -> bool:
     # Exact match or explicit sub-path of a public entry only when the public
     # entry is a directory-style prefix (trailing-slash safe). /auth/keys itself
@@ -216,6 +231,21 @@ async def auth_middleware(request: Request, call_next):
 
     api_key_str = request.headers.get("X-API-Key", "")
     if not api_key_str:
+        # #83: the gateway /shell proxy injects the module's gateway-issued
+        # fm- service key as `Authorization: Bearer` (cookies/session tokens
+        # are stripped upstream). Accept the shell accept-set as a read-only
+        # VIEWER so the embedded console works without an X-API-Key. Writes
+        # still 403 via the viewer role — shell sessions are read-only.
+        # Must come after the gateway-origin check so enforcement still
+        # applies when enabled.
+        bearer = _extract_bearer(request)
+        shell_keys = shell_accept_keys(str(getattr(request.app.state, "data_dir", "")))
+        if bearer and _is_auth_enabled() and not is_public and bearer in shell_keys:
+            if request.method in WRITE_METHODS:
+                return JSONResponse(status_code=403, content={"detail": "Viewer role is read-only"})
+            request.state.user_role = UserRole.VIEWER.value
+            request.state.tenant_id = getattr(request.state, "tenant_id", "")
+            return await call_next(request)
         if is_public or not _is_auth_enabled():
             return await call_next(request)
         return JSONResponse(status_code=401, content={"detail": "API key required"})

@@ -728,6 +728,10 @@ fusion_model_hub/
 | `FMH_MAX_UPLOAD_SIZE_MB` | `500` | 最大上传文件大小 |
 | `FMH_DB_URL` | `sqlite+aiosqlite:///data/fmh.db` | 数据库 URL（支持 PostgreSQL） |
 | `FMH_ALEMBIC_URL` | `sqlite://` | Alembic 迁移用同步 DB URL |
+| `FUSION_SHELL_GATEWAY_URL` | 空 | #83: union web shell 网关地址（如 `http://127.0.0.1:11432`）。与 `FUSION_ADMIN_KEY` 同时设置时启用 shell 自注册（trainer 模式） |
+| `FUSION_ADMIN_KEY` | 空 | 网关管理密钥，用于 `POST /api/v1/shell/manifests`——经 `fusion_core.config` 解析（prod 缺失会 raise，但注册永不致命） |
+| `FMH_WEB_DIST_DIR` | `<repo>/web/dist` | hub 自托管的 Web 控制台构建产物；目录缺失则禁用静态服务 |
+| `FMH_SHELL_MANIFEST` / `FMH_SHELL_UPSTREAM` | `web/manifest.json` / `http://127.0.0.1:11444` | shell 注册清单路径 / 代理上游覆盖 |
 | `FMH_STORAGE_TYPE` | `local` | 存储后端类型（`local` 或 `minio`） |
 | `FMH_MINIO_ENDPOINT` | `` | MinIO 端点（storage_type=minio 时） |
 | `FMH_MINIO_ACCESS_KEY` | `` | MinIO Access Key |

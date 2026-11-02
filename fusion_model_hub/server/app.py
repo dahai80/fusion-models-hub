@@ -1,10 +1,13 @@
+import contextlib
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..db.database import get_engine, init_db
@@ -218,8 +221,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             logger.warning("Fusion-MLX compatibility probe failed at startup", exc_info=True)
         backup.start_backup_scheduler()
+        # #83: union web shell self-registration (trainer pattern). Env-gated:
+        # needs FUSION_SHELL_GATEWAY_URL + a gateway admin key; disabled with a
+        # loud warning otherwise. Daemon task — never blocks or fails startup.
+        shell_task = None
+        if settings.shell_gateway_url:
+            import asyncio
+
+            from .shell_registry import shell_registry_loop
+
+            shell_task = asyncio.create_task(
+                shell_registry_loop(data_dir=settings.data_dir),
+                name="fmh-shell-registry",
+            )
+            logger.info("shell registry loop started (gateway=%s)", settings.shell_gateway_url)
         logger.info("Fusion Model Hub started: data_dir=%s auth=%s", settings.data_dir, settings.auth_enabled)
         yield
+        if shell_task is not None:
+            shell_task.cancel()
+            with contextlib.suppress(Exception):
+                await shell_task
         backup.stop_backup_scheduler()
         # H8: close the shared httpx transports pooled for the MLX hot path.
         try:
@@ -243,6 +264,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+    # #83: the shell auth path reads the data dir for the gateway-issued
+    # module key file; stash it per-app (no module globals).
+    app.state.data_dir = settings.data_dir
+
+    # #83: serve the built web console (web/dist) so the gateway
+    # /shell/fusion-models-hub/ proxy has a same-origin upstream and the
+    # iframe loads without a separate dev server. Hash router + relative
+    # asset base means no SPA fallback is needed; /api/v1 routes keep
+    # winning by registration order. Missing dir = serving disabled
+    # (standalone API-only installs, containers without the web build).
+    web_dist = Path(settings.web_dist_dir) if settings.web_dist_dir else None
+    if web_dist and (web_dist / "index.html").is_file():
+        app.mount("/assets", StaticFiles(directory=web_dist / "assets"), name="web-assets")
+
+        @app.get("/", include_in_schema=False)
+        async def web_index():
+            return FileResponse(web_dist / "index.html")
+
+        logger.info("web console served from %s", web_dist)
+    else:
+        logger.info("web console not served (no build at %s)", web_dist)
 
     cors_allow_credentials = "*" not in settings.cors_origins
     app.add_middleware(
