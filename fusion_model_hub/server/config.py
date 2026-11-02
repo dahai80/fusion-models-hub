@@ -108,6 +108,11 @@ class Settings:
     identity_service_token: str = ""
     identity_jwt_issuer: str = "fusion-identity"
     identity_jwt_audience: str = "fusion-cluster"
+    # #83: union web shell integration. web_dist_dir serves the built console
+    # (web/dist) from the hub itself so the gateway /shell proxy has an
+    # upstream; shell registration itself is env-gated (see shell_registry).
+    web_dist_dir: str = ""
+    shell_gateway_url: str = ""
 
     def __post_init__(self):
         # P1-21: wire FMH_HOST/FMH_PORT/FMH_LOG_LEVEL/FMH_DB_URL. Previously the
@@ -289,6 +294,18 @@ class Settings:
         env_aud = os.environ.get("FUSION_IDENTITY_JWT_AUDIENCE", "")
         if env_aud:
             self.identity_jwt_audience = env_aud
+        # #83: shell integration wiring. web_dist_dir defaults to the repo's
+        # web/dist build output; empty/missing dir = static serving disabled.
+        if not self.web_dist_dir:
+            env_dist = os.environ.get("FMH_WEB_DIST_DIR", "")
+            if env_dist:
+                self.web_dist_dir = env_dist
+            else:
+                from .shell_registry import default_web_dist
+
+                self.web_dist_dir = str(default_web_dist())
+        if not self.shell_gateway_url:
+            self.shell_gateway_url = os.environ.get("FUSION_SHELL_GATEWAY_URL", "")
 
 
 def resolve_service_secret(env: str, how_to: str) -> str:

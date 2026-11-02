@@ -954,6 +954,10 @@ Environment variables:
 | `REDIS_URL` | `` | Shared Redis URL (DB-7; hub logical DB is `/1`). Accepted on the native plane, reserved — no consumer yet (the rate limiter is node-local in-memory by design) |
 | `FMH_DB_URL` | `sqlite+aiosqlite:///data/fmh.db` | Database URL (legacy alias; supports PostgreSQL, overridden by `DATABASE_URL`) |
 | `FMH_ALEMBIC_URL` | `sqlite://` | Sync DB URL for Alembic migrations |
+| `FUSION_SHELL_GATEWAY_URL` | empty | #83: union web shell gateway base (e.g. `http://127.0.0.1:11432`). Set together with `FUSION_ADMIN_KEY` to enable shell self-registration (trainer pattern) |
+| `FUSION_ADMIN_KEY` | empty | Gateway admin key for `POST /api/v1/shell/manifests` — resolved via `fusion_core.config` (prod-missing raises but registration stays non-fatal) |
+| `FMH_WEB_DIST_DIR` | `<repo>/web/dist` | Built web console served by the hub itself; missing dir disables static serving |
+| `FMH_SHELL_MANIFEST` / `FMH_SHELL_UPSTREAM` | `web/manifest.json` / `http://127.0.0.1:11444` | Shell registration manifest path / proxy upstream override |
 | `FMH_STORAGE_TYPE` | `local` | Storage backend type (`local` or `minio`) |
 | `FMH_MINIO_ENDPOINT` | `` | MinIO endpoint (when storage_type=minio) |
 | `FMH_MINIO_ACCESS_KEY` | `` | MinIO access key |
