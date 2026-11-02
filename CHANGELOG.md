@@ -3,6 +3,16 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.11] — 2026-11-02
+
+Patch release: union web shell integration (#83).
+
+### Added
+- **#83**: Model Hub console registered into the union web shell menu (trainer pattern). Self-registration on boot via `POST /api/v1/shell/manifests` (K1: gateway issues the `fm-` service key, persisted to `<data_dir>/web_module_key` 0600) + 15s heartbeats, re-registering after gateway restarts or key rotation. Env-gated via `FUSION_SHELL_GATEWAY_URL` + `FUSION_ADMIN_KEY` (resolved through `fusion_core.config`); disabled with a loud warning when unset, never fatal.
+- **#83**: the gateway `/shell` proxy injects the module service key as `Authorization: Bearer` — the hub accepts the shell accept-set (`FUSION_CLIENT_KEY` chain + gateway-issued key) as a read-only VIEWER; writes 403. Direct `X-API-Key` access unchanged.
+- **#83**: the built web console (`web/dist`, hash router + relative asset base) is served by the hub itself so the gateway proxy has a same-origin upstream; missing build disables static serving. New settings `web_dist_dir` / `shell_gateway_url` (`FMH_WEB_DIST_DIR`, `FUSION_SHELL_GATEWAY_URL`).
+- **#83**: `web/manifest.json` aligned to the approved taxonomy — title 模型仓库, icon Database, sort 43, category platform, health/upstream pointing at the hub itself. Verified live: gateway registry shows the entry, `/shell/fusion-models-hub/` + health proxied through `:11432` behind session RBAC.
+
 ## [1.2.10] — 2026-10-31
 
 Patch release: fusion-core dependency governance (#80).
