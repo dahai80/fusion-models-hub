@@ -13,6 +13,7 @@ Patch release: shell iframe 401 fix (#88) + local model discovery (#89).
 ### Added
 - **#89**: startup discovery of models already on the shared Fusion-MLX cache (`~/.fusion-mlx/models`) into the catalog (HF-cache layout + plain model dirs, idempotent, DRAFT) — Models page and the Downloads model picker now list everything actually on disk, not only hub-created rows.
 - **#89**: local model storage root `FMH_MODELS_DIR` (start.sh defaults it to `~/.fusion-mlx/models`); `LocalStore` accepts a `models_dir` override so versioned uploads land beside the shared cache.
+- **web**: the console now follows the union shell unified conventions — full zh/en i18n (`t(zh,en)` + `useLang()`, live switch via the shell language toggle through the SDK bridge) and theme sync (`sdk.theme` toggles `html.light`, token palette); nav drops `text-uppercase` (zh copy has no case).
 
 ## [1.2.12] — 2026-11-03
 
