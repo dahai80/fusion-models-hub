@@ -3,6 +3,14 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.12] — 2026-11-03
+
+Patch release: shell registry shutdown fix.
+
+### Fixed
+- Shell registry task cancellation now suppresses `asyncio.CancelledError` explicitly (inherits `BaseException`, so `suppress(Exception)` let it escape and failed lifespan shutdown with "Application shutdown failed" on every stop once the loop had started).
+- Registry-disabled state (`FUSION_SHELL_GATEWAY_URL` unset) logs at INFO instead of staying silent — menu presence is guaranteed by the gateway static declaration (gateway#467); heartbeats are supplementary.
+
 ## [1.2.11] — 2026-11-02
 
 Patch release: union web shell integration (#83).
