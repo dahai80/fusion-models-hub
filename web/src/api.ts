@@ -2,11 +2,25 @@
 // standalone dev goes through the vite proxy, embedded through the gateway
 // /shell/fusion-models-hub/ proxy.
 //
-// Auth: the hub requires X-API-Key on write endpoints (POST/PUT/DELETE) when
-// MODEL_HUB_AUTH_ENABLED=true. The UI has NO auth logic (spec S8) — embedded
-// mode the shell/gateway session injects the key upstream; standalone dev
-// wires it from VITE_HUB_API_KEY (dev convenience only). Reads work
-// anonymously.
+// issue #88: API calls must ride the SAME prefix the iframe is mounted under.
+// The vite `base: "./"` only fixes static assets — a fetch("/api/v1/...") from
+// inside the shell iframe resolves against the GATEWAY origin (:11432), hits
+// the gateway's own /api/v1 surface (no session-authed /api/v1/models route)
+// and 401s, which the TabView crash card renders as "HTTP 401". Derive the
+// prefix from location.pathname: /shell/<module>/... → /shell/<module>,
+// standalone ("/" or "/index.html") → "" so same-origin :11444 paths keep
+// working unchanged.
+export function apiBase(
+    pathname = globalThis.location?.pathname ?? "/",
+): string {
+    const marker = "/shell/";
+    const idx = pathname.indexOf(marker);
+    if (idx < 0) return "";
+    const moduleId = pathname.slice(idx + marker.length).split("/")[0];
+    return moduleId ? `${marker}${moduleId}` : "";
+}
+
+const API_BASE = apiBase();
 const API_KEY: string | undefined = import.meta.env.VITE_HUB_API_KEY;
 
 export const HF_MIRROR = "https://hf-mirror.com";
@@ -111,7 +125,7 @@ async function readError(resp: Response): Promise<string> {
 }
 
 async function getJson<T>(path: string): Promise<T> {
-    const resp = await fetch(path, { headers: headers() });
+    const resp = await fetch(`${API_BASE}${path}`, { headers: headers() });
     if (!resp.ok) {
         throw new Error(await readError(resp));
     }
@@ -123,7 +137,7 @@ async function sendJson<T>(
     path: string,
     body?: unknown,
 ): Promise<T> {
-    const resp = await fetch(path, {
+    const resp = await fetch(`${API_BASE}${path}`, {
         method,
         headers: headers(),
         body: body === undefined ? undefined : JSON.stringify(body),
