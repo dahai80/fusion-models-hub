@@ -944,6 +944,7 @@ Environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FMH_DATA_DIR` | `./data` | Data directory for DB and files |
+| `FMH_MODELS_DIR` | `~/.fusion-mlx/models` (via start.sh) | Local model storage root (#89) — the shared Fusion-MLX cache; startup discovery registers on-disk models into the catalog and versioned uploads land under `<models_dir>/<model_id>/<version>/` |
 | `FMH_MLX_URL` | `http://127.0.0.1:11432` | LLM API URL — fusion-gateway by default (#58); chat/completions/embeddings/health route through it |
 | `FMH_MLX_TOOL_URL` | `http://127.0.0.1:11434` | Direct Fusion-MLX URL for tool endpoints (hardware/recommend/analyze/adapt/convert/quantize/benchmarks) and model load/unload — the gateway does not route these |
 | `FMH_MLX_GATEWAY_API_KEY` | `` | Key the gateway accepts for Hub LLM calls. Empty = reuse the Fusion-MLX internal key (single-key installs) |

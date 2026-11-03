@@ -19,6 +19,7 @@ import {
     fetchDownloads,
     fetchModels,
 } from "../api";
+import { t, useLang } from "../i18n";
 import { SpeedTracker, computeEtaMs, downloadSource } from "../telemetry";
 
 // Download tasks (spec §7.3): progress, speed, ETA, HF_MIRROR source badge,
@@ -59,6 +60,7 @@ function SourceBadge({ sourceUrl }: { sourceUrl: string }) {
 }
 
 export function DownloadsPage() {
+    useLang();
     const [tasks, setTasks] = useState<DownloadTask[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [cancelId, setCancelId] = useState<string | null>(null);
@@ -106,7 +108,7 @@ export function DownloadsPage() {
     }, [load]);
 
     useEffect(() => {
-        fetchModels("", 1, 100)
+        fetchModels("", 1, 200)
             .then((items) =>
                 setModels(
                     items.map((m) => ({
@@ -158,7 +160,13 @@ export function DownloadsPage() {
     };
 
     if (error && !tasks) {
-        return <ErrorState message={error} retryLabel="Retry" onRetry={load} />;
+        return (
+            <ErrorState
+                message={error}
+                retryLabel={t("重试", "Retry")}
+                onRetry={load}
+            />
+        );
     }
     if (!tasks) {
         return <SkeletonLines rows={6} />;
@@ -167,7 +175,7 @@ export function DownloadsPage() {
     const columns: DataTableColumn<DownloadTask>[] = [
         {
             key: "model_id",
-            header: "Model",
+            header: t("模型", "Model"),
             render: (r) => (
                 <span className="font-mono text-xs text-text-primary">
                     {models.find((m) => m.id === r.model_id)?.name ??
@@ -177,7 +185,7 @@ export function DownloadsPage() {
         },
         {
             key: "source",
-            header: "Source",
+            header: t("来源", "Source"),
             render: (r) => (
                 <span className="font-mono text-xs text-text-secondary">
                     {r.source_url.length > 40
@@ -189,7 +197,7 @@ export function DownloadsPage() {
         },
         {
             key: "progress",
-            header: "Progress",
+            header: t("进度", "Progress"),
             render: (r) => (
                 <div className="min-w-32">
                     <div className="h-1.5 overflow-hidden rounded-full bg-bg-muted">
@@ -208,7 +216,7 @@ export function DownloadsPage() {
         },
         {
             key: "bytes",
-            header: "Bytes",
+            header: t("字节", "Bytes"),
             render: (r) => (
                 <span className="font-mono text-xs tabular-nums text-text-secondary">
                     {formatBytes(r.downloaded_bytes)}
@@ -220,7 +228,7 @@ export function DownloadsPage() {
         },
         {
             key: "speed",
-            header: "Speed",
+            header: t("速度", "Speed"),
             render: (r) => {
                 const speed = speedsRef.current.get(r.task_id) ?? null;
                 const eta = computeEtaMs(
@@ -241,14 +249,14 @@ export function DownloadsPage() {
         },
         {
             key: "status",
-            header: "Status",
+            header: t("状态", "Status"),
             render: (r) => (
                 <StatusBadge status={statusToKind(r.status)} label={r.status} />
             ),
         },
         {
             key: "actions",
-            header: "Actions",
+            header: t("操作", "Actions"),
             render: (r) =>
                 r.status === "pending" || r.status === "downloading" ? (
                     <button
@@ -256,7 +264,7 @@ export function DownloadsPage() {
                         onClick={() => setCancelId(r.task_id)}
                         className="rounded-md border border-error/50 px-2 py-1 text-xs text-error hover:bg-error/10"
                     >
-                        Cancel
+                        {t("取消", "Cancel")}
                     </button>
                 ) : null,
         },
@@ -264,10 +272,15 @@ export function DownloadsPage() {
 
     return (
         <div className="mx-auto max-w-5xl px-4">
-            <h1 className="mb-3 text-base text-text-primary">Downloads</h1>
+            <h1 className="mb-3 text-base text-text-primary">
+                {t("下载", "Downloads")}
+            </h1>
             <div className="mb-4 rounded-card border border-border bg-bg-elevated p-3">
                 <div className="mb-2 text-xs text-text-secondary">
-                    New download from hf-mirror.com
+                    {t(
+                        "从 hf-mirror.com 新建下载",
+                        "New download from hf-mirror.com",
+                    )}
                 </div>
                 <div className="flex flex-wrap gap-2">
                     <select
@@ -276,7 +289,9 @@ export function DownloadsPage() {
                         onChange={(e) => setModelId(e.target.value)}
                         className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-primary"
                     >
-                        <option value="">select model…</option>
+                        <option value="">
+                            {t("选择模型…", "select model…")}
+                        </option>
                         {models.map((m) => (
                             <option key={m.id} value={m.id}>
                                 {m.name}
@@ -287,7 +302,10 @@ export function DownloadsPage() {
                         name="hf_repo"
                         value={hfRepo}
                         onChange={(e) => setHfRepo(e.target.value)}
-                        placeholder="hf repo (e.g. Qwen/Qwen2.5-0.5B-Instruct); empty = model's hf_repo"
+                        placeholder={t(
+                            "HF 仓库（如 Qwen/Qwen2.5-0.5B-Instruct）；留空使用模型的 hf_repo",
+                            "hf repo (e.g. Qwen/Qwen2.5-0.5B-Instruct); empty = model's hf_repo",
+                        )}
                         className="min-w-64 flex-1 rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text-primary outline-none focus:border-brand"
                     />
                     <button
@@ -301,7 +319,9 @@ export function DownloadsPage() {
                         onClick={onSubmit}
                         className="rounded-md bg-brand px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                        {submitting ? "Starting…" : "Start download"}
+                        {submitting
+                            ? t("启动中…", "Starting…")
+                            : t("开始下载", "Start download")}
                     </button>
                 </div>
             </div>
@@ -317,18 +337,31 @@ export function DownloadsPage() {
                 pageSize={20}
                 emptyState={
                     <EmptyState
-                        title="No download tasks"
-                        description="Pick a model above to start downloading from hf-mirror.com."
+                        title={t("暂无下载任务", "No download tasks")}
+                        description={t(
+                            "在上方选择一个模型，从 hf-mirror.com 开始下载。",
+                            "Pick a model above to start downloading from hf-mirror.com.",
+                        )}
                     />
                 }
             />
             <ConfirmDialog
                 open={cancelId !== null}
                 danger
-                title={cancelId ? `Cancel download ${cancelId}?` : ""}
-                description="The in-flight download is cancelled and the partial .part file is discarded. A retry restarts from zero."
-                confirmLabel="Cancel download"
-                cancelLabel="Keep downloading"
+                title={
+                    cancelId
+                        ? t(
+                              `取消下载 ${cancelId}？`,
+                              `Cancel download ${cancelId}?`,
+                          )
+                        : ""
+                }
+                description={t(
+                    "进行中的下载将被取消，未完成的 .part 文件会被丢弃。重试将从头开始。",
+                    "The in-flight download is cancelled and the partial .part file is discarded. A retry restarts from zero.",
+                )}
+                confirmLabel={t("取消下载", "Cancel download")}
+                cancelLabel={t("继续下载", "Keep downloading")}
                 onConfirm={onCancel}
                 onCancel={() => setCancelId(null)}
             />

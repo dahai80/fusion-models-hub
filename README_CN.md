@@ -720,6 +720,7 @@ fusion_model_hub/
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `FMH_DATA_DIR` | `./data` | 数据目录（DB 和文件） |
+| `FMH_MODELS_DIR` | `~/.fusion-mlx/models`（由 start.sh 默认导出） | 本地模型存储根目录（#89）——与 Fusion-MLX 共享同一份模型缓存；启动时自动发现磁盘上的模型并登记进目录，版本上传落在 `<models_dir>/<model_id>/<version>/` |
 | `FMH_MLX_URL` | `http://127.0.0.1:11432` | LLM API URL（#58 起默认走 fusion-gateway；chat/completions/embeddings/health 经网关路由） |
 | `FMH_MLX_TOOL_URL` | `http://127.0.0.1:11434` | 工具端点直连 Fusion-MLX URL（hardware/recommend/analyze/adapt/convert/quantize/benchmarks 及模型 load/unload——网关不路由这些端点） |
 | `FMH_MLX_GATEWAY_API_KEY` | 空 | 网关接受的 Hub LLM 调用密钥。为空时复用 Fusion-MLX 内部密钥（单密钥部署） |

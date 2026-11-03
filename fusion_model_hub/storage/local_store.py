@@ -18,11 +18,16 @@ CHUNK_SIZE = 5 * 1024 * 1024  # 5MB
 class LocalStore(StorageBackend):
     """Local filesystem storage for model files with chunked upload and hash verification."""
 
-    def __init__(self, data_dir: str = ""):
+    def __init__(self, data_dir: str = "", models_dir: str = ""):
         if not data_dir:
             data_dir = str(Path.cwd() / "data")
         self.data_dir = Path(data_dir)
-        self._models_dir = self.data_dir / "models"
+        # #89: models root is operator-configurable (default ~/.fusion-mlx/models,
+        # the shared Fusion-MLX cache). Uploads/scratch/lfs stay under data_dir —
+        # only versioned model payloads follow the shared cache.
+        self._models_dir = (
+            Path(models_dir).expanduser() if models_dir else self.data_dir / "models"
+        )
         self.uploads_dir = self.data_dir / "uploads"
         self.lfs_dir = self.data_dir / "lfs"
         self._models_dir.mkdir(parents=True, exist_ok=True)

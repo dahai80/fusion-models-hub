@@ -113,6 +113,12 @@ class Settings:
     # upstream; shell registration itself is env-gated (see shell_registry).
     web_dist_dir: str = ""
     shell_gateway_url: str = ""
+    # #89: local model storage root. Empty = legacy <data_dir>/models. The
+    # shipped start.sh exports FMH_MODELS_DIR=~/.fusion-mlx/models so the hub
+    # catalog and the MLX runtime see ONE filesystem location — models
+    # downloaded by MLX or any fusion app are discoverable without duplicating
+    # storage. Versioned uploads land under <models_dir>/<model_id>/<version>/.
+    models_dir: str = ""
 
     def __post_init__(self):
         # P1-21: wire FMH_HOST/FMH_PORT/FMH_LOG_LEVEL/FMH_DB_URL. Previously the
@@ -306,6 +312,10 @@ class Settings:
                 self.web_dist_dir = str(default_web_dist())
         if not self.shell_gateway_url:
             self.shell_gateway_url = os.environ.get("FUSION_SHELL_GATEWAY_URL", "")
+        # #89: models_dir — FMH_MODELS_DIR wins; empty = legacy <data_dir>/models
+        # (LocalStore fallback). start.sh exports the shared MLX cache default.
+        if not self.models_dir:
+            self.models_dir = os.environ.get("FMH_MODELS_DIR", "")
 
 
 def resolve_service_secret(env: str, how_to: str) -> str:
