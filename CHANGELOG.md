@@ -3,6 +3,17 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.13] — 2026-11-03
+
+Patch release: shell iframe 401 fix (#88) + local model discovery (#89).
+
+### Fixed
+- **#88**: Model Hub console embedded in the union web shell rendered the TabView crash card "HTTP 401" on every load. `fetch('/api/v1/...')` resolved against the gateway origin (:11432) and hit the gateway's own API surface instead of riding the `/shell/fusion-models-hub/` proxy — the hub never saw the request. The API prefix is now derived from `location.pathname` (embedded → `/shell/<module>`, standalone → same-origin unchanged).
+
+### Added
+- **#89**: startup discovery of models already on the shared Fusion-MLX cache (`~/.fusion-mlx/models`) into the catalog (HF-cache layout + plain model dirs, idempotent, DRAFT) — Models page and the Downloads model picker now list everything actually on disk, not only hub-created rows.
+- **#89**: local model storage root `FMH_MODELS_DIR` (start.sh defaults it to `~/.fusion-mlx/models`); `LocalStore` accepts a `models_dir` override so versioned uploads land beside the shared cache.
+
 ## [1.2.12] — 2026-11-03
 
 Patch release: shell registry shutdown fix.

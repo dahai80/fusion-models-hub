@@ -13,6 +13,7 @@ import {
     fetchHealth,
     fetchStorage,
 } from "../api";
+import { t, useLang } from "../i18n";
 
 // Storage usage (issue #56): storage stats tiles + health panel. Read-only
 // view, 30s poll (spec §6.3 list cadence).
@@ -32,6 +33,7 @@ function healthToKind(status: string): StatusKind {
 }
 
 export function StoragePage() {
+    useLang();
     const [stats, setStats] = useState<StorageStats | null>(null);
     const [health, setHealth] = useState<HealthInfo | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -50,12 +52,18 @@ export function StoragePage() {
 
     useEffect(() => {
         load();
-        const t = setInterval(load, 30000);
-        return () => clearInterval(t);
+        const timer = setInterval(load, 30000);
+        return () => clearInterval(timer);
     }, [load]);
 
     if (error && !stats) {
-        return <ErrorState message={error} retryLabel="Retry" onRetry={load} />;
+        return (
+            <ErrorState
+                message={error}
+                retryLabel={t("重试", "Retry")}
+                onRetry={load}
+            />
+        );
     }
     if (!stats) {
         return <SkeletonLines rows={4} />;
@@ -80,7 +88,9 @@ export function StoragePage() {
 
     return (
         <div className="mx-auto max-w-4xl px-4">
-            <h1 className="mb-3 text-base text-text-primary">Storage</h1>
+            <h1 className="mb-3 text-base text-text-primary">
+                {t("存储", "Storage")}
+            </h1>
             {error ? (
                 <div className="mb-2 rounded-md border border-error/40 bg-error/10 px-3 py-2 text-xs text-error">
                     {error}
@@ -88,18 +98,27 @@ export function StoragePage() {
             ) : null}
             <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <MetricTile
-                    label="Total size"
+                    label={t("总大小", "Total size")}
                     value={stats.total_size_gb}
                     unit="GiB"
                 />
-                <MetricTile label="Models" value={stats.model_count} />
-                <MetricTile label="Files" value={stats.file_count} />
+                <MetricTile
+                    label={t("模型数", "Models")}
+                    value={stats.model_count}
+                />
+                <MetricTile
+                    label={t("文件数", "Files")}
+                    value={stats.file_count}
+                />
             </div>
             <KVPanel
-                title="Backend"
+                title={t("后端", "Backend")}
                 pairs={[
-                    ["storage path", stats.path ?? stats.endpoint ?? "-"],
-                    ["bucket", stats.bucket ?? "-"],
+                    [
+                        t("存储路径", "storage path"),
+                        stats.path ?? stats.endpoint ?? "-",
+                    ],
+                    [t("桶", "bucket"), stats.bucket ?? "-"],
                     [
                         "data dir",
                         typeof health?.data_dir === "string"

@@ -16,6 +16,7 @@ import {
     fetchQuantizeTasks,
     submitQuantize,
 } from "../api";
+import { t, useLang } from "../i18n";
 
 // Quantize task status (issue #56): submit form (source version / format /
 // bits) + task table with live status; row click shows task detail
@@ -43,6 +44,7 @@ interface VersionOption {
 }
 
 export function QuantizePage() {
+    useLang();
     const [tasks, setTasks] = useState<QuantizeTask[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [versions, setVersions] = useState<VersionOption[]>([]);
@@ -68,8 +70,8 @@ export function QuantizePage() {
 
     useEffect(() => {
         load();
-        const t = setInterval(load, 5000);
-        return () => clearInterval(t);
+        const timer = setInterval(load, 5000);
+        return () => clearInterval(timer);
     }, [load]);
 
     useEffect(() => {
@@ -120,7 +122,13 @@ export function QuantizePage() {
     };
 
     if (error && !tasks) {
-        return <ErrorState message={error} retryLabel="Retry" onRetry={load} />;
+        return (
+            <ErrorState
+                message={error}
+                retryLabel={t("重试", "Retry")}
+                onRetry={load}
+            />
+        );
     }
     if (!tasks) {
         return <SkeletonLines rows={6} />;
@@ -129,7 +137,7 @@ export function QuantizePage() {
     const columns: DataTableColumn<QuantizeTask>[] = [
         {
             key: "id",
-            header: "Task",
+            header: t("任务", "Task"),
             render: (r) => (
                 <button
                     type="button"
@@ -146,37 +154,42 @@ export function QuantizePage() {
         },
         {
             key: "source_version_id",
-            header: "Source Version",
+            header: t("源版本", "Source Version"),
             render: (r) => (
                 <span className="font-mono text-xs text-text-secondary">
                     {r.source_version_id}
                 </span>
             ),
         },
-        { key: "target_format", header: "Format" },
+        { key: "target_format", header: t("格式", "Format") },
         {
             key: "quant_bits",
-            header: "Bits",
+            header: t("位宽", "Bits"),
             render: (r) => (
                 <span className="font-mono tabular-nums">{r.quant_bits}</span>
             ),
         },
         {
             key: "status",
-            header: "Status",
+            header: t("状态", "Status"),
             render: (r) => (
                 <StatusBadge status={statusToKind(r.status)} label={r.status} />
             ),
         },
-        { key: "created_at", header: "Created", sortable: true },
+        { key: "created_at", header: t("创建时间", "Created"), sortable: true },
     ];
 
     return (
         <div className="mx-auto max-w-5xl px-4">
-            <h1 className="mb-3 text-base text-text-primary">Quantize</h1>
+            <h1 className="mb-3 text-base text-text-primary">
+                {t("量化", "Quantize")}
+            </h1>
             <div className="mb-4 rounded-card border border-border bg-bg-elevated p-3">
                 <div className="mb-2 text-xs text-text-secondary">
-                    New quantize task (runs on Fusion-MLX)
+                    {t(
+                        "新建量化任务（由 Fusion-MLX 执行）",
+                        "New quantize task (runs on Fusion-MLX)",
+                    )}
                 </div>
                 <div className="flex flex-wrap gap-2">
                     <select
@@ -185,7 +198,9 @@ export function QuantizePage() {
                         onChange={(e) => setSourceVersionId(e.target.value)}
                         className="min-w-64 flex-1 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-primary"
                     >
-                        <option value="">select source version…</option>
+                        <option value="">
+                            {t("选择源版本…", "select source version…")}
+                        </option>
                         {versions.map((v) => (
                             <option key={v.version_id} value={v.version_id}>
                                 {v.label}
@@ -218,7 +233,9 @@ export function QuantizePage() {
                         onClick={onSubmit}
                         className="rounded-md bg-brand px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                        {submitting ? "Submitting…" : "Submit"}
+                        {submitting
+                            ? t("提交中…", "Submitting…")
+                            : t("提交", "Submit")}
                     </button>
                 </div>
             </div>
@@ -234,8 +251,11 @@ export function QuantizePage() {
                 pageSize={20}
                 emptyState={
                     <EmptyState
-                        title="No quantize tasks"
-                        description="Submit one above — quantization runs on the Fusion-MLX engine."
+                        title={t("暂无量化任务", "No quantize tasks")}
+                        description={t(
+                            "在上方提交任务 — 量化由 Fusion-MLX 引擎执行。",
+                            "Submit one above — quantization runs on the Fusion-MLX engine.",
+                        )}
                     />
                 }
             />

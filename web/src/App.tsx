@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { t, useLang } from "./i18n";
 import { DownloadsPage } from "./pages/DownloadsPage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { QuantizePage } from "./pages/QuantizePage";
@@ -24,6 +25,7 @@ function parseHash(): Route {
 
 export function App() {
     const [route, setRoute] = useState<Route>(parseHash());
+    useLang();
 
     useEffect(() => {
         const onHash = () => setRoute(parseHash());
@@ -47,12 +49,16 @@ export function App() {
     );
 }
 
-const NAV_ITEMS: Array<{ id: Route; label: string }> = [
-    { id: "models", label: "Models" },
-    { id: "downloads", label: "Downloads" },
-    { id: "quantize", label: "Quantize" },
-    { id: "storage", label: "Storage" },
+const NAV_ITEMS: Array<{ id: Route; zh: string; en: string }> = [
+    { id: "models", zh: "模型", en: "Models" },
+    { id: "downloads", zh: "下载", en: "Downloads" },
+    { id: "quantize", zh: "量化", en: "Quantize" },
+    { id: "storage", zh: "存储", en: "Storage" },
 ];
+
+function navLabel(it: { zh: string; en: string }): string {
+    return t(it.zh, it.en);
+}
 
 function EmbeddedTabs({
     route,
@@ -65,13 +71,13 @@ function EmbeddedTabs({
                     key={it.id}
                     type="button"
                     onClick={() => onChange(it.id)}
-                    className={`flex-1 py-2 text-center text-xs uppercase tracking-wide ${
+                    className={`flex-1 py-2 text-center text-xs tracking-wide ${
                         route === it.id
                             ? "border-b-2 border-brand text-brand"
                             : "text-text-secondary"
                     }`}
                 >
-                    {it.label}
+                    {navLabel(it)}
                 </button>
             ))}
         </nav>
@@ -93,7 +99,7 @@ function BottomNav({
                         route === it.id ? "text-brand" : "text-text-secondary"
                     }`}
                 >
-                    {it.label}
+                    {navLabel(it)}
                 </button>
             ))}
         </nav>

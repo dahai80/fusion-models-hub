@@ -16,6 +16,7 @@ import {
     fetchModels,
     importFromHf,
 } from "../api";
+import { t, useLang } from "../i18n";
 
 // Model repository browsing (issue #56): keyword search + table; row click
 // loads the detail (versions, tags) into a side panel; HF import form
@@ -38,6 +39,7 @@ function statusToKind(status: string): StatusKind {
 }
 
 export function ModelsPage() {
+    useLang();
     const [models, setModels] = useState<ModelSummary[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [keyword, setKeyword] = useState("");
@@ -60,8 +62,8 @@ export function ModelsPage() {
 
     useEffect(() => {
         load();
-        const t = setInterval(load, 30000);
-        return () => clearInterval(t);
+        const timer = setInterval(load, 30000);
+        return () => clearInterval(timer);
     }, [load]);
 
     const openDetail = async (modelId: string) => {
@@ -83,7 +85,10 @@ export function ModelsPage() {
         try {
             const m = await importFromHf(repo);
             setNotice(
-                `Imported ${m.name} (${m.id}) — start a download on the Downloads tab.`,
+                t(
+                    `已导入 ${m.name} (${m.id}) — 请在“下载”页启动下载。`,
+                    `Imported ${m.name} (${m.id}) — start a download on the Downloads tab.`,
+                ),
             );
             setHfRepo("");
             load();
@@ -95,7 +100,13 @@ export function ModelsPage() {
     };
 
     if (error && !models) {
-        return <ErrorState message={error} retryLabel="Retry" onRetry={load} />;
+        return (
+            <ErrorState
+                message={error}
+                retryLabel={t("重试", "Retry")}
+                onRetry={load}
+            />
+        );
     }
     if (!models) {
         return <SkeletonLines rows={6} />;
@@ -104,7 +115,7 @@ export function ModelsPage() {
     const columns: DataTableColumn<ModelSummary>[] = [
         {
             key: "name",
-            header: "Model",
+            header: t("模型", "Model"),
             sortable: true,
             render: (r) => (
                 <button
@@ -120,10 +131,10 @@ export function ModelsPage() {
                 </button>
             ),
         },
-        { key: "model_type", header: "Type" },
+        { key: "model_type", header: t("类型", "Type") },
         {
             key: "model_status",
-            header: "Status",
+            header: t("状态", "Status"),
             render: (r) => (
                 <StatusBadge
                     status={statusToKind(r.model_status)}
@@ -131,12 +142,16 @@ export function ModelsPage() {
                 />
             ),
         },
-        { key: "versions_count", header: "Versions", sortable: true },
-        { key: "params_size", header: "Params" },
+        {
+            key: "versions_count",
+            header: t("版本数", "Versions"),
+            sortable: true,
+        },
+        { key: "params_size", header: t("参数量", "Params") },
         { key: "hf_repo", header: "HF Repo" },
         {
             key: "download_count",
-            header: "Downloads",
+            header: t("下载次数", "Downloads"),
             sortable: true,
             render: (r) => (
                 <span className="font-mono tabular-nums">
@@ -148,7 +163,9 @@ export function ModelsPage() {
 
     return (
         <div className="mx-auto max-w-5xl px-4">
-            <h1 className="mb-3 text-base text-text-primary">Models</h1>
+            <h1 className="mb-3 text-base text-text-primary">
+                {t("模型", "Models")}
+            </h1>
             <div className="mb-4 flex flex-wrap items-center gap-2">
                 <input
                     name="keyword"
@@ -157,7 +174,10 @@ export function ModelsPage() {
                     onKeyDown={(e) => {
                         if (e.key === "Enter") setQuery(keyword.trim());
                     }}
-                    placeholder="search by name or description"
+                    placeholder={t(
+                        "按名称或描述搜索",
+                        "search by name or description",
+                    )}
                     className="w-64 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus:border-brand"
                 />
                 <button
@@ -165,12 +185,15 @@ export function ModelsPage() {
                     onClick={() => setQuery(keyword.trim())}
                     className="rounded-md bg-brand px-4 py-2 text-sm text-white"
                 >
-                    Search
+                    {t("搜索", "Search")}
                 </button>
             </div>
             <div className="mb-4 rounded-card border border-border bg-bg-elevated p-3">
                 <div className="mb-2 text-xs text-text-secondary">
-                    Import from Hugging Face (via hf-mirror.com, no download)
+                    {t(
+                        "从 Hugging Face 导入（经 hf-mirror.com，不下载）",
+                        "Import from Hugging Face (via hf-mirror.com, no download)",
+                    )}
                 </div>
                 <div className="flex flex-wrap gap-2">
                     <input
@@ -186,7 +209,9 @@ export function ModelsPage() {
                         onClick={onImport}
                         className="rounded-md bg-brand px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                        {importing ? "Importing…" : "Import"}
+                        {importing
+                            ? t("导入中…", "Importing…")
+                            : t("导入", "Import")}
                     </button>
                 </div>
                 {notice ? (
@@ -207,8 +232,11 @@ export function ModelsPage() {
                 pageSize={20}
                 emptyState={
                     <EmptyState
-                        title="No models yet"
-                        description="Import a Hugging Face repo above to register your first model."
+                        title={t("还没有模型", "No models yet")}
+                        description={t(
+                            "在上方导入一个 Hugging Face 仓库来注册第一个模型。",
+                            "Import a Hugging Face repo above to register your first model.",
+                        )}
                     />
                 }
             />
@@ -239,25 +267,27 @@ export function ModelsPage() {
                         ]}
                     />
                     <div className="mt-3 text-xs text-text-secondary">
-                        Versions ({detail.versions.length})
+                        {t("版本", "Versions")} ({detail.versions.length})
                     </div>
                     <div className="mt-1 overflow-x-auto">
                         <table className="w-full text-left text-xs">
                             <thead>
                                 <tr className="text-text-muted">
                                     <th className="py-1 pr-4 font-normal">
-                                        Version
+                                        {t("版本", "Version")}
                                     </th>
                                     <th className="py-1 pr-4 font-normal">
-                                        Format
+                                        {t("格式", "Format")}
                                     </th>
                                     <th className="py-1 pr-4 font-normal">
-                                        Quant
+                                        {t("量化", "Quant")}
                                     </th>
                                     <th className="py-1 pr-4 font-normal">
-                                        Status
+                                        {t("状态", "Status")}
                                     </th>
-                                    <th className="py-1 font-normal">Size</th>
+                                    <th className="py-1 font-normal">
+                                        {t("大小", "Size")}
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
