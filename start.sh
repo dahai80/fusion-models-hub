@@ -98,6 +98,15 @@ do_start() {
     fi
     resolve_venv
     check_port_registry
+    # #89: operator-local env (DATABASE_URL / FUSION_SHELL_GATEWAY_URL /
+    # FUSION_ADMIN_KEY / ...). Gitignored. Sourcing it here means a plain
+    # `./start.sh restart` keeps prod envs instead of silently dropping to
+    # defaults (a bare restart once reset the hub onto SQLite).
+    if [ -f "$SCRIPT_DIR/.env.local" ]; then
+        # shellcheck disable=SC1091
+        set -a; source "$SCRIPT_DIR/.env.local"; set +a
+        echo "env: loaded .env.local"
+    fi
     resolve_mlx_api_key
     # #89: local model storage defaults to the shared Fusion-MLX cache so the
     # hub catalog and the MLX runtime see ONE filesystem location — models
