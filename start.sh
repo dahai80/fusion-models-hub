@@ -99,6 +99,11 @@ do_start() {
     resolve_venv
     check_port_registry
     resolve_mlx_api_key
+    # #89: local model storage defaults to the shared Fusion-MLX cache so the
+    # hub catalog and the MLX runtime see ONE filesystem location — models
+    # downloaded by MLX or any fusion app are discoverable by the startup
+    # local-model sync. Explicit env wins.
+    export FMH_MODELS_DIR="${FMH_MODELS_DIR:-$HOME/.fusion-mlx/models}"
     local serve_args=(serve --host "$HOST" --port "$PORT" --mlx-url "$MLX_URL")
     if [ -n "$TLS_CERT" ] && [ -n "$TLS_KEY" ]; then
         serve_args+=(--tls-certfile "$TLS_CERT" --tls-keyfile "$TLS_KEY")

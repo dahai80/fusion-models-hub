@@ -52,6 +52,47 @@ from .routers import (
 logger = logging.getLogger(__name__)
 
 
+async def _sync_local_models(settings: Settings) -> int:
+    # #89: register locally-present models (the shared ~/.fusion-mlx/models
+    # cache) into the catalog so the Models page and the Downloads model
+    # picker list everything actually on disk, not only hub-created rows.
+    # Idempotent: existing names/hf_repos are skipped. Runs once per startup,
+    # best-effort — a scan failure must never block serving.
+    from sqlalchemy import select
+
+    from ..db.models import Model, ModelStatus, ModelType
+    from ..manage.discovery import discover_local_models, guess_model_type
+    from .deps import get_session_factory
+
+    found = discover_local_models(settings.models_dir)
+    if not found:
+        return 0
+    created = 0
+    async with get_session_factory()() as session:
+        rows = (await session.execute(select(Model.name, Model.hf_repo))).all()
+        existing_names = {r[0] for r in rows}
+        existing_repos = {r[1] for r in rows if r[1]}
+        for item in found:
+            if item["name"] in existing_names:
+                continue
+            if item["hf_repo"] and item["hf_repo"] in existing_repos:
+                continue
+            m = Model(
+                name=item["name"],
+                description=f"Discovered on local disk ({item['path']})",
+                model_type=ModelType(guess_model_type(item["name"], Path(item["path"]))),
+                hf_repo=item["hf_repo"],
+                model_status=ModelStatus.DRAFT,
+            )
+            session.add(m)
+            existing_names.add(item["name"])
+            created += 1
+        await session.commit()
+    if created:
+        logger.info("Local model sync: registered %d model(s) from %s", created, settings.models_dir)
+    return created
+
+
 async def _reconcile_orphaned_tasks() -> None:
     from ..db.crud import list_quantize_tasks, update_quantize_task
     from ..db.models import TaskStatus
@@ -202,6 +243,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # #54: initialize the fusion-identity integration flag from settings.
         set_identity_integration_enabled(settings.identity_integration_enabled)
         await _reconcile_orphaned_tasks()
+        # #89: fold locally-present models into the catalog (idempotent) so
+        # Models / Downloads list everything on the shared MLX cache.
+        try:
+            await _sync_local_models(settings)
+        except Exception:
+            logger.exception("Local model sync failed — continuing without it")
         # H10: probe Fusion-MLX version compatibility at startup. Best-effort
         # (MLX may start after the hub) — a mismatch or unreachable MLX is
         # logged loudly but does not block startup, so the hub still serves

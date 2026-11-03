@@ -106,7 +106,7 @@ export function DownloadsPage() {
     }, [load]);
 
     useEffect(() => {
-        fetchModels("", 1, 100)
+        fetchModels("", 1, 200)
             .then((items) =>
                 setModels(
                     items.map((m) => ({

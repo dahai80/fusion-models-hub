@@ -15,6 +15,10 @@ def settings():
         data_dir="/tmp/fmh_test_data",
         db_url="sqlite+aiosqlite:///:memory:",
         log_level="WARNING",
+        # #89: prod default is the shared MLX cache (~/.fusion-mlx/models);
+        # tests must never touch the real cache, keep the legacy in-data-dir
+        # layout the suites seed files against.
+        models_dir="/tmp/fmh_test_data/models",
         # #3: keep the eval runner off in the core suite — bench submission is
         # exercised by the dedicated TestEvaluationRunner with a mocked bench.
         eval_runner_enabled=False,

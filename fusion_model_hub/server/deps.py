@@ -34,7 +34,7 @@ def init_deps(settings: Settings, engine) -> None:
             secure=settings.minio_secure,
         )
     else:
-        _store = LocalStore(data_dir=settings.data_dir)
+        _store = LocalStore(data_dir=settings.data_dir, models_dir=settings.models_dir)
     from ..cache.manager import CacheManager
 
     _cache = CacheManager(cache_root=settings.cache_dir)
