@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import logging
 import time
@@ -226,8 +227,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # loud warning otherwise. Daemon task — never blocks or fails startup.
         shell_task = None
         if settings.shell_gateway_url:
-            import asyncio
-
             from .shell_registry import shell_registry_loop
 
             shell_task = asyncio.create_task(
@@ -235,11 +234,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 name="fmh-shell-registry",
             )
             logger.info("shell registry loop started (gateway=%s)", settings.shell_gateway_url)
+        else:
+            # Visible OFF, not silent: menu presence is guaranteed by the
+            # gateway static declaration (gateway#467), but an operator who
+            # expects live heartbeats must see why they are absent.
+            logger.info("shell registry disabled (FUSION_SHELL_GATEWAY_URL unset)")
         logger.info("Fusion Model Hub started: data_dir=%s auth=%s", settings.data_dir, settings.auth_enabled)
         yield
         if shell_task is not None:
             shell_task.cancel()
-            with contextlib.suppress(Exception):
+            # CancelledError inherits BaseException (not Exception) — suppress
+            # it explicitly or lifespan shutdown itself fails with
+            # "Application shutdown failed".
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await shell_task
         backup.stop_backup_scheduler()
         # H8: close the shared httpx transports pooled for the MLX hot path.
