@@ -10,8 +10,10 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import {
     type Deployment,
+    type ModelSummary,
     createDeployment,
     fetchDeployments,
+    fetchModels,
     scaleDeployment,
     setGrayRelease,
     stopDeployment,
@@ -19,7 +21,9 @@ import {
 import { t, useLang } from "../i18n";
 
 // Serving console (issue #90): deployment instances, scale, gray release,
-// stop. Create form needs a model id; replicas 1-100 per API contract.
+// stop. bug2: the create form picks from the DOWNLOADED model catalog
+// (fetchModels) instead of a free-text model id; replicas 1-100 per API
+// contract.
 
 function statusToKind(status: string): StatusKind {
     switch (status) {
@@ -68,6 +72,18 @@ export function ServingPage() {
     const [replicas, setReplicas] = useState(1);
     const [grayRatio] = useState(10);
     const [busy, setBusy] = useState(false);
+    const [models, setModels] = useState<ModelSummary[]>([]);
+
+    useEffect(() => {
+        fetchModels("", 1, 200)
+            .then(setModels)
+            .catch((e) =>
+                console.error(
+                    "[model-hub-web] model list for serving fail:",
+                    e,
+                ),
+            );
+    }, []);
 
     const load = useCallback(async () => {
         try {
@@ -189,12 +205,21 @@ export function ServingPage() {
                     )}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <input
+                    <select
+                        name="model_id"
                         value={modelId}
                         onChange={(e) => setModelId(e.target.value)}
-                        placeholder={t("模型 ID", "model id")}
                         className="min-w-40 flex-1 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-primary"
-                    />
+                    >
+                        <option value="">
+                            {t("选择已下载模型…", "select a downloaded model…")}
+                        </option>
+                        {models.map((m) => (
+                            <option key={m.id} value={m.id}>
+                                {m.name}
+                            </option>
+                        ))}
+                    </select>
                     <input
                         value={name}
                         onChange={(e) => setName(e.target.value)}
@@ -248,8 +273,8 @@ export function ServingPage() {
                     <EmptyState
                         title={t("暂无部署", "No deployments")}
                         description={t(
-                            "上方输入模型 ID 部署一个实例。",
-                            "Deploy an instance by model id above.",
+                            "在上方选择已下载模型，部署一个实例。",
+                            "Pick a downloaded model above to deploy an instance.",
                         )}
                     />
                 }

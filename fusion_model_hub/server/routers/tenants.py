@@ -54,7 +54,10 @@ async def create_tenant(body: TenantCreate, session: SessionDep, request: Reques
 
 @router.get("")
 async def list_tenants(session: SessionDep, request: Request):
-    _require_admin(request)
+    # #90: reads open to any authenticated role (VIEWER included) — the
+    # governance console lists tenants through the shell proxy, which presents
+    # the module service key as VIEWER. Writes stay admin-only (E-S8).
+    _ = request
     items = await crud.list_tenants(session)
     logger.info("Listed tenants: %d", len(items))
     return {"tenants": items, "total": len(items)}
@@ -62,7 +65,7 @@ async def list_tenants(session: SessionDep, request: Request):
 
 @router.get("/{tenant_id}", response_model=TenantOut)
 async def get_tenant(tenant_id: str, session: SessionDep, request: Request):
-    _require_admin(request)
+    _ = request
     t = await crud.get_tenant(session, tenant_id)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")

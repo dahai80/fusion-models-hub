@@ -513,3 +513,67 @@ export async function fetchAuditLogs(): Promise<AuditLogEntry[]> {
     );
     return data.items ?? [];
 }
+
+// ── bug1: Downloads search-first (hf-mirror / modelscope) ──
+
+export type MarketSource = "hf" | "modelscope";
+
+export interface MarketResult {
+    id: string;
+    name: string;
+    task: string;
+    downloads: number;
+    source: string;
+    creator?: string;
+}
+
+export async function marketSearch(
+    keyword: string,
+    source: MarketSource,
+): Promise<MarketResult[]> {
+    const backend = source === "hf" ? "huggingface" : "modelscope";
+    const data = await getJson<{
+        huggingface?: MarketResult[];
+        modelscope?: MarketResult[];
+    }>(
+        `/api/v1/models/market/search?keyword=${encodeURIComponent(keyword)}&source=${backend}`,
+    );
+    return source === "hf" ? (data.huggingface ?? []) : (data.modelscope ?? []);
+}
+
+export interface MarketFile {
+    path: string;
+    size: number;
+}
+
+export async function marketFiles(
+    source: MarketSource,
+    repo: string,
+): Promise<MarketFile[]> {
+    const data = await getJson<{ files: MarketFile[] }>(
+        `/api/v1/models/market/files?source=${source}&repo=${encodeURIComponent(repo)}`,
+    );
+    return data.files ?? [];
+}
+
+export async function createModel(input: {
+    name: string;
+    hf_repo?: string;
+    description?: string;
+    model_type?: string;
+}): Promise<ModelSummary> {
+    return sendJson<ModelSummary>("POST", "/api/v1/models", input);
+}
+
+// Largest weight file wins (modelscope reports sizes; HF lists names only).
+export function pickWeightFile(files: MarketFile[]): MarketFile | null {
+    const weights = files.filter((f) =>
+        /\.(safetensors|gguf|bin)$/i.test(f.path),
+    );
+    if (weights.length === 0) return null;
+    let best = weights[0];
+    for (const f of weights) {
+        if (f.size > best.size) best = f;
+    }
+    return best;
+}
