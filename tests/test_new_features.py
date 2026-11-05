@@ -62,9 +62,11 @@ def _mock_httpx_client(response_status=200, response_json=None, side_effect=None
     if side_effect:
         mock_ctx.post = AsyncMock(side_effect=side_effect)
         mock_ctx.get = AsyncMock(side_effect=side_effect)
+        mock_ctx.put = AsyncMock(side_effect=side_effect)
     else:
         mock_ctx.post = AsyncMock(return_value=mock_resp)
         mock_ctx.get = AsyncMock(return_value=mock_resp)
+        mock_ctx.put = AsyncMock(return_value=mock_resp)
 
     @contextlib.contextmanager
     def _ctx():
@@ -513,15 +515,17 @@ class TestModelscopeSearch:
         with _mock_httpx_client(
             response_json={
                 "Data": {
-                    "Models": [
-                        {
-                            "Name": "qwen-test",
-                            "Id": "ms-1",
-                            "Task": "text-generation",
-                            "ModelScopeId": "qwen/qwen-test",
-                        }
-                    ],
-                    "TotalCount": 1,
+                    "Model": {
+                        "Models": [
+                            {
+                                "Name": "qwen-test",
+                                "Id": "ms-1",
+                                "Path": "qwen",
+                                "Tasks": [{"Name": "text-generation"}],
+                            }
+                        ],
+                        "TotalCount": 1,
+                    }
                 },
             }
         ):

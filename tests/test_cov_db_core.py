@@ -772,18 +772,33 @@ class TestModelscopeSearch:
         mock.status_code = 200
         mock.json = MagicMock(
             return_value={
-                "Data": {"Models": [{"Name": "test-model", "Id": "m1", "Task": "llm"}], "TotalCount": 1},
+                "Data": {
+                    "Model": {
+                        "Models": [
+                            {
+                                "Name": "test-model",
+                                "Id": "m1",
+                                "Path": "org",
+                                "Downloads": 5,
+                                "Tasks": [{"Name": "text-generation"}],
+                            }
+                        ],
+                        "TotalCount": 1,
+                    }
+                },
             }
         )
         mock.raise_for_status = MagicMock()
         ctx = AsyncMock()
-        ctx.get = AsyncMock(return_value=mock)
+        ctx.put = AsyncMock(return_value=mock)
         ctx.__aenter__ = AsyncMock(return_value=ctx)
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("httpx.AsyncClient", return_value=ctx):
             result = await search_modelscope("test")
         assert result["total"] == 1
         assert result["items"][0]["name"] == "test-model"
+        assert result["items"][0]["creator"] == "org"
+        assert result["items"][0]["task"] == "text-generation"
         assert result["source"] == "modelscope"
 
     async def test_search_connect_error_returns_empty(self):
@@ -792,7 +807,7 @@ class TestModelscopeSearch:
         from fusion_model_hub.repo.modelscope_search import search_modelscope
 
         ctx = AsyncMock()
-        ctx.get = AsyncMock(side_effect=_httpx.ConnectError("net err"))
+        ctx.put = AsyncMock(side_effect=_httpx.ConnectError("net err"))
         ctx.__aenter__ = AsyncMock(return_value=ctx)
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("httpx.AsyncClient", return_value=ctx):
@@ -810,7 +825,7 @@ class TestModelscopeSearch:
         mock.text = "err"
         err = _httpx.HTTPStatusError("500", request=MagicMock(), response=mock)
         ctx = AsyncMock()
-        ctx.get = AsyncMock(side_effect=err)
+        ctx.put = AsyncMock(side_effect=err)
         ctx.__aenter__ = AsyncMock(return_value=ctx)
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("httpx.AsyncClient", return_value=ctx):
