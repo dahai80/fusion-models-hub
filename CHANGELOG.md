@@ -3,6 +3,11 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.15] — 2026-11-05
+
+### Fixed
+- **search**: ModelScope search returned zero results — the public `GET /api/v1/models` endpoint was retired (404). `search_modelscope` now calls `PUT https://www.modelscope.cn/api/v1/dolphin/models` with a JSON body and parses the new `Data.Model.Models[]` / `TotalCount` shape; `creator` comes from the item `Path` namespace and `task` from the first `Tasks[]` entry. Verified live (699 hits for "Qwen2.5-0.5B").
+
 ## [1.2.14] — 2026-11-05
 
 Patch release: search-first downloads (bug1), serving model picker (bug2), tenant read ACL.
