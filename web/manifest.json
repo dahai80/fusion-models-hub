@@ -38,6 +38,26 @@
             "route": "/storage",
             "title": "存储",
             "title_en": "Storage"
+        },
+        {
+            "route": "/governance",
+            "title": "治理",
+            "title_en": "Governance"
+        },
+        {
+            "route": "/serving",
+            "title": "服务",
+            "title_en": "Serving"
+        },
+        {
+            "route": "/cluster",
+            "title": "集群",
+            "title_en": "Cluster"
+        },
+        {
+            "route": "/versions",
+            "title": "版本",
+            "title_en": "Versions"
         }
     ]
 }

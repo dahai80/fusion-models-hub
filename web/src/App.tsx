@@ -1,20 +1,36 @@
 import { useEffect, useState } from "react";
 import { t, useLang } from "./i18n";
+import { ClusterPage } from "./pages/ClusterPage";
 import { DownloadsPage } from "./pages/DownloadsPage";
+import { GovernancePage } from "./pages/GovernancePage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { QuantizePage } from "./pages/QuantizePage";
+import { ServingPage } from "./pages/ServingPage";
 import { StoragePage } from "./pages/StoragePage";
+import { VersionsPage } from "./pages/VersionsPage";
 import { embeddedParam, isEmbedded } from "./sdk";
 
 // Hash router (no router dep). Standalone shows a bottom tab bar; embedded
 // (?embedded=1 or iframe) the shell owns the chrome (spec S7).
-type Route = "models" | "downloads" | "quantize" | "storage";
+type Route =
+    | "models"
+    | "downloads"
+    | "quantize"
+    | "storage"
+    | "governance"
+    | "serving"
+    | "cluster"
+    | "versions";
 
 const ROUTES: ReadonlySet<string> = new Set<Route>([
     "models",
     "downloads",
     "quantize",
     "storage",
+    "governance",
+    "serving",
+    "cluster",
+    "versions",
 ]);
 
 function parseHash(): Route {
@@ -43,6 +59,10 @@ export function App() {
                 {route === "downloads" && <DownloadsPage />}
                 {route === "quantize" && <QuantizePage />}
                 {route === "storage" && <StoragePage />}
+                {route === "governance" && <GovernancePage />}
+                {route === "serving" && <ServingPage />}
+                {route === "cluster" && <ClusterPage />}
+                {route === "versions" && <VersionsPage />}
             </main>
             {!embedded && <BottomNav route={route} onChange={setRoute} />}
         </div>
@@ -54,6 +74,10 @@ const NAV_ITEMS: Array<{ id: Route; zh: string; en: string }> = [
     { id: "downloads", zh: "下载", en: "Downloads" },
     { id: "quantize", zh: "量化", en: "Quantize" },
     { id: "storage", zh: "存储", en: "Storage" },
+    { id: "governance", zh: "治理", en: "Governance" },
+    { id: "serving", zh: "服务", en: "Serving" },
+    { id: "cluster", zh: "集群", en: "Cluster" },
+    { id: "versions", zh: "版本", en: "Versions" },
 ];
 
 function navLabel(it: { zh: string; en: string }): string {

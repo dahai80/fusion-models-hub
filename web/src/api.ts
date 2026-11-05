@@ -227,3 +227,289 @@ export async function fetchStorage(): Promise<StorageStats> {
 export async function fetchHealth(): Promise<HealthInfo> {
     return getJson<HealthInfo>("/api/v1/system/health");
 }
+
+// ── issue #90: governance / serving / cluster / versions pages ──
+
+export interface Tenant {
+    id: string;
+    name: string;
+    display_name: string;
+    is_active: boolean;
+}
+
+export interface ApiKeyInfo {
+    id: string;
+    name: string;
+    tenant_id: string;
+    key_prefix: string;
+    permissions: string;
+    role: string;
+    qps_limit: number;
+    allowed_models: string;
+    allowed_modules: string;
+    is_active: boolean;
+    created_at: string | null;
+    last_used_at: string | null;
+}
+
+export interface ApprovalRequest {
+    id: string;
+    model_id: string;
+    version_id: string;
+    level: string;
+    status: string;
+    requester: string;
+    approver?: string;
+    comment?: string;
+    created_at?: string | null;
+    [key: string]: unknown;
+}
+
+export interface Webhook {
+    id: string;
+    name: string;
+    url: string;
+    events: string;
+    is_active: boolean;
+}
+
+export interface Deployment {
+    id: string;
+    model_id: string;
+    version_id: string;
+    name: string;
+    replicas: number;
+    node_id: string;
+    status: string;
+    gray_enabled: boolean;
+    gray_version_id: string;
+    gray_traffic_ratio: number;
+}
+
+export interface ClusterNode {
+    id: string;
+    name: string;
+    url: string;
+    host: string;
+    port: number;
+    status: string;
+    capabilities: string;
+    last_seen: string | null;
+}
+
+export interface VersionRecord {
+    id: string;
+    model_id: string;
+    version: string;
+    format: string;
+    quantization: string;
+    status: string;
+    file_size: number;
+    benchmark_score: number | null;
+    created_at?: string | null;
+    [key: string]: unknown;
+}
+
+export interface SecurityScan {
+    id: string;
+    model_id: string;
+    version_id: string;
+    scan_type: string;
+    status: string;
+    findings: Record<string, unknown>;
+    risk_level: string;
+    created_at: string | null;
+    completed_at: string | null;
+}
+
+export interface AuditLogEntry {
+    id: string;
+    action: string;
+    resource_type: string;
+    resource_id: string;
+    api_key_id: string | null;
+    created_at?: string | null;
+    [key: string]: unknown;
+}
+
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+    return sendJson<T>("POST", path, body ?? {});
+}
+
+export async function fetchTenants(): Promise<Tenant[]> {
+    const data = await getJson<{ tenants: Tenant[] }>("/api/v1/tenants");
+    return data.tenants ?? [];
+}
+
+export async function createTenant(
+    name: string,
+    displayName = "",
+): Promise<Tenant> {
+    return sendJson<Tenant>("POST", "/api/v1/tenants", {
+        name,
+        display_name: displayName,
+    });
+}
+
+export async function fetchApiKeys(): Promise<ApiKeyInfo[]> {
+    const data = await getJson<{ items: ApiKeyInfo[] }>("/api/v1/auth/keys");
+    return data.items ?? [];
+}
+
+export async function createApiKey(input: {
+    name: string;
+    tenant_id?: string;
+    role?: string;
+}): Promise<{ id: string; key: string; key_prefix: string }> {
+    return postJson("/api/v1/auth/keys", input);
+}
+
+export async function deactivateApiKey(keyId: string): Promise<void> {
+    await postJson(`/api/v1/auth/keys/${encodeURIComponent(keyId)}/deactivate`);
+}
+
+export async function fetchApprovals(status = ""): Promise<ApprovalRequest[]> {
+    const data = await getJson<{ items: ApprovalRequest[] }>(
+        `/api/v1/approvals?status=${encodeURIComponent(status)}&page=1&page_size=50`,
+    );
+    return data.items ?? [];
+}
+
+export async function decideApproval(
+    reqId: string,
+    action: "approve" | "reject",
+    approver = "",
+    comment = "",
+): Promise<unknown> {
+    return postJson(
+        `/api/v1/approvals/${encodeURIComponent(reqId)}/${action}`,
+        { approver, comment },
+    );
+}
+
+export async function fetchWebhooks(): Promise<Webhook[]> {
+    const data = await getJson<{ webhooks: Webhook[] }>("/api/v1/webhooks");
+    return data.webhooks ?? [];
+}
+
+export async function createWebhook(input: {
+    name: string;
+    url: string;
+    events?: string;
+}): Promise<Webhook> {
+    return sendJson<Webhook>("POST", "/api/v1/webhooks", input);
+}
+
+export async function deleteWebhook(webhookId: string): Promise<void> {
+    await sendJson(
+        "DELETE",
+        `/api/v1/webhooks/${encodeURIComponent(webhookId)}`,
+    );
+}
+
+export async function fetchDeployments(): Promise<Deployment[]> {
+    const data = await getJson<{ deployments: Deployment[] }>(
+        "/api/v1/deployments",
+    );
+    return data.deployments ?? [];
+}
+
+export async function createDeployment(input: {
+    model_id: string;
+    name?: string;
+    replicas?: number;
+}): Promise<Deployment> {
+    return postJson("/api/v1/deployments", input);
+}
+
+export async function scaleDeployment(
+    deploymentId: string,
+    replicas: number,
+): Promise<unknown> {
+    return postJson(
+        `/api/v1/deployments/${encodeURIComponent(deploymentId)}/scale`,
+        { replicas },
+    );
+}
+
+export async function stopDeployment(deploymentId: string): Promise<unknown> {
+    return postJson(
+        `/api/v1/deployments/${encodeURIComponent(deploymentId)}/stop`,
+    );
+}
+
+export async function setGrayRelease(
+    deploymentId: string,
+    grayVersionId: string,
+    grayTrafficRatio = 10,
+): Promise<unknown> {
+    return postJson(
+        `/api/v1/deployments/${encodeURIComponent(deploymentId)}/gray`,
+        {
+            gray_version_id: grayVersionId,
+            gray_traffic_ratio: grayTrafficRatio,
+        },
+    );
+}
+
+export async function fetchClusterNodes(): Promise<ClusterNode[]> {
+    const data = await getJson<{ nodes: ClusterNode[] }>(
+        "/api/v1/cluster/nodes",
+    );
+    return data.nodes ?? [];
+}
+
+export async function addClusterNode(input: {
+    name: string;
+    url: string;
+    capabilities?: string;
+}): Promise<unknown> {
+    return sendJson("POST", "/api/v1/cluster/nodes", input);
+}
+
+export async function removeClusterNode(nodeId: string): Promise<void> {
+    await sendJson(
+        "DELETE",
+        `/api/v1/cluster/nodes/${encodeURIComponent(nodeId)}`,
+    );
+}
+
+export async function fetchVersions(modelId: string): Promise<VersionRecord[]> {
+    const data = await getJson<{ items: VersionRecord[] }>(
+        `/api/v1/models/${encodeURIComponent(modelId)}/versions?page=1&page_size=50`,
+    );
+    return data.items ?? [];
+}
+
+export async function versionAction(
+    versionId: string,
+    action: "rollback" | "promote" | "retire",
+): Promise<unknown> {
+    return postJson(
+        `/api/v1/versions/${encodeURIComponent(versionId)}/${action}`,
+    );
+}
+
+export async function fetchScans(): Promise<SecurityScan[]> {
+    const data = await getJson<{ items: SecurityScan[] }>(
+        "/api/v1/security/scans?page=1&page_size=50",
+    );
+    return data.items ?? [];
+}
+
+export async function triggerScan(
+    modelId: string,
+    versionId = "",
+): Promise<SecurityScan> {
+    return postJson("/api/v1/security/scan", {
+        model_id: modelId,
+        version_id: versionId,
+    });
+}
+
+export async function fetchAuditLogs(): Promise<AuditLogEntry[]> {
+    const data = await getJson<{ items: AuditLogEntry[] }>(
+        "/api/v1/system/audit?page=1&page_size=50",
+    );
+    return data.items ?? [];
+}
