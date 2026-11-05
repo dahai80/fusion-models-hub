@@ -361,6 +361,51 @@ async def market_search(
     return results
 
 
+@router.get("/models/market/files")
+async def market_files(source: str = "hf", repo: str = ""):
+    # Downloads search-first flow: the download runner streams ONE url, so the
+    # page needs a concrete file path inside the picked repo. Listing is done
+    # server-side — hf-mirror / modelscope file APIs are cross-origin for the
+    # browser console.
+    repo = repo.strip().strip("/")
+    if not repo:
+        raise HTTPException(status_code=400, detail="repo is required")
+    if source not in ("hf", "modelscope"):
+        raise HTTPException(status_code=400, detail="source must be hf or modelscope")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            if source == "hf":
+                resp = await client.get(f"https://hf-mirror.com/api/models/{repo}")
+                if resp.status_code != 200:
+                    raise HTTPException(status_code=502, detail=f"hf-mirror returned HTTP {resp.status_code}")
+                siblings = (resp.json() or {}).get("siblings") or []
+                files = [
+                    {"path": s.get("rfilename", ""), "size": 0}
+                    for s in siblings
+                    if s.get("rfilename")
+                ]
+            else:
+                resp = await client.get(
+                    f"https://modelscope.cn/api/v1/models/{repo}/repo/files",
+                    params={"Recursive": "true"},
+                )
+                if resp.status_code != 200:
+                    raise HTTPException(status_code=502, detail=f"modelscope returned HTTP {resp.status_code}")
+                raw = ((resp.json() or {}).get("Data", {}) or {}).get("Files") or []
+                files = [
+                    {"path": f.get("Path", ""), "size": int(f.get("Size", 0) or 0)}
+                    for f in raw
+                    if f.get("Type", "blob") == "blob" and f.get("Path")
+                ]
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Market file listing failed: source=%s repo=%s", source, repo)
+        raise HTTPException(status_code=502, detail="File listing failed")
+    logger.info("Market file listing: source=%s repo=%s files=%d", source, repo, len(files))
+    return {"source": source, "repo": repo, "files": files}
+
+
 @router.get("/models/compare")
 async def compare_models(ids: str, session: SessionDep):
     model_ids = [i.strip() for i in ids.split(",") if i.strip()]

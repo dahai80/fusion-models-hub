@@ -14,18 +14,28 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
     type DownloadTask,
     HF_MIRROR,
+    type MarketResult,
+    type MarketSource,
     cancelDownload,
     createDownload,
+    createModel,
     fetchDownloads,
     fetchModels,
+    importFromHf,
+    marketFiles,
+    marketSearch,
+    pickWeightFile,
 } from "../api";
 import { t, useLang } from "../i18n";
 import { SpeedTracker, computeEtaMs, downloadSource } from "../telemetry";
 
-// Download tasks (spec §7.3): progress, speed, ETA, HF_MIRROR source badge,
-// cancellable. Speed/ETA are derived client-side from successive poll
-// samples (the API reports cumulative bytes only). Cancel is a destructive
-// op behind a danger confirm (spec S5).
+// Download tasks (spec §7.3): progress, speed, ETA, source badge, cancellable.
+// bug1: the entry point is SEARCH-first — query hf-mirror.com or modelscope.cn
+// via /models/market/search, then a per-result Download action registers the
+// model row and starts a single-file download of the repo's weight file
+// (path resolved server-side via /models/market/files). Speed/ETA are derived
+// client-side from successive poll samples. Cancel is a destructive op behind
+// a danger confirm (spec S5).
 
 function statusToKind(status: string): StatusKind {
     switch (status) {
@@ -67,9 +77,11 @@ export function DownloadsPage() {
     const [models, setModels] = useState<
         Array<{ id: string; name: string; hf_repo: string }>
     >([]);
-    const [modelId, setModelId] = useState("");
-    const [hfRepo, setHfRepo] = useState("");
-    const [submitting, setSubmitting] = useState(false);
+    const [source, setSource] = useState<MarketSource>("hf");
+    const [query, setQuery] = useState("");
+    const [results, setResults] = useState<MarketResult[] | null>(null);
+    const [searching, setSearching] = useState(false);
+    const [busyRepo, setBusyRepo] = useState("");
     const trackerRef = useRef(new SpeedTracker());
     const speedsRef = useRef(new Map<string, number | null>());
 
@@ -123,27 +135,83 @@ export function DownloadsPage() {
             );
     }, []);
 
-    const onSubmit = async () => {
-        if (!modelId) return;
-        const repo = hfRepo.trim();
-        const selected = models.find((m) => m.id === modelId);
-        const sourceUrl = repo
-            ? `${HF_MIRROR}/${repo}`
-            : selected?.hf_repo
-              ? `${HF_MIRROR}/${selected.hf_repo}`
-              : "";
-        if (!sourceUrl) return;
-        setSubmitting(true);
+    const onSearch = async () => {
+        const kw = query.trim();
+        if (!kw) return;
+        setSearching(true);
         try {
-            await createDownload(modelId, sourceUrl);
-            setHfRepo("");
+            setResults(await marketSearch(kw, source));
+            setError(null);
+        } catch (e) {
+            console.error("[model-hub-web] market search fail:", e);
+            setError(e instanceof Error ? e.message : String(e));
+        }
+        setSearching(false);
+    };
+
+    const repoOf = (r: MarketResult): string =>
+        source === "hf" ? r.id : [r.creator, r.name].filter(Boolean).join("/");
+
+    const ensureModel = async (
+        repo: string,
+    ): Promise<{ id: string; name: string }> => {
+        try {
+            if (source === "hf") {
+                return await importFromHf(repo);
+            }
+            return await createModel({
+                name: repo.toLowerCase(),
+                description: `Imported from ModelScope: ${repo}`,
+            });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (!/409|already exists/i.test(msg)) throw e;
+        }
+        const existing = await fetchModels(
+            repo.split("/").pop() ?? repo,
+            1,
+            20,
+        );
+        const hit =
+            existing.find((m) => m.hf_repo === repo) ??
+            existing.find((m) => m.name === repo.toLowerCase()) ??
+            existing.find((m) => m.name === repo);
+        if (!hit) {
+            throw new Error(
+                t("模型记录未找到", "Model record not found after create"),
+            );
+        }
+        return hit;
+    };
+
+    const onDownload = async (r: MarketResult) => {
+        const repo = repoOf(r);
+        if (!repo) return;
+        setBusyRepo(repo);
+        try {
+            const model = await ensureModel(repo);
+            const files = await marketFiles(source, repo);
+            const file = pickWeightFile(files);
+            if (!file) {
+                throw new Error(
+                    t(
+                        "仓库内未找到权重文件",
+                        "No weight file found in the repo",
+                    ),
+                );
+            }
+            const url =
+                source === "hf"
+                    ? `${HF_MIRROR}/${repo}/resolve/main/${file.path}`
+                    : `https://modelscope.cn/models/${repo}/resolve/master/${file.path}`;
+            await createDownload(model.id, url);
             setError(null);
             load();
         } catch (e) {
-            console.error("[model-hub-web] download create fail:", e);
+            console.error("[model-hub-web] download from search fail:", e);
             setError(e instanceof Error ? e.message : String(e));
         }
-        setSubmitting(false);
+        setBusyRepo("");
     };
 
     const onCancel = async () => {
@@ -278,52 +346,88 @@ export function DownloadsPage() {
             <div className="mb-4 rounded-card border border-border bg-bg-elevated p-3">
                 <div className="mb-2 text-xs text-text-secondary">
                     {t(
-                        "从 hf-mirror.com 新建下载",
-                        "New download from hf-mirror.com",
+                        "先搜索模型，再从 hf-mirror.com / modelscope.cn 下载",
+                        "Search a model first, then download from hf-mirror.com / modelscope.cn",
                     )}
                 </div>
                 <div className="flex flex-wrap gap-2">
                     <select
-                        name="model_id"
-                        value={modelId}
-                        onChange={(e) => setModelId(e.target.value)}
+                        name="market_source"
+                        value={source}
+                        onChange={(e) => {
+                            setSource(e.target.value as MarketSource);
+                            setResults(null);
+                        }}
                         className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-primary"
                     >
-                        <option value="">
-                            {t("选择模型…", "select model…")}
-                        </option>
-                        {models.map((m) => (
-                            <option key={m.id} value={m.id}>
-                                {m.name}
-                            </option>
-                        ))}
+                        <option value="hf">hf-mirror.com</option>
+                        <option value="modelscope">modelscope.cn</option>
                     </select>
                     <input
-                        name="hf_repo"
-                        value={hfRepo}
-                        onChange={(e) => setHfRepo(e.target.value)}
+                        name="market_query"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") onSearch();
+                        }}
                         placeholder={t(
-                            "HF 仓库（如 Qwen/Qwen2.5-0.5B-Instruct）；留空使用模型的 hf_repo",
-                            "hf repo (e.g. Qwen/Qwen2.5-0.5B-Instruct); empty = model's hf_repo",
+                            "搜索模型，如 Qwen2.5-0.5B-Instruct",
+                            "search models, e.g. Qwen2.5-0.5B-Instruct",
                         )}
-                        className="min-w-64 flex-1 rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text-primary outline-none focus:border-brand"
+                        className="min-w-64 flex-1 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus:border-brand"
                     />
                     <button
                         type="button"
-                        disabled={
-                            submitting ||
-                            !modelId ||
-                            (!hfRepo.trim() &&
-                                !models.find((m) => m.id === modelId)?.hf_repo)
-                        }
-                        onClick={onSubmit}
+                        disabled={searching || !query.trim()}
+                        onClick={onSearch}
                         className="rounded-md bg-brand px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                        {submitting
-                            ? t("启动中…", "Starting…")
-                            : t("开始下载", "Start download")}
+                        {searching
+                            ? t("搜索中…", "Searching…")
+                            : t("搜索", "Search")}
                     </button>
                 </div>
+                {results !== null ? (
+                    results.length === 0 ? (
+                        <div className="mt-3 text-xs text-text-muted">
+                            {t("无搜索结果", "No results")}
+                        </div>
+                    ) : (
+                        <ul className="mt-3 divide-y divide-border">
+                            {results.map((r) => {
+                                const repo = repoOf(r);
+                                return (
+                                    <li
+                                        key={`${r.source}-${repo}`}
+                                        className="flex items-center gap-3 py-2"
+                                    >
+                                        <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
+                                            {repo}
+                                        </span>
+                                        {r.task ? (
+                                            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-text-muted">
+                                                {r.task}
+                                            </span>
+                                        ) : null}
+                                        <span className="font-mono text-[10px] tabular-nums text-text-muted">
+                                            ↓ {r.downloads}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            disabled={busyRepo === repo}
+                                            onClick={() => onDownload(r)}
+                                            className="rounded-md border border-brand/50 px-2 py-1 text-xs text-brand hover:bg-brand/10 disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                            {busyRepo === repo
+                                                ? t("启动中…", "Starting…")
+                                                : t("下载", "Download")}
+                                        </button>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )
+                ) : null}
             </div>
             {error ? (
                 <div className="mb-2 rounded-md border border-error/40 bg-error/10 px-3 py-2 text-xs text-error">
@@ -339,8 +443,8 @@ export function DownloadsPage() {
                     <EmptyState
                         title={t("暂无下载任务", "No download tasks")}
                         description={t(
-                            "在上方选择一个模型，从 hf-mirror.com 开始下载。",
-                            "Pick a model above to start downloading from hf-mirror.com.",
+                            "在上方搜索模型并点击下载，任务进度会显示在这里。",
+                            "Search a model above and hit Download; task progress shows up here.",
                         )}
                     />
                 }

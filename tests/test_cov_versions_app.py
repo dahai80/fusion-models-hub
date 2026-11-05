@@ -906,6 +906,42 @@ class TestTenantsDeep:
         finally:
             set_auth_enabled(False)
 
+    async def test_tenant_reads_open_to_viewer_writes_admin_only(self, client):
+        # #90: the governance console lists tenants through the shell proxy,
+        # which presents a VIEWER-role key. Reads are open to any
+        # authenticated role; writes stay admin-only (E-S8).
+        from fusion_model_hub.server.auth import set_auth_enabled
+
+        admin = await self._mkadmin(client)
+        viewer = await TestAuthMiddlewareDeep._mkkey(
+            client, {"name": "t-viewer", "role": "viewer"},
+            headers={"X-API-Key": admin},
+        )
+        try:
+            resp = await client.post(
+                "/api/v1/tenants",
+                json={"name": "ten-view"},
+                headers={"X-API-Key": admin},
+            )
+            assert resp.status_code == 201
+            lst = await client.get(
+                "/api/v1/tenants", headers={"X-API-Key": viewer},
+            )
+            assert lst.status_code == 200
+            one = await client.get(
+                f"/api/v1/tenants/{resp.json()['id']}",
+                headers={"X-API-Key": viewer},
+            )
+            assert one.status_code == 200
+            denied = await client.post(
+                "/api/v1/tenants",
+                json={"name": "ten-nope"},
+                headers={"X-API-Key": viewer},
+            )
+            assert denied.status_code == 403
+        finally:
+            set_auth_enabled(False)
+
     async def test_create_tenant_duplicate_409(self, client):
         admin = await self._mkadmin(client)
         try:
