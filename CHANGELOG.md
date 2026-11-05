@@ -3,6 +3,18 @@
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.14] — 2026-11-05
+
+Patch release: search-first downloads (bug1), serving model picker (bug2), tenant read ACL.
+
+### Fixed
+- **bug1**: the Downloads page entry point is now search-first. Search **hf-mirror.com** or **modelscope.cn** (source toggle + keyword), then Download per result: the model row is registered (HF import / generic create) and a single-file download task starts against the mirror resolve URL of the repo's largest `.safetensors`/`.gguf`. New `GET /api/v1/models/market/files` resolves repo file listings server-side (hf-mirror siblings / ModelScope repo files) so the browser never talks cross-origin.
+- **bug2**: the Serving page create-deployment form picks from the downloaded model catalog (select) instead of a free-text model id.
+- **tenants**: `GET /api/v1/tenants` + `GET /api/v1/tenants/{id}` are open to any authenticated role — the governance console reads through the shell proxy, which presents a VIEWER key. Writes stay admin-only (E-S8); regression test added.
+
+### Changed
+- web `test` script scoped to `./tests/` — vendored web-ui/web-sdk suites pollute each other in one bun test process (upstream: fusion-web-shell#131).
+
 ## [1.2.13] — 2026-11-03
 
 Patch release: shell iframe 401 fix (#88) + local model discovery (#89).
