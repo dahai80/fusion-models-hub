@@ -4,7 +4,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_MODELSCOPE_API = "https://modelscope.cn/api/v1/models"
+# ModelScope retired the public GET /api/v1/models search (404 since ~2025).
+# The live search endpoint is PUT /api/v1/dolphin/models with a JSON body.
+_MODELSCOPE_API = "https://www.modelscope.cn/api/v1/dolphin/models"
 _SEARCH_TIMEOUT = 15.0
 
 
@@ -14,17 +16,17 @@ async def search_modelscope(
     page: int = 1,
     page_size: int = 20,
 ) -> dict:
-    params: dict = {
+    body: dict = {
         "PageNumber": page,
         "PageSize": page_size,
     }
     if query:
-        params["Name"] = query
+        body["Name"] = query
     if task:
-        params["Task"] = task
+        body["Task"] = task
     try:
         async with httpx.AsyncClient(timeout=_SEARCH_TIMEOUT) as client:
-            resp = await client.get(_MODELSCOPE_API, params=params)
+            resp = await client.put(_MODELSCOPE_API, json=body)
             resp.raise_for_status()
             data = resp.json()
     except httpx.ConnectError:
@@ -37,19 +39,25 @@ async def search_modelscope(
         logger.exception("ModelScope search error")
         return {"items": [], "total": 0, "source": "modelscope"}
 
-    models = data.get("Data", {}).get("Models", []) if isinstance(data, dict) else []
-    total = data.get("Data", {}).get("TotalCount", 0) if isinstance(data, dict) else 0
+    payload = data.get("Data", {}) if isinstance(data, dict) else {}
+    if not isinstance(payload, dict):
+        payload = {}
+    model_block = payload.get("Model", {}) or {}
+    models = model_block.get("Models", []) or []
+    total = model_block.get("TotalCount", 0) or 0
     items = []
     for m in models:
+        tasks = m.get("Tasks") or []
         items.append(
             {
                 "name": m.get("Name", ""),
                 "id": m.get("Id", ""),
-                "task": m.get("Task", ""),
+                "task": (tasks[0].get("Name", "") if tasks else ""),
                 "framework": m.get("Framework", ""),
                 "source": "modelscope",
                 "downloads": m.get("Downloads", 0),
-                "creator": m.get("Creator", ""),
+                "creator": m.get("Path", ""),
             }
         )
+    logger.info("ModelScope search: query=%s total=%s", query, total)
     return {"items": items, "total": total, "source": "modelscope"}
