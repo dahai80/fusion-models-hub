@@ -1,3 +1,19 @@
+---
+doc_id: fusion-models-hub/guide
+product: fusion-models-hub
+class: core
+entry: service
+doc_type: guide
+title: { zh: "密钥轮换手册", en: "Secret rotation runbook" }
+audience: engineer
+status: draft
+version: 1.2.15
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/secret-rotation-runbook.md
+---
+
 # Secret Rotation Runbook
 
 > Step6 of the production-readiness path. Covers the three long-lived secrets

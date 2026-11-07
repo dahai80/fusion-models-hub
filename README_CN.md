@@ -1,3 +1,19 @@
+---
+doc_id: fusion-models-hub/readme
+product: fusion-models-hub
+class: core
+entry: service
+doc_type: readme
+title: { zh: "Fusion Model Hub", en: "Fusion Model Hub" }
+audience: engineer
+status: draft
+version: 1.2.15
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - README_CN.md
+---
+
 # Fusion Model Hub
 
 [![CI](https://github.com/dahai80/fusion-models-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/dahai80/fusion-models-hub/actions/workflows/ci.yml)
