@@ -1,3 +1,19 @@
+---
+doc_id: fusion-models-hub/guide
+product: fusion-models-hub
+class: core
+entry: service
+doc_type: guide
+title: { zh: "架构合规整改计划", en: "Architecture compliance plan" }
+audience: engineer
+status: draft
+version: 1.2.15
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - ARCHITECTURE_COMPLIANCE.md
+---
+
 # 架构合规整改计划
 
 审计日期: 2026-08-02

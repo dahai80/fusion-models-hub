@@ -1,3 +1,19 @@
+---
+doc_id: fusion-models-hub/changelog
+product: fusion-models-hub
+class: core
+entry: service
+doc_type: changelog
+title: { zh: "更新日志", en: "Changelog" }
+audience: engineer
+status: draft
+version: 1.2.15
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - CHANGELOG.md
+---
+
 # Changelog
 
 All notable changes to **fusion-model-hub** are documented here.
