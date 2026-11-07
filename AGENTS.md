@@ -9,7 +9,7 @@ audience: engineer
 status: draft
 version: 1.2.15
 updated: 2026-11-07
-owner: @dahai
+owner: "@dahai"
 source_of_truth:
   - AGENTS.md
 ---
