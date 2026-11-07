@@ -254,6 +254,8 @@ class Doc:
     meta: Dict[str, object] = field(default_factory=dict)
     body_start: int = 0
     body_lines: int = 0
+    yaml_error: Optional[str] = None
+    yaml_error_is_warn: bool = False
 
 
 # ---------------------------------------------------------------- frontmatter
@@ -304,13 +306,48 @@ def load_doc(path: str) -> Doc:
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         text = fh.read()
     meta, body_start, total = parse_frontmatter(text)
-    return Doc(path=path, meta=meta, body_start=body_start, body_lines=total - body_start)
+    doc = Doc(path=path, meta=meta, body_start=body_start, body_lines=total - body_start)
+    # The contract says the frontmatter block IS YAML. The hand-rolled parser
+    # above is lenient (it exists to avoid a hard PyYAML dependency), so also
+    # parse with the real thing when available — reserved indicators like a
+    # leading '@' in "owner: @dahai" are legal-looking to the regex but break
+    # every real YAML consumer.
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        # PyYAML not installed: flag it so the skip is visible rather than
+        # silent (install pyyaml, or this contract check is a no-op).
+        doc.yaml_error = "pyyaml not installed — YAML syntax check skipped"
+        doc.yaml_error_is_warn = True
+        return doc
+    if body_start <= 1:
+        return doc
+    lines = text.splitlines()
+    block = "\n".join(lines[1 : body_start - 1])
+    try:
+        parsed = yaml.safe_load(block)
+    except Exception as e:
+        doc.yaml_error = str(e).splitlines()[0]
+        return doc
+    if parsed is not None and not isinstance(parsed, dict):
+        doc.yaml_error = "frontmatter is not a YAML mapping"
+    return doc
 
 
 # ---------------------------------------------------------------- checks
 
 
 def check_frontmatter(doc: Doc, rel: str, out: List[Finding]) -> None:
+    if doc.yaml_error:
+        out.append(
+            Finding(
+                "WARN" if doc.yaml_error_is_warn else "ERROR",
+                "FM-YAML",
+                rel,
+                1,
+                f"frontmatter is not valid YAML: {doc.yaml_error}",
+            )
+        )
     if not doc.meta:
         out.append(
             Finding(
