@@ -19,6 +19,11 @@ source_of_truth:
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.17] — 2026-11-07
+
+### Fixed
+- **docs**: opening any docs page failed with `Error in user YAML: found character that cannot start any token` — every frontmatter used `owner: @dahai` (leading `@` is a YAML reserved indicator). Owner handle quoted in all 13 files; `ci/validate_docs.py` now parses frontmatter with PyYAML (`FM-YAML` ERROR, WARN when PyYAML missing) and the docs workflow installs PyYAML.
+
 ## [1.2.16] — 2026-11-07
 
 ### Changed
