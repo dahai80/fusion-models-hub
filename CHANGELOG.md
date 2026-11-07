@@ -19,6 +19,11 @@ source_of_truth:
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.16] — 2026-11-07
+
+### Changed
+- **docs**: adopted the fusion docs-system v1.1 contract (core x service) — doc frontmatter (doc_id/product/class/entry/status/owner), `docs/` pages (get-started, product-page, architecture, api-reference, config-reference, troubleshooting, secret-rotation-runbook) and `ci/validate_docs.py` gate in the docs workflow.
+
 ## [1.2.15] — 2026-11-05
 
 ### Fixed
