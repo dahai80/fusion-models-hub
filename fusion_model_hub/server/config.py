@@ -119,6 +119,10 @@ class Settings:
     # downloaded by MLX or any fusion app are discoverable without duplicating
     # storage. Versioned uploads land under <models_dir>/<model_id>/<version>/.
     models_dir: str = ""
+    # #96: /system/health serves a cached dependency snapshot refreshed by a
+    # background poller at this interval (seconds); 0 disables the poller and
+    # restores per-request probing. `?deep=1` always probes inline.
+    health_poll_seconds: int = 10
 
     def __post_init__(self):
         # P1-21: wire FMH_HOST/FMH_PORT/FMH_LOG_LEVEL/FMH_DB_URL. Previously the
@@ -316,6 +320,13 @@ class Settings:
         # (LocalStore fallback). start.sh exports the shared MLX cache default.
         if not self.models_dir:
             self.models_dir = os.environ.get("FMH_MODELS_DIR", "")
+        # #96: health snapshot poll interval; 0 disables the background poller.
+        env_hpoll = os.environ.get("FMH_HEALTH_POLL_SECONDS", "")
+        if env_hpoll:
+            if env_hpoll.isdigit():
+                self.health_poll_seconds = int(env_hpoll)
+            else:
+                logger.warning("FMH_HEALTH_POLL_SECONDS=%r is not an int; keeping default 10", env_hpoll)
 
 
 def resolve_service_secret(env: str, how_to: str) -> str:

@@ -269,6 +269,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             logger.warning("Fusion-MLX compatibility probe failed at startup", exc_info=True)
         backup.start_backup_scheduler()
+        # #96: background health poller — /system/health serves its cached
+        # snapshot instead of probing MLX serially per request.
+        from .health_probe import start_health_poller
+
+        start_health_poller(settings)
         # #83: union web shell self-registration (trainer pattern). Env-gated:
         # needs FUSION_SHELL_GATEWAY_URL + a gateway admin key; disabled with a
         # loud warning otherwise. Daemon task — never blocks or fails startup.
@@ -296,6 +301,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await shell_task
         backup.stop_backup_scheduler()
+        from .health_probe import stop_health_poller
+
+        await stop_health_poller()
         # H8: close the shared httpx transports pooled for the MLX hot path.
         try:
             from .http_client import close_all_transports

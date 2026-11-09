@@ -4,7 +4,6 @@ import subprocess
 import time
 from collections import defaultdict
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -30,7 +29,12 @@ def _format_uptime(seconds: float) -> str:
 
 
 @router.get("/system/health")
-async def health_check(session: SessionDep, store: StoreDep, settings: SettingsDep):
+async def health_check(
+    request: Request,
+    session: SessionDep,
+    store: StoreDep,
+    settings: SettingsDep,
+):
     model_count = 0
     try:
         _, total = await crud.list_models(session, page_size=1)
@@ -38,38 +42,23 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
     except Exception:
         pass
 
-    mlx_status = "unavailable"
-    mlx_info: dict = {}
-    # #58: mlx_url defaults to the gateway — /health is public there but send
-    # the gateway key for consistency with the rest of the LLM surface.
-    mlx_headers = {"X-Fusion-Source": "model-hub"}
-    if settings.mlx_gateway_api_key:
-        mlx_headers["Authorization"] = f"Bearer {settings.mlx_gateway_api_key}"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            # #71: probe the lightweight /healthz first. The gateway's full
-            # /health fans out to every backend including this hub, so probing
-            # it from here nests the recursion
-            # (gateway /health -> hub /health -> gateway /health -> ...),
-            # truncated only by stacked 5s timeouts. /healthz has no backend
-            # fan-out. Fall back to /health for targets without a /healthz
-            # (e.g. direct fusion-mlx).
-            resp = await client.get(f"{settings.mlx_url}/healthz", headers=mlx_headers)
-            if resp.status_code == 404:
-                resp = await client.get(f"{settings.mlx_url}/health", headers=mlx_headers)
-            if resp.status_code == 200:
-                mlx_status = "available"
-                try:
-                    mlx_info = resp.json()
-                except Exception:
-                    mlx_info = {"raw": resp.text[:200]}
-            else:
-                mlx_status = f"error_{resp.status_code}"
-    except httpx.ConnectError:
-        mlx_status = "offline"
-    except Exception as e:
-        mlx_status = "error"
-        logger.warning("MLX health check failed: %s", e)
+    # #96: self-cheap by default — serve the snapshot the background poller
+    # refreshes (server/health_probe.py). A stalled dependency must not push
+    # the supervisor probe past its timeout and flap the service. `?deep=1`
+    # (operator escape hatch) or a missing snapshot (tests, poller disabled)
+    # probes inline. Response shape is unchanged.
+    from ..health_probe import get_snapshot, probe_mlx
+
+    deep = request.query_params.get("deep") == "1"
+    snapshot = get_snapshot()
+    if deep or snapshot is None:
+        probe = await probe_mlx(settings, probe_timeout=5.0)
+        mlx_source = "probe"
+    else:
+        probe = snapshot
+        mlx_source = "snapshot"
+    mlx_status = probe["status"]
+    mlx_info: dict = probe["info"]
 
     storage = store.get_storage_stats()
     overall = "healthy" if mlx_status == "available" else "degraded"
@@ -121,7 +110,9 @@ async def health_check(session: SessionDep, store: StoreDep, settings: SettingsD
             "status": mlx_status,
             "url": settings.mlx_url,
             "info": mlx_info,
+            "source": mlx_source,
         },
+        "mlx_checked_at": probe.get("checked_at"),
         "storage": disk_stats,
         "rate_limit": rate_limit_info,
         "data_dir": settings.data_dir,

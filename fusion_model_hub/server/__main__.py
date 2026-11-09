@@ -276,6 +276,12 @@ def main():
             tls_keyfile=args.tls_keyfile,
         )
         ssl_kwargs = {}
+        # gateway#573 evidence: a sibling service died with zero stderr output.
+        # faulthandler dumps C-level tracebacks to stderr on fatal signals /
+        # crashes, so a silent death leaves last-gasp evidence in the log.
+        import faulthandler
+
+        faulthandler.enable()
         if settings.tls_certfile and settings.tls_keyfile:
             ssl_kwargs["ssl_certfile"] = settings.tls_certfile
             ssl_kwargs["ssl_keyfile"] = settings.tls_keyfile
