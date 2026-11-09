@@ -19,6 +19,13 @@ source_of_truth:
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.18] — 2026-11-09
+
+### Fixed
+
+- `GET /api/v1/system/health` no longer probes MLX serially per request (#96). A background poller (`server/health_probe.py`) refreshes a cached snapshot every `FMH_HEALTH_POLL_SECONDS` (default 10; 0 disables); the handler serves it with `mlx.source: "snapshot"` and a new `mlx_checked_at` timestamp. `?deep=1` still probes inline. Removes the supervisor ServiceDown(Timeout) flaps caused by stalled dependencies.
+- `faulthandler.enable()` in the serve entry — silent process deaths now leave a C-level traceback in the log (evidence gap from gateway#573).
+
 ## [1.2.17] — 2026-11-07
 
 ### Fixed
