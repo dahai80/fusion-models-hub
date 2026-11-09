@@ -476,7 +476,7 @@ class TestSystemHealth:
     async def test_health_mlx_available(self, client):
         mock_resp = _resp(200, {"version": "0.1", "models": []})
         mock_inst = _mock_httpx_client(get_resp=mock_resp)
-        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+        with patch("fusion_model_hub.server.health_probe.httpx.AsyncClient", return_value=mock_inst):
             resp = await client.get("/api/v1/system/health")
         assert resp.status_code == 200
         data = resp.json()
@@ -491,7 +491,7 @@ class TestSystemHealth:
 
         mock_inst = _mock_httpx_client()
         mock_inst.get.side_effect = httpx.ConnectError("down")
-        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+        with patch("fusion_model_hub.server.health_probe.httpx.AsyncClient", return_value=mock_inst):
             resp = await client.get("/api/v1/system/health")
         assert resp.status_code == 200
         data = resp.json()
@@ -502,7 +502,7 @@ class TestSystemHealth:
     async def test_health_mlx_error_status(self, client):
         mock_resp = _resp(500, text="err")
         mock_inst = _mock_httpx_client(get_resp=mock_resp)
-        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+        with patch("fusion_model_hub.server.health_probe.httpx.AsyncClient", return_value=mock_inst):
             resp = await client.get("/api/v1/system/health")
         assert resp.status_code == 200
         assert resp.json()["mlx"]["status"] == "error_500"
@@ -511,7 +511,7 @@ class TestSystemHealth:
         mock_resp = _resp(200, text="plain text body")
         mock_resp.json.side_effect = ValueError("not json")
         mock_inst = _mock_httpx_client(get_resp=mock_resp)
-        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+        with patch("fusion_model_hub.server.health_probe.httpx.AsyncClient", return_value=mock_inst):
             resp = await client.get("/api/v1/system/health")
         assert resp.status_code == 200
         data = resp.json()
@@ -521,7 +521,7 @@ class TestSystemHealth:
     async def test_health_mlx_generic_exception(self, client):
         mock_inst = _mock_httpx_client()
         mock_inst.get.side_effect = RuntimeError("boom")
-        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+        with patch("fusion_model_hub.server.health_probe.httpx.AsyncClient", return_value=mock_inst):
             resp = await client.get("/api/v1/system/health")
         assert resp.status_code == 200
         assert resp.json()["mlx"]["status"] == "error"
@@ -531,7 +531,7 @@ class TestSystemHealth:
         # not the full /health which fans out back to the hub itself.
         mock_resp = _resp(200, {"ok": True})
         mock_inst = _mock_httpx_client(get_resp=mock_resp)
-        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+        with patch("fusion_model_hub.server.health_probe.httpx.AsyncClient", return_value=mock_inst):
             resp = await client.get("/api/v1/system/health")
         assert resp.status_code == 200
         assert resp.json()["mlx"]["status"] == "available"
@@ -544,7 +544,7 @@ class TestSystemHealth:
         healthz_404 = _resp(404, text="not found")
         health_ok = _resp(200, {"version": "0.1"})
         mock_inst = _mock_httpx_client(get_side=[healthz_404, health_ok])
-        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+        with patch("fusion_model_hub.server.health_probe.httpx.AsyncClient", return_value=mock_inst):
             resp = await client.get("/api/v1/system/health")
         assert resp.status_code == 200
         data = resp.json()
@@ -559,7 +559,7 @@ class TestSystemHealth:
         # fallback (that would re-open the recursion for erroring gateways).
         mock_resp = _resp(500, text="err")
         mock_inst = _mock_httpx_client(get_resp=mock_resp)
-        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+        with patch("fusion_model_hub.server.health_probe.httpx.AsyncClient", return_value=mock_inst):
             resp = await client.get("/api/v1/system/health")
         assert resp.status_code == 200
         assert resp.json()["mlx"]["status"] == "error_500"
@@ -569,7 +569,7 @@ class TestSystemHealth:
         await _create_model(client, "health-model-1")
         mock_resp = _resp(200, {"version": "0.1"})
         mock_inst = _mock_httpx_client(get_resp=mock_resp)
-        with patch("fusion_model_hub.server.routers.system.httpx.AsyncClient", return_value=mock_inst):
+        with patch("fusion_model_hub.server.health_probe.httpx.AsyncClient", return_value=mock_inst):
             resp = await client.get("/api/v1/system/health")
         assert resp.status_code == 200
         assert resp.json()["model_count"] == 1
@@ -1074,3 +1074,69 @@ class TestQuantizePresets:
                         session,
                     )
             assert exc.value.status_code == 500
+
+
+class TestHealthSnapshot:
+    # #96: /system/health must be self-cheap — serve the background poller's
+    # cached snapshot instead of probing MLX serially per request; ?deep=1
+    # always probes inline.
+    async def test_health_serves_snapshot_without_probing(self, client):
+        from fusion_model_hub.server import health_probe
+
+        health_probe.set_snapshot({"status": "available", "info": {"version": "0.1"}})
+        try:
+            with patch(
+                "fusion_model_hub.server.health_probe.httpx.AsyncClient"
+            ) as mock_client:
+                resp = await client.get("/api/v1/system/health")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["mlx"]["status"] == "available"
+            assert data["mlx"]["source"] == "snapshot"
+            # no httpx client constructed -> no per-request fan-out
+            mock_client.assert_not_called()
+        finally:
+            from fusion_model_hub.server.health_probe import _snapshot
+
+            _snapshot.clear()
+
+    async def test_health_deep_param_probes_inline(self, client):
+        from fusion_model_hub.server import health_probe
+
+        health_probe.set_snapshot({"status": "available", "info": {}})
+        try:
+            mock_resp = _resp(200, {"version": "0.9"})
+            mock_inst = _mock_httpx_client(get_resp=mock_resp)
+            with patch(
+                "fusion_model_hub.server.health_probe.httpx.AsyncClient",
+                return_value=mock_inst,
+            ):
+                resp = await client.get("/api/v1/system/health?deep=1")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["mlx"]["source"] == "probe"
+            assert data["mlx"]["info"] == {"version": "0.9"}
+        finally:
+            from fusion_model_hub.server.health_probe import _snapshot
+
+            _snapshot.clear()
+
+    async def test_poller_updates_snapshot(self):
+        from fusion_model_hub.server import health_probe
+        from fusion_model_hub.server.config import Settings
+
+        settings = Settings(auth_enabled=False, health_poll_seconds=60)
+        probe = await health_probe.probe_mlx(settings)
+        health_probe.set_snapshot(probe)
+        snap = health_probe.get_snapshot()
+        assert snap is not None
+        assert "checked_at" in snap
+        health_probe._snapshot.clear()
+
+    async def test_poller_disabled_when_zero(self):
+        from fusion_model_hub.server import health_probe
+        from fusion_model_hub.server.config import Settings
+
+        settings = Settings(auth_enabled=False, health_poll_seconds=0)
+        assert health_probe.start_health_poller(settings) is None
+        await health_probe.stop_health_poller()
