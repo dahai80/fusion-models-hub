@@ -19,6 +19,14 @@ source_of_truth:
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.19] — 2026-11-12
+
+### Fixed
+
+- Shutdown drain no longer stalls on event-loop blockage (#98): `_sync_local_models` runs `discover_local_models` in a worker thread instead of inline (previously blocked the loop 10s+ during startup, piling health requests up at 13s and stalling the drain).
+- Shutdown is observable: lifespan teardown logs each stage with elapsed time plus a final total; `faulthandler.register(SIGUSR1)` dumps all thread stacks on `kill -USR1 <pid>` for hung-process diagnosis.
+- `start.sh` honors `FUSION_MODEL_HUB_DRAIN_SEC` (legacy `FMH_DRAIN_TIMEOUT` alias kept) to shorten the graceful-drain window for crash-recovery restarts.
+
 ## [1.2.18] — 2026-11-09
 
 ### Fixed
