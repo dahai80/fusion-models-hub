@@ -282,6 +282,17 @@ def main():
         import faulthandler
 
         faulthandler.enable()
+        # #98: SIGUSR1 dumps all thread stacks to stderr on demand. When the
+        # drain hangs (non-daemon thread or stuck in-flight request), the
+        # operator runs `kill -USR1 <pid>` and the log shows exactly which
+        # thread is alive — no more blind 30s wait then SIGKILL.
+        try:
+            import signal
+
+            faulthandler.register(signal.SIGUSR1, all_threads=True)
+            logger.info("faulthandler SIGUSR1 thread-dump registered")
+        except Exception:
+            logger.debug("faulthandler.register unavailable", exc_info=True)
         if settings.tls_certfile and settings.tls_keyfile:
             ssl_kwargs["ssl_certfile"] = settings.tls_certfile
             ssl_kwargs["ssl_keyfile"] = settings.tls_keyfile

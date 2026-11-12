@@ -194,6 +194,8 @@ All optional, prefixed `FMH_` (auth uses `MODEL_HUB_AUTH_ENABLED`):
 | `FMH_IDENTITY_URL` / `FMH_IDENTITY_SERVICE_TOKEN` / `FMH_IDENTITY_JWT_ISSUER` / `FMH_IDENTITY_JWT_AUDIENCE` | `http://127.0.0.1:11470` / empty / `fusion-identity` / `fusion-cluster` | fusion-identity connection config |
 | `FMH_DOWNLOAD_SPEED_LIMIT` | `0` | Download speed limit (kbps, 0=none) |
 | `FMH_PRECISION_LOSS_THRESHOLD` | `10.0` | Quantize precision-loss alert % |
+| `FMH_HEALTH_POLL_SECONDS` | `10` | #96: /system/health background snapshot poll interval; 0 disables the poller (per-request probing). `?deep=1` always probes inline |
+| `FUSION_MODEL_HUB_DRAIN_SEC` | `30` | #98: graceful-drain seconds before start.sh escalates to SIGKILL (legacy alias `FMH_DRAIN_TIMEOUT`) |
 | `FUSION_MLX_API_KEY` | empty | Bearer token for Hub→MLX requests. #68: resolution delegated to `fusion_core.config` — env `FUSION_MLX_API_KEY` > `~/.fusion-mlx/settings.json` `auth.api_key` > `FUSION_CLIENT_KEY`/`MLX_API_KEY` chain (dev warns, prod raises). Deprecated bare `MLX_INTERNAL_API_KEY` alias REMOVED |
 | `FMH_ALEMBIC_URL` | `sqlite://` | Sync DB URL for Alembic migrations |
 

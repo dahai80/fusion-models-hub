@@ -147,7 +147,11 @@ do_stop() {
     # SIGKILL'd — a slow inference was cut mid-response and the client got a
     # truncated stream. Now poll up to DRAIN_TIMEOUT (default 30s) and only
     # escalate to SIGKILL if the process is still alive after the drain window.
-    local drain_timeout="${FMH_DRAIN_TIMEOUT:-30}"
+    # Issue #98: FUSION_MODEL_HUB_DRAIN_SEC (DB-3 service-env convention) takes
+    # precedence; FMH_DRAIN_TIMEOUT kept as legacy alias. Default 30s stays —
+    # long chat completions must finish — but the supervisor may set a shorter
+    # window for crash-recovery restarts.
+    local drain_timeout="${FUSION_MODEL_HUB_DRAIN_SEC:-${FMH_DRAIN_TIMEOUT:-30}}"
     kill -TERM "$pid" 2>/dev/null || true
     echo "fusion-model-hub drain started (pid $pid, timeout ${drain_timeout}s)"
     local waited=0

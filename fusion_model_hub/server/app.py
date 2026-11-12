@@ -64,7 +64,12 @@ async def _sync_local_models(settings: Settings) -> int:
     from ..manage.discovery import discover_local_models, guess_model_type
     from .deps import get_session_factory
 
-    found = discover_local_models(settings.models_dir)
+    # #98: discover_local_models walks the shared models tree synchronously
+    # (~/.fusion-mlx/models can hold dozens of models with thousands of files).
+    # Running it inline blocked the event loop for 10s+ — concurrent /system/
+    # health requests piled up at 13s latency, which then stalled the shutdown
+    # drain past the supervisor timeout. Offload to a worker thread.
+    found = await asyncio.to_thread(discover_local_models, settings.models_dir)
     if not found:
         return 0
     created = 0
@@ -293,6 +298,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             logger.info("shell registry disabled (FUSION_SHELL_GATEWAY_URL unset)")
         logger.info("Fusion Model Hub started: data_dir=%s auth=%s", settings.data_dir, settings.auth_enabled)
         yield
+        # #98: log each shutdown stage with elapsed time. Before, the drain
+        # stalled with zero evidence — uvicorn printed "Application shutdown
+        # complete" but the process stayed alive and start.sh burned its whole
+        # 30s drain before SIGKILL. Stage timings show exactly which teardown
+        # step (or remaining in-flight request) eats the drain window.
+        shutdown_start = time.time()
+
+        def _stage(msg: str) -> None:
+            logger.info("Shutdown stage: %s (elapsed %.1fs)", msg, time.time() - shutdown_start)
+
         if shell_task is not None:
             shell_task.cancel()
             # CancelledError inherits BaseException (not Exception) — suppress
@@ -300,10 +315,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # "Application shutdown failed".
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await shell_task
+        _stage("shell registry loop stopped")
         backup.stop_backup_scheduler()
+        _stage("backup scheduler stopped")
         from .health_probe import stop_health_poller
 
         await stop_health_poller()
+        _stage("health poller stopped")
         # H8: close the shared httpx transports pooled for the MLX hot path.
         try:
             from .http_client import close_all_transports
@@ -311,6 +329,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await close_all_transports()
         except Exception:
             logger.warning("Failed to close pooled httpx transports", exc_info=True)
+        _stage("pooled httpx transports closed")
         # Dispose all async engines so aiosqlite worker threads shut down before
         # the event loop closes (prevents `RuntimeError: Event loop is closed`).
         try:
@@ -319,6 +338,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispose_all_engines()
         except Exception:
             logger.warning("Failed to dispose async engines", exc_info=True)
+        _stage("async engines disposed")
+        logger.info("Lifespan shutdown complete (total %.1fs)", time.time() - shutdown_start)
 
     app = FastAPI(
         title="Fusion Model Hub",
