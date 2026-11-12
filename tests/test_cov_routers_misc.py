@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import shutil
 import tempfile
@@ -1140,3 +1141,29 @@ class TestHealthSnapshot:
         settings = Settings(auth_enabled=False, health_poll_seconds=0)
         assert health_probe.start_health_poller(settings) is None
         await health_probe.stop_health_poller()
+
+
+class TestLocalSyncOffload:
+    # #98: _sync_local_models walked the shared models tree inline on the
+    # event loop (10s+ block -> health pileup -> drain stall). It must run
+    # the scan in a worker thread.
+    async def test_discovery_runs_off_event_loop(self, settings):
+        import threading
+
+        import fusion_model_hub.manage.discovery as discovery_mod
+        from fusion_model_hub.server.app import _sync_local_models
+
+        loop = asyncio.get_running_loop()
+        seen_threads = []
+
+        def fake_discover(models_dir):
+            seen_threads.append(threading.current_thread() is not threading.main_thread())
+            return [{"name": "offload-test-model", "path": models_dir, "hf_repo": ""}]
+
+        engine = get_engine(settings.db_url)
+        await init_db(engine)
+        init_deps(settings, engine)
+        with patch.object(discovery_mod, "discover_local_models", fake_discover):
+            created = await _sync_local_models(settings)
+        assert seen_threads == [True], "discover_local_models ran on the event loop thread"
+        assert created >= 1
