@@ -619,3 +619,28 @@ class DownloadTask(Base):
     file_hash: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class Dataset(Base):
+    __tablename__ = "datasets"
+    # #100: dataset registration for the trainer's data-governance milestone.
+    # (name, sha256) is the idempotency key — a trainer re-registering the
+    # same dataset file must hit a deterministic 409, not a duplicate row.
+    __table_args__ = (
+        UniqueConstraint("name", "sha256", name="uq_datasets_name_sha256"),
+        Index("ix_datasets_tenant_id", "tenant_id"),
+        Index("ix_datasets_created_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(16), ForeignKey("tenants.id"), nullable=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    num_samples: Mapped[int] = mapped_column(Integer, default=0)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Trainer lineage sidecar: {source, source_path, source_sha256,
+    # transforms: [...], output}. Stored as JSON text; resolved into an
+    # ancestor chain server-side by GET /datasets/{id}/lineage.
+    lineage: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
