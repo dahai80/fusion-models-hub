@@ -3,7 +3,7 @@ doc_id: fusion-models-hub/catalog
 product: fusion-models-hub
 class: core
 entry: service
-doc_type: reference
+doc_type: guide
 title: { zh: "静态模型目录格式", en: "Static model catalog format" }
 audience: engineer
 status: draft
