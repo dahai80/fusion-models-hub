@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "mlx-community--Qwen3-TTS-12Hz-1.7B-Base-8bit",
+  "hubId": "",
+  "revision": "",
+  "contextWindowTokens": 32768,
+  "maxOutputTokens": 8192,
+  "pricing": {
+    "currency": "USD",
+    "inputPerMillionTokens": 0.0,
+    "outputPerMillionTokens": 0.0
+  },
+  "modality": {
+    "input": [
+      "text"
+    ],
+    "output": [
+      "audio"
+    ]
+  },
+  "capabilities": {
+    "functionCall": true,
+    "reasoning": true,
+    "vision": false,
+    "embedding": false
+  },
+  "quantizations": [
+    "8bit"
+  ]
+}

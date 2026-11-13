@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "name": "mlx-community--GLM-OCR-4bit",
+  "hubId": "",
+  "revision": "",
+  "contextWindowTokens": 32768,
+  "maxOutputTokens": 8192,
+  "pricing": {
+    "currency": "USD",
+    "inputPerMillionTokens": 0.0,
+    "outputPerMillionTokens": 0.0
+  },
+  "modality": {
+    "input": [
+      "text",
+      "image"
+    ],
+    "output": [
+      "text"
+    ]
+  },
+  "capabilities": {
+    "functionCall": false,
+    "reasoning": false,
+    "vision": true,
+    "embedding": false
+  },
+  "quantizations": [
+    "4bit"
+  ]
+}

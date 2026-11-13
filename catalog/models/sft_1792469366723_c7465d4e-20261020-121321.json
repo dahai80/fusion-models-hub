@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "sft_1792469366723_c7465d4e-20261020-121321",
+  "hubId": "",
+  "revision": "",
+  "contextWindowTokens": 32768,
+  "maxOutputTokens": 8192,
+  "pricing": {
+    "currency": "USD",
+    "inputPerMillionTokens": 0.0,
+    "outputPerMillionTokens": 0.0
+  },
+  "modality": {
+    "input": [
+      "text"
+    ],
+    "output": [
+      "text"
+    ]
+  },
+  "capabilities": {
+    "functionCall": false,
+    "reasoning": false,
+    "vision": false,
+    "embedding": false
+  },
+  "quantizations": []
+}

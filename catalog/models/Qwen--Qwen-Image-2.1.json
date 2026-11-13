@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "name": "Qwen--Qwen-Image-2.1",
+  "hubId": "",
+  "revision": "",
+  "contextWindowTokens": 32768,
+  "maxOutputTokens": 8192,
+  "pricing": {
+    "currency": "USD",
+    "inputPerMillionTokens": 0.0,
+    "outputPerMillionTokens": 0.0
+  },
+  "modality": {
+    "input": [
+      "text",
+      "image"
+    ],
+    "output": [
+      "text"
+    ]
+  },
+  "capabilities": {
+    "functionCall": true,
+    "reasoning": false,
+    "vision": true,
+    "embedding": false
+  },
+  "quantizations": []
+}

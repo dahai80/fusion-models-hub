@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "e2e-final-run-merged-2",
+  "hubId": "",
+  "revision": "",
+  "contextWindowTokens": 32768,
+  "maxOutputTokens": 8192,
+  "pricing": {
+    "currency": "USD",
+    "inputPerMillionTokens": 0.0,
+    "outputPerMillionTokens": 0.0
+  },
+  "modality": {
+    "input": [
+      "text"
+    ],
+    "output": [
+      "text"
+    ]
+  },
+  "capabilities": {
+    "functionCall": false,
+    "reasoning": false,
+    "vision": false,
+    "embedding": false
+  },
+  "quantizations": []
+}
