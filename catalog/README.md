@@ -1,3 +1,21 @@
+---
+doc_id: fusion-models-hub/catalog
+product: fusion-models-hub
+class: core
+entry: service
+doc_type: reference
+title: { zh: "静态模型目录格式", en: "Static model catalog format" }
+audience: engineer
+status: draft
+version: 1.2.21
+updated: 2026-11-13
+owner: "@dahai"
+source_of_truth:
+  - catalog/models/
+  - fusion_model_hub/catalog/schema.py
+  - ci/validate_catalog.py
+---
+
 # Static Model Catalog
 
 Issue [#102](https://github.com/dahai80/fusion-models-hub/issues/102) — one declarative JSON file per model under `models/`, versioned in-repo. Static files beat runtime discovery for cross-node consistency: the catalog is lintable, diffable, and consumable by every fusion-* project without querying a live hub.
