@@ -14,6 +14,7 @@ from .models import (
     AuditLog,
     BranchStatus,
     ClusterNode,
+    Dataset,
     Deployment,
     DistributedTask,
     DownloadTask,
@@ -1775,3 +1776,62 @@ async def update_download_task(
     await session.refresh(t)
     logger.info("Updated download task: id=%s fields=%s", task_id, list(fields.keys()))
     return t
+
+
+async def create_dataset(
+    session: AsyncSession,
+    *,
+    name: str,
+    sha256: str,
+    num_samples: int = 0,
+    size_bytes: int = 0,
+    lineage: str = "",
+    tenant_id: str = "",
+) -> Dataset:
+    d = Dataset(
+        name=name,
+        sha256=sha256,
+        num_samples=num_samples,
+        size_bytes=size_bytes,
+        lineage=lineage,
+        tenant_id=tenant_id or None,
+    )
+    session.add(d)
+    await session.commit()
+    await session.refresh(d)
+    logger.info("Created dataset: id=%s name=%s sha256=%s samples=%d", d.id, name, sha256[:12], num_samples)
+    return d
+
+
+async def get_dataset(session: AsyncSession, dataset_id: str) -> Dataset | None:
+    result = await session.execute(select(Dataset).where(Dataset.id == dataset_id))
+    return result.scalar_one_or_none()
+
+
+async def get_dataset_by_name_sha(session: AsyncSession, name: str, sha256: str) -> Dataset | None:
+    result = await session.execute(select(Dataset).where(Dataset.name == name, Dataset.sha256 == sha256))
+    return result.scalar_one_or_none()
+
+
+async def list_datasets(
+    session: AsyncSession,
+    *,
+    keyword: str = "",
+    tenant_id: str = "",
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[Dataset], int]:
+    stmt = select(Dataset)
+    if keyword:
+        stmt = stmt.where(Dataset.name.ilike(f"%{keyword}%"))
+    if tenant_id:
+        stmt = stmt.where(Dataset.tenant_id == tenant_id)
+    total = (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    stmt = stmt.order_by(Dataset.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await session.execute(stmt)
+    return list(result.scalars().all()), total
+
+
+async def find_datasets_by_sha(session: AsyncSession, sha256: str) -> list[Dataset]:
+    result = await session.execute(select(Dataset).where(Dataset.sha256 == sha256))
+    return list(result.scalars().all())

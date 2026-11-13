@@ -121,6 +121,7 @@ fusion_model_hub/
 │       ├── hardware.py recommend.py adapt.py analyze.py   # Hardware detection → recommendation → adaptation
 │       ├── benchmarks.py        # Benchmark integration (Fusion-Bench)
 │       ├── cluster.py           # Distributed node management + heartbeat
+│       ├── datasets.py          # #100 dataset record registration + lineage chain (trainer data-governance)
 │       ├── tenants.py           # Multi-tenant isolation
 │       ├── auth.py              # API key create/list/deactivate/delete
 │       ├── webhooks.py          # Event webhooks CRUD; dispatch_webhook_event lives in server/events.py (router re-exports it)

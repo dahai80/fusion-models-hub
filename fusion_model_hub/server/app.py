@@ -26,6 +26,7 @@ from .routers import (
     branches,
     cache,
     cluster,
+    datasets,
     deployments,
     downloads,
     encryption,
@@ -447,6 +448,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(quantize_presets.router, prefix="/api/v1")
     app.include_router(system.router, prefix="/api/v1")
     app.include_router(cluster.router, prefix="/api/v1")
+    app.include_router(datasets.router, prefix="/api/v1")
     app.include_router(tenants.router, prefix="/api/v1")
     app.include_router(webhooks.router, prefix="/api/v1")
     app.include_router(deployments.router, prefix="/api/v1")
