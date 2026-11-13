@@ -19,6 +19,12 @@ source_of_truth:
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.21] — 2026-11-13
+
+### Added
+
+- Static model catalog (#102): one declarative JSON per model under `catalog/models/` (context window, max output tokens, per-million pricing, modality text/image/audio/video, capability flags, quantization variants). Pydantic schema (`fusion_model_hub/catalog/schema.py`, unknown fields rejected), CI gate job + `ci/validate_catalog.py`, seeded with the 29 models currently served by fusion-mlx, and hub endpoints `GET /api/v1/catalog` + `/{name}` serving validated entries (invalid files skipped with a loud warning). `FMH_CATALOG_DIR` env overrides the catalog location.
+
 ## [1.2.20] — 2026-11-13
 
 ### Added
