@@ -19,6 +19,12 @@ source_of_truth:
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.20] — 2026-11-13
+
+### Added
+
+- Dataset record registration + lineage API (#100): `POST /api/v1/datasets` (409-idempotent on `(name, sha256)`), `GET /api/v1/datasets?keyword=`, `GET /api/v1/datasets/{id}`, and `GET /api/v1/datasets/{id}/lineage` resolving the ancestor chain server-side from `lineage.source_sha256` (unregistered ancestors surface as stubs; cycle-guarded). Records only — dataset files stay local to the trainer. Closes the trainer data-governance milestone's hub-side gap.
+
 ## [1.2.19] — 2026-11-12
 
 ### Fixed
