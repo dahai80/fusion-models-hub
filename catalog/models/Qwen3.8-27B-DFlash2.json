@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "Qwen3.8-27B-DFlash2",
+  "hubId": "",
+  "revision": "",
+  "contextWindowTokens": 32768,
+  "maxOutputTokens": 8192,
+  "pricing": {
+    "currency": "USD",
+    "inputPerMillionTokens": 0.0,
+    "outputPerMillionTokens": 0.0
+  },
+  "modality": {
+    "input": [
+      "text"
+    ],
+    "output": [
+      "text"
+    ]
+  },
+  "capabilities": {
+    "functionCall": true,
+    "reasoning": true,
+    "vision": false,
+    "embedding": false
+  },
+  "quantizations": []
+}

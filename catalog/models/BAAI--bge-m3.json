@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "BAAI--bge-m3",
+  "hubId": "",
+  "revision": "",
+  "contextWindowTokens": 8192,
+  "maxOutputTokens": 8192,
+  "pricing": {
+    "currency": "USD",
+    "inputPerMillionTokens": 0.0,
+    "outputPerMillionTokens": 0.0
+  },
+  "modality": {
+    "input": [
+      "text"
+    ],
+    "output": [
+      "text"
+    ]
+  },
+  "capabilities": {
+    "functionCall": false,
+    "reasoning": false,
+    "vision": false,
+    "embedding": true
+  },
+  "quantizations": []
+}

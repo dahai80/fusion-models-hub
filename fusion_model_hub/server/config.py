@@ -1,6 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,10 @@ class Settings:
     # background poller at this interval (seconds); 0 disables the poller and
     # restores per-request probing. `?deep=1` always probes inline.
     health_poll_seconds: int = 10
+    # #102: static model catalog dir (catalog/models/*.json). Empty = derive
+    # from the checkout next to the package (editable installs); missing dir
+    # = catalog endpoints serve an empty listing with a visible warning.
+    catalog_dir: str = ""
 
     def __post_init__(self):
         # P1-21: wire FMH_HOST/FMH_PORT/FMH_LOG_LEVEL/FMH_DB_URL. Previously the
@@ -327,6 +332,14 @@ class Settings:
                 self.health_poll_seconds = int(env_hpoll)
             else:
                 logger.warning("FMH_HEALTH_POLL_SECONDS=%r is not an int; keeping default 10", env_hpoll)
+        # #102: static catalog dir. Default = catalog/models in the checkout
+        # that contains this package (editable install); FMH_CATALOG_DIR wins.
+        if not self.catalog_dir:
+            self.catalog_dir = os.environ.get("FMH_CATALOG_DIR", "")
+        if not self.catalog_dir:
+            default_catalog = Path(__file__).resolve().parents[2] / "catalog" / "models"
+            if default_catalog.is_dir():
+                self.catalog_dir = str(default_catalog)
 
 
 def resolve_service_secret(env: str, how_to: str) -> str:

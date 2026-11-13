@@ -29,6 +29,21 @@ jobs:
       - name: Ruff check
         run: ruff check fusion_model_hub/ tests/
 
+  catalog:
+    # Issue #102: static catalog schema gate — drift fails loudly on every push.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          pip install "fusion-core @ git+https://github.com/dahai80/fusion-core.git@${FUSION_CORE_REF}"
+          pip install -e .
+      - name: Validate catalog
+        run: python ci/validate_catalog.py
+
   test:
     # Unit suite: default pytest run (addopts ignores the 4 integration files).
     # Mocks httpx — no backing services, no real MLX. Coverage gate 60%.
