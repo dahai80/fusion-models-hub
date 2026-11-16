@@ -7,6 +7,10 @@ on:
       - "ci/validate_docs.py"
       - ".github/workflows/docs.yml"
 
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -15,6 +19,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install PyYAML (frontmatter must be real YAML, not regex-parseable text)
         run: pip install pyyaml
       - name: Validate docs contract
