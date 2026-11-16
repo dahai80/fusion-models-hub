@@ -19,6 +19,12 @@ source_of_truth:
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.22] — 2026-11-16
+
+### Changed
+
+- CI retrofit per fusion#2 checklist (#104): `concurrency` + `cancel-in-progress` grouped by ref on both workflows; `cache: pip` on every `setup-python` step keyed on `pyproject.toml` hash; CI triggers ignore `**.md`/`docs/**` so docs-only changes skip test jobs. Assessments recorded on PR #105: no test sharding (suite ~3–4 min < threshold), no tiered nightly gate (full suite already runs per-PR).
+
 ## [1.2.21] — 2026-11-13
 
 ### Added
