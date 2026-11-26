@@ -19,8 +19,33 @@ MLX_URL="${FUSION_MLX_URL:-http://127.0.0.1:11434}"
 # API keys over plain HTTP are sniffable on the wire; TLS closes that.
 TLS_CERT="${FMH_TLS_CERTFILE:-}"
 TLS_KEY="${FMH_TLS_KEYFILE:-}"
+# Issue #106: logs/ is append-only stdout/stderr residue and grew to 92M once.
+# Cap it at start time: rotate any log over FUSION_MODEL_HUB_LOG_MAX_MB (keep
+# one .old generation), delete rotations past that. 0 disables housekeeping.
+LOG_MAX_MB="${FUSION_MODEL_HUB_LOG_MAX_MB:-10}"
 
 mkdir -p "$LOG_DIR"
+
+housekeep_logs() {
+    # Issue #106: bound stdout/stderr growth at every start. Rotate the live
+    # log to .old when over budget (one generation kept), prune stale .old
+    # files. Best-effort — never block startup on housekeeping failure.
+    [ "$LOG_MAX_MB" = "0" ] && return 0
+    local max_bytes=$((LOG_MAX_MB * 1024 * 1024))
+    local f
+    for f in "$STDOUT_LOG" "$STDERR_LOG"; do
+        [ -f "$f" ] || continue
+        local size
+        size="$(stat -f%z "$f" 2>/dev/null || echo 0)"
+        if [ "$size" -gt "$max_bytes" ]; then
+            mv -f "$f" "$f.old"
+            : > "$f"
+            echo "log rotated (was $((size / 1024))K): $f"
+        fi
+    done
+    find "$LOG_DIR" -name "*.old" -mtime +7 -delete 2>/dev/null || true
+}
+housekeep_logs
 
 is_running() {
     [ -f "$PID_FILE" ] || return 1
