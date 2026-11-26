@@ -19,6 +19,17 @@ source_of_truth:
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
 
+## [1.2.23] — 2026-11-26
+
+### Added
+
+- `fmh keys` CLI sub-app (#107): `create` / `list` / `deactivate` for hub-issued `fmh-*` API keys. Runs offline against the hub DB with the same Settings/pepper resolution as the server, so CLI-minted keys verify immediately server-side. Plaintext key printed exactly once at create. Tenant FK guard on `--tenant-id`.
+- Documented API key provisioning path (#107): bootstrap via public `POST /api/v1/auth/keys` while zero active keys, ongoing via `fmh keys create`, rotation procedure, role matrix, `FMH_API_KEY_PEPPER` production note (README + README_CN). Upstream follow-up filed: fusion-trainer#110.
+
+### Changed
+
+- `start.sh` log housekeeping (#106): stdout/stderr logs over `FUSION_MODEL_HUB_LOG_MAX_MB` (default 10 MB, 0 disables) rotate to a single `.old` generation at start; rotations older than 7 days pruned.
+
 ## [1.2.22] — 2026-11-16
 
 ### Changed
