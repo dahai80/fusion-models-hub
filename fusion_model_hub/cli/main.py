@@ -6,6 +6,7 @@ import typer
 
 from .analyze import analyze_app
 from .download import download_app
+from .keys import keys_app
 from .list_cmd import list_app
 from .recommend import recommend_app
 
@@ -21,6 +22,7 @@ app.add_typer(download_app, name="download", help="Download models from HuggingF
 app.add_typer(recommend_app, name="recommend", help="Get model recommendations based on hardware")
 app.add_typer(list_app, name="list", help="List local and remote models")
 app.add_typer(analyze_app, name="analyze", help="Analyze model compatibility and adaptation")
+app.add_typer(keys_app, name="keys", help="Manage hub API keys (fmh-*) — #107 service-caller provisioning")
 
 
 @app.command()

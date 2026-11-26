@@ -219,6 +219,37 @@ task status, storage usage. See `web/README.md`.
 | POST | `/api/v1/auth/keys/{id}/deactivate` | Deactivate API key |
 | GET | `/api/v1/auth/keys/{id}/usage` | API key usage stats (requests, tokens, latency, QPS) |
 
+#### API Key Provisioning (#107)
+
+Hub API keys are DB-issued `fmh-*` tokens, hashed with PBKDF2 + an install-local
+pepper — the server never stores plaintext, and keys from other services (e.g.
+the gateway's `FUSION_ADMIN_KEY`) are rejected. Service callers such as
+fusion-trainer (`FUSION_MODEL_HUB_API_KEY`) therefore need a hub-issued key.
+
+**Bootstrap (zero active keys):** `POST /api/v1/auth/keys` is a public path while
+no active key exists, so the first key can be minted without credentials:
+
+```bash
+curl -s -X POST http://127.0.0.1:11444/api/v1/auth/keys \
+  -H "Content-Type: application/json" \
+  -d '{"name": "bootstrap-admin", "role": "admin"}'
+# The full fmh-* key appears exactly once in this response — store it now.
+```
+
+**Ongoing provisioning (CLI):** once a key exists, mint further keys offline via
+the CLI (same Settings/pepper resolution as the server, so keys verify there):
+
+```bash
+fmh keys create --name fusion-trainer --role developer   # JSON out, key shown once
+fmh keys list [--tenant-id X]                             # id / prefix / role / active
+fmh keys deactivate <key_id>                              # revoke (rotation = create new + deactivate old)
+```
+
+Roles: `admin` (full access), `developer` (read/write, no DELETE), `viewer`
+(read-only). `--tenant-id` binds a key to a tenant (tenant must already exist).
+Set `FMH_API_KEY_PEPPER` in production so key hashes survive `FMH_DATA_DIR`
+moves; the derived default pepper is install-local.
+
 ### Tenants
 
 | Method | Path | Description |

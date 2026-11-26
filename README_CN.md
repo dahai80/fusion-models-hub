@@ -188,6 +188,35 @@ bun run build      # typecheck + vite build → dist/
 | DELETE | `/api/v1/auth/keys/{id}` | 删除 API Key |
 | POST | `/api/v1/auth/keys/{id}/deactivate` | 停用 API Key |
 
+#### API Key 发放路径（#107）
+
+Hub 的 API Key 是数据库签发的 `fmh-*` 令牌，使用 PBKDF2 + 安装本机 pepper 哈希存储，
+服务端不保存明文；其他服务的 Key（如网关的 `FUSION_ADMIN_KEY`）一律拒绝。
+因此服务调用方（如 fusion-trainer 的 `FUSION_MODEL_HUB_API_KEY`）必须使用 Hub 签发的 Key。
+
+**引导（零活跃 Key 时）：** 无任何活跃 Key 时 `POST /api/v1/auth/keys` 是公开路径，
+可直接签发第一把 Key：
+
+```bash
+curl -s -X POST http://127.0.0.1:11444/api/v1/auth/keys \
+  -H "Content-Type: application/json" \
+  -d '{"name": "bootstrap-admin", "role": "admin"}'
+# 完整 fmh-* Key 只在本次响应中出现一次 — 请立即保存
+```
+
+**日常发放（CLI）：** 已有 Key 后，通过 CLI 离线签发（与服务器同一 Settings/pepper
+解析逻辑，签发的 Key 可直接在服务端验证通过）：
+
+```bash
+fmh keys create --name fusion-trainer --role developer   # JSON 输出，Key 只显示一次
+fmh keys list [--tenant-id X]                             # id / 前缀 / 角色 / 状态
+fmh keys deactivate <key_id>                              # 吊销（轮换 = 新建 + 停用旧 Key）
+```
+
+角色：`admin`（全部权限）、`developer`（读写，无 DELETE）、`viewer`（只读）。
+`--tenant-id` 将 Key 绑定到租户（租户须已存在）。生产环境建议设置
+`FMH_API_KEY_PEPPER`，保证 Key 哈希在 `FMH_DATA_DIR` 迁移后仍有效。
+
 ### 租户
 
 | 方法 | 路径 | 说明 |
