@@ -115,6 +115,10 @@ class Model(Base):
     model_modules: Mapped[str] = mapped_column(String(256), default="")
     idle_timeout_minutes: Mapped[int] = mapped_column(Integer, default=60)
     ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # #110: adapter promotion evidence (fusion-trainer). JSON-serialized; empty
+    # string = unset. Stored verbatim — the hub never judges eval_gate content.
+    trainer_run_ids: Mapped[str] = mapped_column(Text, default="")
+    eval_gate: Mapped[str] = mapped_column(Text, default="")
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     model_status: Mapped[ModelStatus] = mapped_column(Enum(ModelStatus), default=ModelStatus.DRAFT)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
