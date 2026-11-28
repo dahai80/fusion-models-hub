@@ -8,7 +8,7 @@ title: { zh: "更新日志", en: "Changelog" }
 audience: engineer
 status: draft
 version: 1.2.15
-updated: 2026-11-07
+updated: 2026-11-28
 owner: "@dahai"
 source_of_truth:
   - CHANGELOG.md
@@ -18,6 +18,12 @@ source_of_truth:
 
 All notable changes to **fusion-model-hub** are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [PEP 440](https://peps.python.org/pep-0440/).
+
+## [1.2.24] — 2026-11-28
+
+### Added
+
+- Tenant-scoped adapter registration metadata for the trainer promotion path (#110): optional `adapter` block on model create/update — `base_model` (hub id or exact name, forces `model_type=lora`), `tenant_id` (re-scopes registration; unknown → 404, cross-tenant requires admin), `trainer_run_ids` + `eval_gate` (promotion evidence stored verbatim, hub never judges). Read-back round-trips via `GET /models/{id}`; `GET /models?tenant_id=` list filter (admin or anonymous). Alembic migration `0d16091b82e5`.
 
 ## [1.2.23] — 2026-11-26
 
