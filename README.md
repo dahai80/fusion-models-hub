@@ -158,6 +158,16 @@ task status, storage usage. See `web/README.md`.
 | POST | `/api/v1/models/{id}/publish` | Publish model (admin only, enables serving) |
 | POST | `/api/v1/models/{id}/deprecate` | Deprecate model (admin only, blocks new serves) |
 
+**Adapter scoping metadata (#110):** create/update accepts an optional `adapter`
+block for the trainer promotion path — `{"base_model": "<hub id or name>",
+"tenant_id": "<tenant id, empty = shared>", "trainer_run_ids": [...],
+"eval_gate": {...}}`. `base_model` resolves to a LoRA parent (model becomes
+`model_type=lora`); `trainer_run_ids`/`eval_gate` are stored verbatim as
+promotion evidence (the hub never judges them); `tenant_id` re-scopes the
+registration (cross-tenant requires admin). Read-back: `GET /models/{id}`
+returns the same `adapter` object; `GET /models?tenant_id=X` filters the list
+(admin or anonymous callers).
+
 ### Versions
 
 | Method | Path | Description |

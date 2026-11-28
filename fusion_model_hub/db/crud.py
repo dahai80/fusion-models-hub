@@ -72,6 +72,8 @@ async def create_model(
     hf_repo: str = "",
     model_modules: str = "",
     idle_timeout_minutes: int = 60,
+    trainer_run_ids: str = "",
+    eval_gate: str = "",
 ) -> Model:
     m = Model(
         name=name,
@@ -89,6 +91,8 @@ async def create_model(
         hf_repo=hf_repo,
         model_modules=model_modules,
         idle_timeout_minutes=idle_timeout_minutes,
+        trainer_run_ids=trainer_run_ids,
+        eval_gate=eval_gate,
     )
     session.add(m)
     await session.commit()
@@ -162,6 +166,8 @@ _MODEL_UPDATABLE = {
     "model_modules",
     "idle_timeout_minutes",
     "ttl_seconds",
+    "trainer_run_ids",
+    "eval_gate",
     "pinned",
     "model_status",
 }

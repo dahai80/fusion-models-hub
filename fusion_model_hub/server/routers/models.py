@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any
 
@@ -71,6 +72,10 @@ class ModelCreate(BaseModel):
     model_modules: str = ""
     idle_timeout_minutes: int = 60
     tags: list[dict[str, str]] = Field(default_factory=list)
+    # #110: adapter scoping block (fusion-trainer promotion path). Keys:
+    # base_model (hub id or name), tenant_id (empty = shared),
+    # trainer_run_ids (list), eval_gate (object, stored verbatim).
+    adapter: dict[str, Any] | None = None
 
 
 class ModelUpdate(BaseModel):
@@ -90,6 +95,7 @@ class ModelUpdate(BaseModel):
     ttl_seconds: int | None = None
     model_status: str | None = None
     tags: list[dict[str, str]] | None = None
+    adapter: dict[str, Any] | None = None
 
 
 class SyncRequest(BaseModel):
@@ -104,6 +110,52 @@ class BatchDeleteRequest(BaseModel):
 class BatchTagRequest(BaseModel):
     model_ids: list[str]
     tags: list[dict[str, str]]
+
+
+async def _resolve_adapter(session, adapter: dict[str, Any]) -> dict[str, Any]:
+    # #110: validate + flatten the adapter scoping block into model columns.
+    # base_model accepts a hub id or an exact model name (trainer promotion
+    # payloads carry the parent model reference, not the internal uuid).
+    out: dict[str, Any] = {}
+    base_ref = str(adapter.get("base_model", "") or "")
+    if base_ref:
+        base_m = await crud.get_model(session, base_ref)
+        if not base_m:
+            base_m = await crud.get_model_by_name(session, base_ref)
+        if not base_m:
+            raise HTTPException(status_code=404, detail=f"adapter.base_model not found: {base_ref}")
+        out["base_model_id"] = base_m.id
+    run_ids = adapter.get("trainer_run_ids", [])
+    gate = adapter.get("eval_gate", {})
+    if not isinstance(run_ids, list) or not isinstance(gate, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="adapter.trainer_run_ids must be a list and adapter.eval_gate an object",
+        )
+    out["trainer_run_ids"] = json.dumps(run_ids) if run_ids else ""
+    out["eval_gate"] = json.dumps(gate) if gate else ""
+    out["tenant_id"] = str(adapter.get("tenant_id", "") or "")
+    return out
+
+
+def _adapter_block(m) -> dict[str, Any] | None:
+    # #110: read-back shape. Absent (None) when no adapter metadata — existing
+    # publishes keep their response shape minus one null key.
+    if not (getattr(m, "base_model_id", "") or getattr(m, "trainer_run_ids", "") or getattr(m, "eval_gate", "")):
+        return None
+
+    def _load(text, default):
+        try:
+            return json.loads(text) if text else default
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "base_model": m.base_model_id or "",
+        "tenant_id": m.tenant_id or "",
+        "trainer_run_ids": _load(m.trainer_run_ids, []),
+        "eval_gate": _load(m.eval_gate, {}),
+    }
 
 
 def _model_to_dict(m) -> dict[str, Any]:
@@ -126,6 +178,7 @@ def _model_to_dict(m) -> dict[str, Any]:
         "model_modules": m.model_modules,
         "idle_timeout_minutes": m.idle_timeout_minutes,
         "ttl_seconds": m.ttl_seconds,
+        "adapter": _adapter_block(m),
         "model_status": m.model_status.value,
         "tags": [{"key": t.key, "value": t.value} for t in m.tags],
         "versions_count": len(m.versions),
@@ -143,13 +196,37 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
     if existing:
         raise HTTPException(status_code=409, detail=f"Model name already exists: {body.name}")
     tenant_id = getattr(request.state, "tenant_id", "") or ""
+    # #110: optional adapter scoping block overrides model_type/base_model_id
+    # and carries promotion evidence. tenant_id inside the block re-scopes the
+    # registration — guarded like P1-12 (cross-tenant key forge).
+    adapter_fields: dict[str, Any] = {}
+    if body.adapter:
+        adapter_fields = await _resolve_adapter(session, body.adapter)
+        if adapter_fields.get("base_model_id") and body.model_type != ModelType.LORA:
+            body.model_type = ModelType.LORA
+        adapter_tenant = adapter_fields.pop("tenant_id", "")
+        if adapter_tenant:
+            # FK guard: models.tenant_id references tenants — on PostgreSQL an
+            # unknown tenant id would 500 at INSERT. Surface it as a 404.
+            from ...db.models import Tenant
+
+            if await session.get(Tenant, adapter_tenant) is None:
+                raise HTTPException(status_code=404, detail=f"adapter.tenant_id not found: {adapter_tenant}")
+            role = getattr(request.state, "user_role", "")
+            if tenant_id and adapter_tenant != tenant_id and role != "admin":
+                raise HTTPException(
+                    status_code=403,
+                    detail="adapter.tenant_id cross-tenant registration requires admin",
+                )
+            tenant_id = adapter_tenant
+    base_model_id = adapter_fields.get("base_model_id", body.base_model_id)
     if body.model_type == ModelType.LORA:
-        if not body.base_model_id:
+        if not base_model_id:
             raise HTTPException(
                 status_code=400,
                 detail="base_model_id is required for LoRA adapter models",
             )
-        base_m = await crud.get_model(session, body.base_model_id)
+        base_m = await crud.get_model(session, base_model_id)
         if not base_m:
             raise HTTPException(status_code=404, detail="base_model_id not found")
     m = await crud.create_model(
@@ -158,7 +235,7 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
         tenant_id=tenant_id,
         description=body.description,
         model_type=body.model_type,
-        base_model_id=body.base_model_id,
+        base_model_id=base_model_id,
         architecture=body.architecture,
         params_size=body.params_size,
         license=body.license,
@@ -169,6 +246,8 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
         hf_repo=body.hf_repo,
         model_modules=body.model_modules,
         idle_timeout_minutes=body.idle_timeout_minutes,
+        trainer_run_ids=adapter_fields.get("trainer_run_ids", ""),
+        eval_gate=adapter_fields.get("eval_gate", ""),
     )
     if body.tags:
         await crud.set_tags(session, m.id, body.tags)
@@ -180,7 +259,7 @@ async def create_model(body: ModelCreate, session: SessionDep, request: Request)
         if body.model_type == ModelType.LORA:
             await dispatch_webhook_event(
                 "adapter.published",
-                {"id": m.id, "name": m.name, "base_model_id": body.base_model_id},
+                {"id": m.id, "name": m.name, "base_model_id": base_model_id},
                 tenant_id=tenant_id,
             )
     except Exception:
@@ -196,10 +275,16 @@ async def list_models(
     name: str = "",
     model_type: str = "",
     architecture: str = "",
+    tenant_id: str = "",
     page: int = 1,
     page_size: int = 20,
 ):
-    tenant_id = getattr(request.state, "tenant_id", "") or ""
+    caller_tenant = getattr(request.state, "tenant_id", "") or ""
+    # #110: read-side tenant filter. Non-admin callers stay pinned to their own
+    # tenant (E-S9 semantics); admins may list any tenant explicitly.
+    role = getattr(request.state, "user_role", "")
+    if not (tenant_id and (role == "admin" or not caller_tenant)):
+        tenant_id = caller_tenant
     # #51: exact-name lookup for idempotent publish. A publisher that gets a 409
     # on POST /models needs to tell an idempotent re-publish (same model, same
     # base_model_id) from a real name collision. Keyword is fuzzy (ilike %x%),
@@ -379,11 +464,7 @@ async def market_files(source: str = "hf", repo: str = ""):
                 if resp.status_code != 200:
                     raise HTTPException(status_code=502, detail=f"hf-mirror returned HTTP {resp.status_code}")
                 siblings = (resp.json() or {}).get("siblings") or []
-                files = [
-                    {"path": s.get("rfilename", ""), "size": 0}
-                    for s in siblings
-                    if s.get("rfilename")
-                ]
+                files = [{"path": s.get("rfilename", ""), "size": 0} for s in siblings if s.get("rfilename")]
             else:
                 resp = await client.get(
                     f"https://modelscope.cn/api/v1/models/{repo}/repo/files",
@@ -643,7 +724,16 @@ async def update_model(model_id: str, body: ModelUpdate, session: SessionDep, re
     if not m:
         raise HTTPException(status_code=404, detail="Model not found")
     _check_model_owner(m, request)
-    fields = body.model_dump(exclude_unset=True, exclude={"tags"})
+    fields = body.model_dump(exclude_unset=True, exclude={"tags", "adapter"})
+    # #110: adapter block update — resolve base ref, serialize evidence. The
+    # base model must exist; tenant re-scoping through update follows the same
+    # owner check already applied above (model's tenant gates the edit).
+    if body.adapter is not None:
+        adapter_fields = await _resolve_adapter(session, body.adapter)
+        adapter_fields.pop("tenant_id", None)
+        for k, v in adapter_fields.items():
+            if v:
+                fields[k] = v
     if fields:
         m = await crud.update_model(session, model_id, **fields)
         if not m:

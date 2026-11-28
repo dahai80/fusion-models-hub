@@ -131,6 +131,14 @@ bun run build      # typecheck + vite build → dist/
 | GET | `/api/v1/models/search` | 高级搜索（关键词、架构、量化、基准评分） |
 | GET | `/api/v1/models/recommend` | 按任务类型/模型类型/参数量推荐 |
 
+**Adapter 作用域元数据（#110）：** 创建/更新模型接受可选 `adapter` 块，用于
+trainer 晋升路径 — `{"base_model": "<Hub id 或名称>", "tenant_id": "<租户 id，
+空 = 共享>", "trainer_run_ids": [...], "eval_gate": {...}}`。`base_model`
+解析为 LoRA 父模型（模型类型置为 `lora`）；`trainer_run_ids`/`eval_gate` 作为
+晋升证据原样存储（Hub 不做判定）；`tenant_id` 重新限定注册租户（跨租户需
+admin）。读回：`GET /models/{id}` 返回同一 `adapter` 对象；
+`GET /models?tenant_id=X` 按租户过滤列表（admin 或匿名调用方）。
+
 ### 版本
 
 | 方法 | 路径 | 说明 |
