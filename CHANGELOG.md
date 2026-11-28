@@ -7,7 +7,7 @@ doc_type: changelog
 title: { zh: "更新日志", en: "Changelog" }
 audience: engineer
 status: draft
-version: 1.2.15
+version: 1.2.24
 updated: 2026-11-28
 owner: "@dahai"
 source_of_truth:
